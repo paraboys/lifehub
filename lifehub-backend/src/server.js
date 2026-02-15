@@ -74,7 +74,7 @@ app.use(tracingMiddleware);
 app.use(httpMetricsMiddleware);
 app.use(sloCaptureMiddleware);
 
-app.put("/upload/*", express.raw({ type: "*/*", limit: "50mb" }), async (req, res) => {
+app.put(/^\/upload\/(.+)$/, express.raw({ type: "*/*", limit: "50mb" }), async (req, res) => {
   if ((process.env.MEDIA_STORAGE_PROVIDER || "local").toLowerCase() !== "local") {
     res.status(404).json({ error: "Local upload route disabled" });
     return;
@@ -90,7 +90,7 @@ app.put("/upload/*", express.raw({ type: "*/*", limit: "50mb" }), async (req, re
   }
 });
 
-app.get("/cdn/*", async (req, res) => {
+app.get(/^\/cdn\/(.+)$/, async (req, res) => {
   if ((process.env.MEDIA_STORAGE_PROVIDER || "local").toLowerCase() !== "local") {
     res.status(404).json({ error: "Local CDN route disabled" });
     return;
