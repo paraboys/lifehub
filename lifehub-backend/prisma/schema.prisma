@@ -1,0 +1,481 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model access_audit_logs {
+  id            BigInt    @id @default(autoincrement())
+  user_id       BigInt?
+  permission    String?   @db.VarChar(100)
+  resource_type String?   @db.VarChar(50)
+  resource_id   BigInt?
+  allowed       Boolean?
+  created_at    DateTime? @default(now()) @db.Timestamp(6)
+}
+
+model access_policies {
+  id            BigInt       @id @default(autoincrement())
+  permission_id BigInt?
+  resource_type String?      @db.VarChar(50)
+  condition     Json?
+  permissions   permissions? @relation(fields: [permission_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model analytics_events {
+  id          BigInt    @id @default(autoincrement())
+  event_type  String?   @db.VarChar(50)
+  entity_type String?   @db.VarChar(40)
+  entity_id   BigInt?
+  user_id     BigInt?
+  metadata    Json?
+  created_at  DateTime? @default(now()) @db.Timestamp(6)
+}
+
+model assignments {
+  request_id        BigInt
+  provider_id       BigInt
+  assigned_at       DateTime?         @default(now()) @db.Timestamp(6)
+  provider_profiles provider_profiles @relation(fields: [provider_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  service_requests  service_requests  @relation(fields: [request_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([request_id, provider_id])
+}
+
+model audit_logs {
+  id         BigInt    @id @default(autoincrement())
+  user_id    BigInt?
+  action     String?
+  ip_address String?
+  created_at DateTime? @default(now()) @db.Timestamp(6)
+}
+
+model conversation_participants {
+  conversation_id   BigInt
+  user_id           BigInt
+  joined_at         DateTime?     @default(now()) @db.Timestamp(6)
+  last_read_message BigInt?
+  conversations     conversations @relation(fields: [conversation_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users             users         @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@id([conversation_id, user_id])
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model conversations {
+  id                        BigInt                      @id @default(autoincrement())
+  type                      String?                     @db.VarChar(20)
+  created_by                BigInt?
+  created_at                DateTime?                   @default(now()) @db.Timestamp(6)
+  conversation_participants conversation_participants[]
+  users                     users?                      @relation(fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  messages                  messages[]
+}
+
+model delivery_tracking {
+  order_id   BigInt    @id
+  status     String?   @db.VarChar(30)
+  updated_at DateTime? @default(now()) @db.Timestamp(6)
+  orders     orders    @relation(fields: [order_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+/// The underlying table does not contain a valid unique identifier and can therefore currently not be handled by Prisma Client.
+model file_links {
+  file_id     BigInt?
+  entity_type String? @db.VarChar(50)
+  entity_id   BigInt?
+  files       files?  @relation(fields: [file_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@ignore
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model file_permissions {
+  file_id     BigInt
+  user_id     BigInt
+  access_type String? @db.VarChar(20)
+  files       files   @relation(fields: [file_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users       users   @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@id([file_id, user_id])
+}
+
+model files {
+  id               BigInt             @id @default(autoincrement())
+  owner_id         BigInt?
+  file_name        String?            @db.VarChar(255)
+  file_type        String?            @db.VarChar(50)
+  file_size        BigInt?
+  storage_path     String?
+  is_private       Boolean?           @default(true)
+  created_at       DateTime?          @default(now()) @db.Timestamp(6)
+  file_links       file_links[]       @ignore
+  file_permissions file_permissions[]
+
+  users users? @relation(fields: [owner_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model inventory {
+  product_id   BigInt    @id
+  quantity     Int?
+  last_updated DateTime? @default(now()) @db.Timestamp(6)
+  products     products  @relation(fields: [product_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model message_attachments {
+  id         BigInt    @id @default(autoincrement())
+  message_id BigInt?
+  file_url   String?
+  file_type  String?   @db.VarChar(20)
+  file_size  BigInt?
+  messages   messages? @relation(fields: [message_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model message_status {
+  message_id BigInt
+  user_id    BigInt
+  status     String?   @db.VarChar(15)
+  updated_at DateTime? @default(now()) @db.Timestamp(6)
+  messages   messages  @relation(fields: [message_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users      users     @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@id([message_id, user_id])
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model messages {
+  id                  BigInt                @id @default(autoincrement())
+  conversation_id     BigInt?
+  sender_id           BigInt?
+  message_type        String?               @db.VarChar(20)
+  content             String?
+  created_at          DateTime?             @default(now()) @db.Timestamp(6)
+  message_attachments message_attachments[]
+  message_status      message_status[]
+  conversations       conversations?        @relation(fields: [conversation_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users               users?                @relation(fields: [sender_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model notification_channels {
+  id                      Int                       @id @default(autoincrement()) @db.SmallInt
+  channel_name            String?                   @unique @db.VarChar(20)
+  notification_deliveries notification_deliveries[]
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model notification_deliveries {
+  notification_id       BigInt
+  channel_id            Int                   @db.SmallInt
+  status                String?               @db.VarChar(15)
+  attempts              Int?                  @default(0)
+  last_attempt          DateTime?             @db.Timestamp(6)
+  notification_channels notification_channels @relation(fields: [channel_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  notifications         notifications         @relation(fields: [notification_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([notification_id, channel_id])
+}
+
+model notification_templates {
+  id         BigInt  @id @default(autoincrement())
+  event_type String? @unique @db.VarChar(50)
+  title      String?
+  body       String?
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model notifications {
+  id                      BigInt                    @id @default(autoincrement())
+  user_id                 BigInt?
+  event_type              String?                   @db.VarChar(50)
+  content                 String?
+  priority                String?                   @db.VarChar(10)
+  created_at              DateTime?                 @default(now()) @db.Timestamp(6)
+  notification_deliveries notification_deliveries[]
+  users                   users?                    @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model order_items {
+  id         BigInt    @id @default(autoincrement())
+  order_id   BigInt?
+  product_id BigInt?
+  quantity   Int?
+  price      Decimal?  @db.Decimal(10, 2)
+  orders     orders?   @relation(fields: [order_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  products   products? @relation(fields: [product_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model orders {
+  id                BigInt             @id @default(autoincrement())
+  user_id           BigInt?
+  shop_id           BigInt?
+  total             Decimal?           @db.Decimal(10, 2)
+  status            String?            @db.VarChar(30)
+  created_at        DateTime?          @default(now()) @db.Timestamp(6)
+  delivery_tracking delivery_tracking?
+  order_items       order_items[]
+  shop_profiles     shop_profiles?     @relation(fields: [shop_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users             users?             @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model permissions {
+  id               BigInt             @id @default(autoincrement())
+  name             String?            @unique @db.VarChar(100)
+  description      String?
+  access_policies  access_policies[]
+  role_permissions role_permissions[]
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model products {
+  id            BigInt         @id @default(autoincrement())
+  shop_id       BigInt?
+  name          String         @db.VarChar(120)
+  price         Decimal?       @db.Decimal(10, 2)
+  category      String?        @db.VarChar(50)
+  inventory     inventory?
+  order_items   order_items[]
+  shop_profiles shop_profiles? @relation(fields: [shop_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model provider_locations {
+  provider_id       BigInt            @id
+  lat               Decimal?          @db.Decimal(9, 6)
+  lng               Decimal?          @db.Decimal(9, 6)
+  available         Boolean?          @default(true)
+  provider_profiles provider_profiles @relation(fields: [provider_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model provider_profiles {
+  id                 BigInt              @id @default(autoincrement())
+  user_id            BigInt?
+  experience_years   Int?
+  verified           Boolean?            @default(false)
+  rating             Decimal?            @db.Decimal(2, 1)
+  assignments        assignments[]
+  provider_locations provider_locations?
+  users              users?              @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  provider_skills    provider_skills[]
+}
+
+model provider_skills {
+  provider_id       BigInt
+  skill_name        String            @db.VarChar(50)
+  provider_profiles provider_profiles @relation(fields: [provider_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([provider_id, skill_name])
+}
+
+model role_permissions {
+  role_id       Int         @db.SmallInt
+  permission_id BigInt
+  permissions   permissions @relation(fields: [permission_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  roles         roles       @relation(fields: [role_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@id([role_id, permission_id])
+}
+
+model roles {
+  id               Int                @id @default(autoincrement()) @db.SmallInt
+  role_name        String             @unique @db.VarChar(30)
+  role_permissions role_permissions[]
+  user_roles       user_roles[]
+}
+
+model service_requests {
+  id           BigInt        @id @default(autoincrement())
+  user_id      BigInt?
+  service_type String?       @db.VarChar(50)
+  description  String?
+  status       String?       @db.VarChar(30)
+  created_at   DateTime?     @default(now()) @db.Timestamp(6)
+  assignments  assignments[]
+  users        users?        @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model shop_profiles {
+  id        BigInt     @id @default(autoincrement())
+  user_id   BigInt?
+  shop_name String     @db.VarChar(120)
+  address   String
+  lat       Decimal?   @db.Decimal(9, 6)
+  lng       Decimal?   @db.Decimal(9, 6)
+  verified  Boolean?   @default(false)
+  rating    Decimal?   @db.Decimal(2, 1)
+  orders    orders[]
+  products  products[]
+  users     users?     @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model transactions {
+  id                                        BigInt    @id @default(autoincrement())
+  from_wallet                               BigInt?
+  to_wallet                                 BigInt?
+  amount                                    Decimal?  @db.Decimal(12, 2)
+  transaction_type                          String?   @db.VarChar(30)
+  status                                    String?   @db.VarChar(20)
+  reference_id                              BigInt?
+  created_at                                DateTime? @default(now()) @db.Timestamp(6)
+  wallets_transactions_from_walletTowallets wallets?  @relation("transactions_from_walletTowallets", fields: [from_wallet], references: [user_id], onDelete: NoAction, onUpdate: NoAction)
+  wallets_transactions_to_walletTowallets   wallets?  @relation("transactions_to_walletTowallets", fields: [to_wallet], references: [user_id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model user_roles {
+  user_id BigInt
+  role_id Int    @db.SmallInt
+  roles   roles  @relation(fields: [role_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users   users  @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@id([user_id, role_id])
+}
+
+model users {
+  id                        BigInt                      @id @default(autoincrement())
+  name                      String                      @db.VarChar(100)
+  phone                     String                      @unique @db.VarChar(15)
+  email                     String?                     @unique @db.VarChar(120)
+  password_hash             String
+  created_at                DateTime?                   @default(now()) @db.Timestamp(6)
+  conversation_participants conversation_participants[]
+  conversations             conversations[]
+  file_permissions          file_permissions[]
+  files                     files[]
+  message_status            message_status[]
+  messages                  messages[]
+  notifications             notifications[]
+  orders                    orders[]
+  provider_profiles         provider_profiles[]
+  service_requests          service_requests[]
+  shop_profiles             shop_profiles[]
+  user_roles                user_roles[]
+  wallets                   wallets?
+  workflow_history          workflow_history[]
+  user_sessions             user_sessions[]
+}
+
+model wallet_locks {
+  id         BigInt    @id @default(autoincrement())
+  user_id    BigInt?
+  amount     Decimal?  @db.Decimal(12, 2)
+  reason     String?   @db.VarChar(50)
+  created_at DateTime? @db.Timestamp(6)
+  wallets    wallets?  @relation(fields: [user_id], references: [user_id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model wallets {
+  user_id                                        BigInt         @id
+  balance                                        Decimal?       @db.Decimal(12, 2)
+  updated_at                                     DateTime?      @default(now()) @db.Timestamp(6)
+  transactions_transactions_from_walletTowallets transactions[] @relation("transactions_from_walletTowallets")
+  transactions_transactions_to_walletTowallets   transactions[] @relation("transactions_to_walletTowallets")
+  wallet_locks                                   wallet_locks[]
+  users                                          users          @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model workflow_history {
+  id                 BigInt              @id @default(autoincrement())
+  instance_id        BigInt?
+  transition_id      BigInt?
+  from_state         BigInt?
+  to_state           BigInt?
+  action_by          BigInt?
+  changed_at         DateTime?           @default(now()) @db.Timestamp(6)
+  users              users?              @relation(fields: [action_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  workflow_instances workflow_instances? @relation(fields: [instance_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model workflow_branches {
+  id BigInt @id @default(autoincrement())
+
+  parent_instance_id BigInt
+  branch_instance_id BigInt
+  state_id           BigInt
+
+  status     String   @default("RUNNING")
+  created_at DateTime @default(now()) @db.Timestamp(6)
+
+  parent workflow_instances @relation("ParentWorkflow", fields: [parent_instance_id], references: [id], onDelete: Cascade)
+
+  branch workflow_instances @relation("BranchWorkflow", fields: [branch_instance_id], references: [id], onDelete: Cascade)
+
+  workflow_states workflow_states @relation(fields: [state_id], references: [id], onDelete: Cascade)
+}
+
+model workflow_instances {
+  id               BigInt              @id @default(autoincrement())
+  workflow_id      BigInt?
+  entity_type      String?             @db.VarChar(40)
+  entity_id        BigInt?
+  current_state    BigInt?
+  started_at       DateTime?           @default(now()) @db.Timestamp(6)
+  parent_branches  workflow_branches[] @relation("ParentWorkflow")
+  child_branches   workflow_branches[] @relation("BranchWorkflow")
+  workflow_history workflow_history[]
+
+  workflow_states workflow_states? @relation(fields: [current_state], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  workflows       workflows?       @relation(fields: [workflow_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model workflow_states {
+  id          BigInt  @id @default(autoincrement())
+  workflow_id BigInt?
+  type        String  @default("NORMAL")
+  state_name  String? @db.VarChar(40)
+
+  is_final           Boolean?             @default(false)
+  workflow_instances workflow_instances[]
+  branches           workflow_branches[]
+
+  workflows                                                             workflows?             @relation(fields: [workflow_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  workflow_transitions_workflow_transitions_from_stateToworkflow_states workflow_transitions[] @relation("workflow_transitions_from_stateToworkflow_states")
+  workflow_transitions_workflow_transitions_to_stateToworkflow_states   workflow_transitions[] @relation("workflow_transitions_to_stateToworkflow_states")
+}
+
+model workflow_transitions {
+  id                                                               BigInt           @id @default(autoincrement())
+  workflow_id                                                      BigInt?
+  from_state                                                       BigInt?
+  to_state                                                         BigInt?
+  trigger_event                                                    String?          @db.VarChar(50)
+  requires_action                                                  Boolean?         @default(false)
+  workflow_states_workflow_transitions_from_stateToworkflow_states workflow_states? @relation("workflow_transitions_from_stateToworkflow_states", fields: [from_state], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  workflow_states_workflow_transitions_to_stateToworkflow_states   workflow_states? @relation("workflow_transitions_to_stateToworkflow_states", fields: [to_state], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  workflows                                                        workflows?       @relation(fields: [workflow_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model workflows {
+  id                   BigInt                 @id @default(autoincrement())
+  name                 String?                @unique @db.VarChar(50)
+  description          String?
+  workflow_instances   workflow_instances[]
+  workflow_states      workflow_states[]
+  workflow_transitions workflow_transitions[]
+}
+
+model user_sessions {
+  id            BigInt   @id @default(autoincrement())
+  user_id       BigInt
+  refresh_token String   @unique
+  device        String
+  ip            String
+  expires_at    DateTime
+  created_at    DateTime @default(now())
+
+  users users @relation(fields: [user_id], references: [id], onDelete: Cascade)
+}
+
+model login_otps {
+  id         BigInt   @id @default(autoincrement())
+  phone      String
+  code       String
+  expires_at DateTime
+}
