@@ -331,6 +331,7 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
   const [productQuery, setProductQuery] = useState("");
   const [productResults, setProductResults] = useState([]);
   const [searchingProducts, setSearchingProducts] = useState(false);
+  const [productSearchError, setProductSearchError] = useState("");
   const [productSearchFilters, setProductSearchFilters] = useState({
     maxPrice: "",
     minShopRating: "0",
@@ -1475,9 +1476,11 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
     const text = String(query || "").trim();
     if (!text) {
       setProductResults([]);
+      setProductSearchError("");
       return;
     }
     setSearchingProducts(true);
+    setProductSearchError("");
     try {
       const params = new URLSearchParams({
         query: text,
@@ -1494,7 +1497,14 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
         params.set("minShopRating", productSearchFilters.minShopRating);
       }
       const data = await api(`/marketplace/products/search?${params}`);
-      setProductResults(data.products || []);
+      const rows = data.products || [];
+      setProductResults(rows);
+      if (!rows.length) {
+        setProductSearchError("No matching items nearby. Try a bigger radius or different keyword.");
+      }
+    } catch (err) {
+      setProductResults([]);
+      setProductSearchError(err.message || "Unable to search products right now.");
     } finally {
       setSearchingProducts(false);
     }
@@ -2489,24 +2499,28 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
           {!!productQuery.trim() && (
             <div className="stack-list compact">
               {searchingProducts && <div className="empty-line">Searching nearby inventory...</div>}
+              {!searchingProducts && !!productSearchError && (
+                <div className="empty-line">{productSearchError}</div>
+              )}
               {!searchingProducts &&
                 productResults.map(item => (
                   <button
-                    key={`${item.shop.id}-${item.productId}`}
+                    key={`${item?.shop?.id || "shop"}-${item.productId}`}
                     className="item-card button-like"
                     onClick={async () => {
                       setSelectedShopId(String(item.shop.id));
                       await loadShopProducts(item.shop.id);
                     }}
+                    disabled={!item?.shop?.id}
                   >
                     <strong>{item.productName}</strong>
                     <small>
-                      {item.shop.shopName} | {toCurrency(item.price)} | Qty {item.availableQuantity} |{" "}
+                      {item?.shop?.shopName || "Unknown shop"} | {toCurrency(item.price)} | Qty {item.availableQuantity} |{" "}
                       {item.distanceKm ? `${item.distanceKm.toFixed(1)} km` : "distance n/a"}
                     </small>
                   </button>
                 ))}
-              {!searchingProducts && !productResults.length && (
+              {!searchingProducts && !productSearchError && !productResults.length && (
                 <div className="empty-line">No nearby shops found for this item.</div>
               )}
             </div>
