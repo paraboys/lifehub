@@ -150,4 +150,5 @@ await initInboxConsumers();
 startSloMonitor();
 initSocketServer(server);
 
-server.listen(4000, ()=> logger.info("server_started", { port: 4000 }));
+const PORT = Number(process.env.PORT || 4000);
+server.listen(PORT, ()=> logger.info("server_started", { port: PORT }));
