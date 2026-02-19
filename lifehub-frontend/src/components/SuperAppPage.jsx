@@ -16,7 +16,7 @@ function getOrCreateDeviceId() {
 }
 
 const DEFAULT_SETTINGS = {
-  payments: { upiId: "", preferredTopupMethod: "WALLET", autoTopupThreshold: "", autoTopupAmount: "" },
+  payments: { upiId: "", autoTopupThreshold: "", autoTopupAmount: "" },
   notifications: {
     inApp: true,
     push: true,
@@ -374,10 +374,8 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
   const [walletSummary, setWalletSummary] = useState(null);
   const [transactions, setTransactions] = useState([]);
   const [topupAmount, setTopupAmount] = useState("500");
-  const [paymentMethod, setPaymentMethod] = useState("WALLET");
-  const [paymentOptions, setPaymentOptions] = useState(null);
   const [paymentIntent, setPaymentIntent] = useState(null);
-  const [checkoutMode, setCheckoutMode] = useState("WALLET");
+  const [checkoutMode, setCheckoutMode] = useState("RAZORPAY");
   const [pendingOrderAfterPayment, setPendingOrderAfterPayment] = useState(false);
   const [deliveryOtpInput, setDeliveryOtpInput] = useState("");
   const [deliveryRating, setDeliveryRating] = useState("5");
@@ -1085,7 +1083,6 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
     const data = await api(`/marketplace/shops/${shopId}/products?limit=100`);
     setSelectedShopId(String(shopId));
     setShopProducts(data.products || []);
-    loadPaymentOptions(shopId).catch(() => {});
   }
 
   function addToCart(product) {
@@ -1150,7 +1147,7 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
 
   async function proceedCheckout() {
     try {
-      const method = String(checkoutMode || "WALLET").toUpperCase();
+      const method = String(checkoutMode || "RAZORPAY").toUpperCase();
       if (method === "WALLET") {
         await placeOrder();
         return;
@@ -1162,7 +1159,7 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
           amount: Number(cartTotal.toFixed(2)),
           purpose: "TOPUP",
           provider: "RAZORPAY",
-          paymentMethod: method,
+          paymentMethod: "UPI",
           currency: "INR",
           metadata: {
             checkoutFor: "ORDER",
@@ -1361,9 +1358,6 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
   async function loadUserSettings() {
     const settings = await api("/users/settings/me");
     setUserSettings(mergeSettings(settings));
-    if (settings?.payments?.preferredTopupMethod) {
-      setPaymentMethod(String(settings.payments.preferredTopupMethod).toUpperCase());
-    }
   }
 
   async function saveUserSettings() {
@@ -1372,9 +1366,6 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
       body: JSON.stringify(userSettings)
     });
     setUserSettings(mergeSettings(saved));
-    if (saved?.payments?.preferredTopupMethod) {
-      setPaymentMethod(String(saved.payments.preferredTopupMethod).toUpperCase());
-    }
     setToast("Profile settings updated.");
   }
 
@@ -1432,13 +1423,6 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
       return;
     }
     setToast("Browser push permission enabled.");
-  }
-
-  async function loadPaymentOptions(shopId = selectedShopId) {
-    const query = new URLSearchParams();
-    if (shopId) query.set("shopId", shopId);
-    const data = await api(`/transactions/wallet/payment-options?${query.toString()}`);
-    setPaymentOptions(data);
   }
 
   async function loadNotifications() {
@@ -1512,35 +1496,22 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
 
   async function topupWallet() {
     try {
-      const method = String(paymentMethod || "UPI").toUpperCase();
-      if (method === "WALLET") {
-        await api("/transactions/wallet/topup", {
-          method: "POST",
-          body: JSON.stringify({
-            amount: Number(topupAmount || 0),
-            paymentMethod: "WALLET"
-          })
-        });
-        await Promise.all([loadWallet(), loadPaymentOptions()]);
-        return;
-      }
-
       const intent = await api("/payments/intents", {
         method: "POST",
         body: JSON.stringify({
           amount: Number(topupAmount || 0),
           purpose: "TOPUP",
           provider: "RAZORPAY",
-          paymentMethod: method,
+          paymentMethod: "UPI",
           currency: "INR"
         })
       });
       setPaymentIntent(intent);
       await openRazorpayCheckout(intent);
       setToast("Payment successful. Wallet credited.");
-      await Promise.all([loadWallet(), loadPaymentOptions()]);
+      await loadWallet();
     } catch (err) {
-      setError(`${err.message || "Topup failed"}. Configure gateway keys or use Wallet method.`);
+      setError(`${err.message || "Topup failed"}. Configure gateway keys and retry.`);
     }
   }
 
@@ -1628,7 +1599,6 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
         searchShops(),
         loadProviders(),
         loadWallet(),
-        loadPaymentOptions(),
         loadUserSettings(),
         loadNotificationPreferences()
       ];
@@ -2619,10 +2589,8 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
           <div className="field-row">
             <strong>Total: {toCurrency(cartTotal)}</strong>
             <select value={checkoutMode} onChange={event => setCheckoutMode(event.target.value)}>
-              <option value="WALLET">Wallet Instant</option>
-              <option value="UPI">UPI Gateway</option>
-              <option value="CARD">Card Gateway</option>
-              <option value="QR">QR Gateway</option>
+              <option value="RAZORPAY">Razorpay Checkout</option>
+              <option value="WALLET">Wallet Balance</option>
             </select>
             <button onClick={proceedCheckout} disabled={!cart.length || !selectedShopId}>
               Proceed Payment
@@ -2893,37 +2861,13 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
           <h2>Wallet and Payments</h2>
           <div className="field-row">
             <button onClick={loadWallet}>Refresh</button>
-            <button onClick={() => loadPaymentOptions()}>Load Payment Options</button>
             <input
               value={topupAmount}
               onChange={event => setTopupAmount(event.target.value)}
               placeholder="Topup amount"
             />
-            <select value={paymentMethod} onChange={event => setPaymentMethod(event.target.value)}>
-              {(paymentOptions?.methods || ["UPI", "CARD", "QR", "NETBANKING", "WALLET"]).map(method => (
-                <option key={method} value={method}>
-                  {method}
-                </option>
-              ))}
-            </select>
-            <button onClick={topupWallet}>Topup</button>
+            <button onClick={topupWallet}>Topup via Razorpay</button>
           </div>
-          {paymentOptions && (
-            <div className="payment-grid">
-              <div className="item-card">
-                <strong>UPI ID</strong>
-                <small>{paymentOptions?.upi?.vpa || "n/a"}</small>
-              </div>
-              <div className="item-card">
-                <strong>Shop QR</strong>
-                {paymentOptions?.qrCodeUrl ? (
-                  <img className="qr-image" src={paymentOptions.qrCodeUrl} alt="Shop payment QR" />
-                ) : (
-                  <small>No QR available</small>
-                )}
-              </div>
-            </div>
-          )}
           {paymentIntent && (
             <div className="item-card">
               <strong>Gateway Intent</strong>
@@ -3137,23 +3081,6 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
                   }
                   placeholder="Your UPI ID (example@bank)"
                 />
-                <select
-                  value={userSettings.payments?.preferredTopupMethod || "WALLET"}
-                  onChange={event =>
-                    setUserSettings(prev => ({
-                      ...prev,
-                      payments: {
-                        ...(prev.payments || {}),
-                        preferredTopupMethod: event.target.value
-                      }
-                    }))
-                  }
-                >
-                  <option value="WALLET">Wallet</option>
-                  <option value="UPI">UPI</option>
-                  <option value="CARD">Card</option>
-                  <option value="QR">QR</option>
-                </select>
               </div>
               <div className="field-row">
                 <input
