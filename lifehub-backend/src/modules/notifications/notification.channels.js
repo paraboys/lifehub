@@ -2,6 +2,50 @@ import nodemailer from "nodemailer";
 
 let emailTransporter;
 
+function parseContent(content) {
+  try {
+    return JSON.parse(String(content || ""));
+  } catch {
+    return null;
+  }
+}
+
+function formatAmount(value, currency = "INR") {
+  const amount = Number(value);
+  const safeCurrency = String(currency || "INR").toUpperCase();
+  if (!Number.isFinite(amount)) return `0.00 ${safeCurrency}`;
+  return `${amount.toFixed(2)} ${safeCurrency}`;
+}
+
+function formatEmail(notification) {
+  const eventType = String(notification?.event_type || "GENERIC.EVENT").toUpperCase();
+  const parsed = parseContent(notification?.content);
+
+  if (eventType === "PAYMENT.INTENT_SETTLED") {
+    const amount = formatAmount(parsed?.amount, parsed?.currency || "INR");
+    const subject = `LifeHub Payment Received - ${amount}`;
+    const lines = [
+      "Payment credited successfully in LifeHub wallet.",
+      "",
+      `Source: ${parsed?.source || parsed?.provider || "RAZORPAY"}`,
+      `Amount: ${amount}`,
+      `Intent ID: ${parsed?.intentId || "N/A"}`,
+      `Provider Payment ID: ${parsed?.providerPaymentId || "N/A"}`,
+      `User ID: ${parsed?.userId || "N/A"}`
+    ];
+
+    return {
+      subject,
+      text: lines.join("\n")
+    };
+  }
+
+  return {
+    subject: `[${notification.priority}] ${notification.event_type}`,
+    text: parsed ? JSON.stringify(parsed, null, 2) : String(notification.content || "")
+  };
+}
+
 function getEmailTransporter() {
   if (emailTransporter) return emailTransporter;
 
@@ -53,11 +97,13 @@ export async function sendEmail(notification, context = {}) {
     return { ok: true, channel: "EMAIL", skipped: "SMTP_DISABLED", context };
   }
 
+  const formatted = formatEmail(notification);
+
   await transporter.sendMail({
     from: process.env.SMTP_FROM || "noreply@lifehub.local",
     to: context.emailTo || process.env.NOTIF_FALLBACK_EMAIL || "fallback@lifehub.local",
-    subject: `[${notification.priority}] ${notification.event_type}`,
-    text: notification.content || ""
+    subject: formatted.subject,
+    text: formatted.text
   });
 
   return { ok: true, channel: "EMAIL" };

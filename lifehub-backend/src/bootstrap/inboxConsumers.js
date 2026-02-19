@@ -1,6 +1,22 @@
 import { startInboxConsumers } from "../common/events/eventStream.js";
 import { createNotification } from "../modules/notifications/notification.service.js";
 import { logger } from "../common/observability/logger.js";
+import prisma from "../config/db.js";
+
+async function listFinanceAlertUserIds() {
+  const rows = await prisma.user_roles.findMany({
+    where: {
+      roles: {
+        role_name: {
+          in: ["admin", "business"]
+        }
+      }
+    },
+    select: { user_id: true }
+  });
+
+  return [...new Set(rows.map(row => String(row.user_id)))];
+}
 
 export async function initInboxConsumers() {
   await startInboxConsumers({
@@ -78,12 +94,27 @@ export async function initInboxConsumers() {
         });
       },
       "PAYMENT.INTENT_SETTLED": async ({ payload }) => {
-        await createNotification({
-          userId: payload.userId || null,
-          eventType: "PAYMENT.INTENT_SETTLED",
-          priority: "HIGH",
-          payload
-        });
+        const payerId = payload?.userId ? String(payload.userId) : null;
+        const financeAlertUserIds = await listFinanceAlertUserIds();
+        const recipients = [...new Set([
+          ...(payerId ? [payerId] : []),
+          ...financeAlertUserIds
+        ])];
+
+        if (!recipients.length) return;
+
+        await Promise.all(
+          recipients.map(userId => createNotification({
+            userId,
+            eventType: "PAYMENT.INTENT_SETTLED",
+            priority: "CRITICAL",
+            payload: {
+              ...payload,
+              source: "RAZORPAY_GATEWAY"
+            },
+            channels: ["EMAIL"]
+          }))
+        );
       },
       "ORDER.REFUND_ISSUED": async ({ payload }) => {
         await createNotification({
