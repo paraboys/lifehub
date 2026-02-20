@@ -114,11 +114,22 @@ export async function createOrder({ userId, shopId, total, items = [], idempoten
     if (normalizedItems.length) {
       const productIds = normalizedItems.map(item => item.productId);
       const products = await tx.products.findMany({
+        select: {
+          id: true,
+          shop_id: true,
+          name: true,
+          price: true,
+          inventory: {
+            select: {
+              product_id: true,
+              quantity: true
+            }
+          }
+        },
         where: {
           id: { in: productIds },
           shop_id: parsedShopId
-        },
-        include: { inventory: true }
+        }
       });
 
       if (products.length !== normalizedItems.length) {

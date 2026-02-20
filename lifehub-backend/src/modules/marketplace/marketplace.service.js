@@ -6,6 +6,12 @@ let shopFeedbackTableAvailability = {
   checkedAt: 0,
   available: null
 };
+let productMetadataAvailability = {
+  checkedAt: 0,
+  hasCompany: false,
+  hasDescription: false,
+  hasImageUrl: false
+};
 
 const SHOP_FEEDBACK_MIGRATION_HINT = "Run migration `20260220101000_marketplace_inventory_feedback` to enable shop feedback features.";
 
@@ -52,6 +58,84 @@ async function hasShopFeedbackTable() {
     };
     return false;
   }
+}
+
+async function getProductMetadataAvailability() {
+  const now = Date.now();
+  if ((now - productMetadataAvailability.checkedAt) < TABLE_AVAILABILITY_CACHE_TTL_MS) {
+    return productMetadataAvailability;
+  }
+
+  try {
+    const rows = await prisma.$queryRawUnsafe(`
+      SELECT column_name
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'products'
+        AND column_name IN ('company', 'description', 'image_url')
+    `);
+
+    const columns = new Set((rows || []).map(row => String(row.column_name || "").toLowerCase()));
+    productMetadataAvailability = {
+      checkedAt: now,
+      hasCompany: columns.has("company"),
+      hasDescription: columns.has("description"),
+      hasImageUrl: columns.has("image_url")
+    };
+  } catch {
+    productMetadataAvailability = {
+      checkedAt: now,
+      hasCompany: false,
+      hasDescription: false,
+      hasImageUrl: false
+    };
+  }
+
+  return productMetadataAvailability;
+}
+
+function buildProductSelect({
+  metadata = {},
+  includeInventory = false,
+  includeShop = false
+} = {}) {
+  return {
+    id: true,
+    shop_id: true,
+    name: true,
+    price: true,
+    category: true,
+    ...(metadata.hasCompany ? { company: true } : {}),
+    ...(metadata.hasDescription ? { description: true } : {}),
+    ...(metadata.hasImageUrl ? { image_url: true } : {}),
+    ...(includeInventory
+      ? {
+          inventory: {
+            select: {
+              product_id: true,
+              quantity: true,
+              last_updated: true
+            }
+          }
+        }
+      : {}),
+    ...(includeShop
+      ? {
+          shop_profiles: {
+            select: {
+              id: true,
+              user_id: true,
+              shop_name: true,
+              address: true,
+              lat: true,
+              lng: true,
+              verified: true,
+              rating: true
+            }
+          }
+        }
+      : {})
+  };
 }
 
 function toDecimalNumber(value) {
@@ -544,8 +628,37 @@ export async function listShopProducts({
   limit = 100
 }) {
   const textQuery = normalizeText(query, { field: "query", maxLength: 120 });
+  const metadata = await getProductMetadataAvailability();
+  const textOr = [
+    {
+      name: {
+        contains: textQuery,
+        mode: "insensitive"
+      }
+    }
+  ];
+  if (metadata.hasCompany) {
+    textOr.push({
+      company: {
+        contains: textQuery,
+        mode: "insensitive"
+      }
+    });
+  }
+  if (metadata.hasDescription) {
+    textOr.push({
+      description: {
+        contains: textQuery,
+        mode: "insensitive"
+      }
+    });
+  }
 
   const products = await prisma.products.findMany({
+    select: buildProductSelect({
+      metadata,
+      includeInventory: true
+    }),
     where: {
       shop_id: toBigInt(shopId, "shopId"),
       ...(category
@@ -558,31 +671,9 @@ export async function listShopProducts({
         : {}),
       ...(textQuery
         ? {
-            OR: [
-              {
-                name: {
-                  contains: textQuery,
-                  mode: "insensitive"
-                }
-              },
-              {
-                company: {
-                  contains: textQuery,
-                  mode: "insensitive"
-                }
-              },
-              {
-                description: {
-                  contains: textQuery,
-                  mode: "insensitive"
-                }
-              }
-            ]
+            OR: textOr
           }
         : {})
-    },
-    include: {
-      inventory: true
     },
     orderBy: { id: "desc" },
     take: clampLimit(limit, 100)
@@ -608,40 +699,47 @@ export async function searchProductsNearby({
 }) {
   const trimmed = String(query || "").trim();
   if (!trimmed) return [];
+  const metadata = await getProductMetadataAvailability();
+  const orClauses = [
+    {
+      name: {
+        contains: trimmed,
+        mode: "insensitive"
+      }
+    },
+    {
+      category: {
+        contains: trimmed,
+        mode: "insensitive"
+      }
+    }
+  ];
+  if (metadata.hasCompany) {
+    orClauses.push({
+      company: {
+        contains: trimmed,
+        mode: "insensitive"
+      }
+    });
+  }
+  if (metadata.hasDescription) {
+    orClauses.push({
+      description: {
+        contains: trimmed,
+        mode: "insensitive"
+      }
+    });
+  }
 
   const products = await prisma.products.findMany({
+    select: buildProductSelect({
+      metadata,
+      includeInventory: true,
+      includeShop: true
+    }),
     where: {
       ...(hasValue(maxPrice) ? { price: { lte: Number(maxPrice) } } : {}),
-      OR: [
-        {
-          name: {
-            contains: trimmed,
-            mode: "insensitive"
-          }
-        },
-        {
-          category: {
-            contains: trimmed,
-            mode: "insensitive"
-          }
-        },
-        {
-          company: {
-            contains: trimmed,
-            mode: "insensitive"
-          }
-        },
-        {
-          description: {
-            contains: trimmed,
-            mode: "insensitive"
-          }
-        }
-      ]
-    },
-    include: {
-      inventory: true,
-      shop_profiles: true
+      OR: orClauses
     },
     take: clampLimit(limit * 4, 300)
   });
@@ -805,14 +903,21 @@ export async function createShopProduct({
     actorRoles,
     shopId
   });
+  const metadata = await getProductMetadataAvailability();
 
   const product = await prisma.products.create({
     data: {
       shop_id: shop.id,
       name: normalizeText(name, { field: "name", maxLength: 120, required: true }),
-      company: normalizeText(company, { field: "company", maxLength: 120 }),
-      description: normalizeText(description, { field: "description", maxLength: 2000 }),
-      image_url: normalizeText(imageUrl, { field: "imageUrl", maxLength: 2000 }),
+      ...(metadata.hasCompany
+        ? { company: normalizeText(company, { field: "company", maxLength: 120 }) }
+        : {}),
+      ...(metadata.hasDescription
+        ? { description: normalizeText(description, { field: "description", maxLength: 2000 }) }
+        : {}),
+      ...(metadata.hasImageUrl
+        ? { image_url: normalizeText(imageUrl, { field: "imageUrl", maxLength: 2000 }) }
+        : {}),
       category: normalizeText(category, { field: "category", maxLength: 50 }),
       price: normalizePrice(price, { required: true })
     }
@@ -822,7 +927,10 @@ export async function createShopProduct({
 
   const withInventory = await prisma.products.findUnique({
     where: { id: product.id },
-    include: { inventory: true }
+    select: buildProductSelect({
+      metadata,
+      includeInventory: true
+    })
   });
   return mapProductForResponse(withInventory);
 }
@@ -841,9 +949,14 @@ export async function updateShopProduct({
   quantity
 }) {
   const isAdmin = isAdminOrBusiness(actorRoles);
+  const metadata = await getProductMetadataAvailability();
   const existing = await prisma.products.findUnique({
     where: { id: toBigInt(productId, "productId") },
-    include: { shop_profiles: true, inventory: true }
+    select: buildProductSelect({
+      metadata,
+      includeInventory: true,
+      includeShop: true
+    })
   });
 
   if (!existing) throw new Error("Product not found");
@@ -856,9 +969,15 @@ export async function updateShopProduct({
 
   const payload = {};
   if (name !== undefined) payload.name = normalizeText(name, { field: "name", maxLength: 120, required: true });
-  if (company !== undefined) payload.company = normalizeText(company, { field: "company", maxLength: 120 });
-  if (description !== undefined) payload.description = normalizeText(description, { field: "description", maxLength: 2000 });
-  if (imageUrl !== undefined) payload.image_url = normalizeText(imageUrl, { field: "imageUrl", maxLength: 2000 });
+  if (company !== undefined && metadata.hasCompany) {
+    payload.company = normalizeText(company, { field: "company", maxLength: 120 });
+  }
+  if (description !== undefined && metadata.hasDescription) {
+    payload.description = normalizeText(description, { field: "description", maxLength: 2000 });
+  }
+  if (imageUrl !== undefined && metadata.hasImageUrl) {
+    payload.image_url = normalizeText(imageUrl, { field: "imageUrl", maxLength: 2000 });
+  }
   if (category !== undefined) payload.category = normalizeText(category, { field: "category", maxLength: 50 });
   if (price !== undefined) payload.price = normalizePrice(price);
 
@@ -879,7 +998,10 @@ export async function updateShopProduct({
 
   const withInventory = await prisma.products.findUnique({
     where: { id: existing.id },
-    include: { inventory: true }
+    select: buildProductSelect({
+      metadata,
+      includeInventory: true
+    })
   });
   return mapProductForResponse(withInventory);
 }
