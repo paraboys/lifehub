@@ -1,7 +1,11 @@
 import prisma from "../../config/db.js";
-import { Prisma } from "@prisma/client";
 
 const MAX_LIMIT = 200;
+const TABLE_AVAILABILITY_CACHE_TTL_MS = 60 * 1000;
+let shopFeedbackTableAvailability = {
+  checkedAt: 0,
+  available: null
+};
 
 const SHOP_FEEDBACK_MIGRATION_HINT = "Run migration `20260220101000_marketplace_inventory_feedback` to enable shop feedback features.";
 
@@ -10,18 +14,44 @@ function hasValue(value) {
 }
 
 function isShopFeedbackTableMissingError(error) {
-  if (!(error instanceof Prisma.PrismaClientKnownRequestError)) return false;
-  if (!["P2021", "P2022"].includes(String(error.code || ""))) return false;
-
+  const code = String(error?.code || "");
   const table = String(error?.meta?.table || "").toLowerCase();
   const column = String(error?.meta?.column || "").toLowerCase();
-  const message = String(error.message || "").toLowerCase();
+  const message = String(error?.message || "").toLowerCase();
 
   return (
-    table.includes("shop_feedbacks")
+    ["P2021", "P2022"].includes(code)
+    || (message.includes("shop_feedbacks") && message.includes("does not exist"))
+    || table.includes("shop_feedbacks")
     || column.includes("shop_feedbacks")
-    || message.includes("shop_feedbacks")
+    || message.includes("relation \"shop_feedbacks\" does not exist")
   );
+}
+
+async function hasShopFeedbackTable() {
+  const now = Date.now();
+  if (
+    shopFeedbackTableAvailability.available !== null
+    && (now - shopFeedbackTableAvailability.checkedAt) < TABLE_AVAILABILITY_CACHE_TTL_MS
+  ) {
+    return shopFeedbackTableAvailability.available;
+  }
+
+  try {
+    const rows = await prisma.$queryRawUnsafe("SELECT to_regclass('public.shop_feedbacks') AS table_name");
+    const available = Boolean(rows?.[0]?.table_name);
+    shopFeedbackTableAvailability = {
+      checkedAt: now,
+      available
+    };
+    return available;
+  } catch {
+    shopFeedbackTableAvailability = {
+      checkedAt: now,
+      available: false
+    };
+    return false;
+  }
 }
 
 function toDecimalNumber(value) {
@@ -191,6 +221,7 @@ async function getShopFeedbackSummaryMap(shopIds = []) {
   }
 
   if (!normalizedIds.length) return new Map();
+  if (!(await hasShopFeedbackTable())) return new Map();
 
   let grouped = [];
   try {
@@ -253,6 +284,30 @@ async function upsertInventory(productId, quantity) {
 
 export async function refreshShopRatingFromFeedback(shopId) {
   const normalizedShopId = toBigInt(shopId, "shopId");
+  const tableExists = await hasShopFeedbackTable();
+  if (!tableExists) {
+    const shop = await prisma.shop_profiles.findUnique({
+      where: { id: normalizedShopId },
+      select: {
+        id: true,
+        verified: true,
+        rating: true
+      }
+    });
+    if (!shop) throw new Error("Shop not found");
+    const score = calculateReliabilityScore({
+      rating: Number(shop.rating || 0),
+      feedbackCount: 0,
+      verified: Boolean(shop.verified)
+    });
+    return {
+      shopId: shop.id,
+      avgRating: Number(shop.rating || 0),
+      feedbackCount: 0,
+      reliabilityScore: score
+    };
+  }
+
   let grouped = [];
   let isFeedbackTableMissing = false;
   try {
@@ -893,6 +948,10 @@ export async function createShopFeedback({
   comment,
   orderId
 }) {
+  if (!(await hasShopFeedbackTable())) {
+    throw new Error(`Shop feedback is temporarily unavailable. ${SHOP_FEEDBACK_MIGRATION_HINT}`);
+  }
+
   const userId = toBigInt(actorUserId, "userId");
   const resolvedShopId = toBigInt(shopId, "shopId");
   const numericRating = Number(rating);
@@ -968,10 +1027,12 @@ export async function listShopFeedback({
   limit = 20
 }) {
   const resolvedShopId = toBigInt(shopId, "shopId");
+  const tableExists = await hasShopFeedbackTable();
 
   let rows = [];
   let feedbackCount = 0;
-  try {
+  if (tableExists) {
+    try {
     [rows, feedbackCount] = await Promise.all([
       prisma.shop_feedbacks.findMany({
         where: { shop_id: resolvedShopId },
@@ -990,9 +1051,10 @@ export async function listShopFeedback({
         where: { shop_id: resolvedShopId }
       })
     ]);
-  } catch (error) {
-    if (!isShopFeedbackTableMissingError(error)) {
-      throw error;
+    } catch (error) {
+      if (!isShopFeedbackTableMissingError(error)) {
+        throw error;
+      }
     }
   }
 

@@ -1,5 +1,4 @@
 import prisma from "../../config/db.js";
-import { Prisma } from "@prisma/client";
 import {
   startWorkflow,
   applyEvent,
@@ -19,6 +18,11 @@ import {
 import { createNotification } from "../notifications/notification.service.js";
 
 const ORDER_WORKFLOW_ID = BigInt(process.env.ORDER_WORKFLOW_ID || 1);
+const TABLE_AVAILABILITY_CACHE_TTL_MS = 60 * 1000;
+let shopFeedbackTableAvailability = {
+  checkedAt: 0,
+  available: null
+};
 const redis = new IORedis(process.env.REDIS_URL || "redis://localhost:6379", {
   maxRetriesPerRequest: null
 });
@@ -28,18 +32,44 @@ function toBigInt(id) {
 }
 
 function isShopFeedbackTableMissingError(error) {
-  if (!(error instanceof Prisma.PrismaClientKnownRequestError)) return false;
-  if (!["P2021", "P2022"].includes(String(error.code || ""))) return false;
-
+  const code = String(error?.code || "");
   const table = String(error?.meta?.table || "").toLowerCase();
   const column = String(error?.meta?.column || "").toLowerCase();
-  const message = String(error.message || "").toLowerCase();
+  const message = String(error?.message || "").toLowerCase();
 
   return (
-    table.includes("shop_feedbacks")
+    ["P2021", "P2022"].includes(code)
+    || (message.includes("shop_feedbacks") && message.includes("does not exist"))
+    || table.includes("shop_feedbacks")
     || column.includes("shop_feedbacks")
-    || message.includes("shop_feedbacks")
+    || message.includes("relation \"shop_feedbacks\" does not exist")
   );
+}
+
+async function hasShopFeedbackTable() {
+  const now = Date.now();
+  if (
+    shopFeedbackTableAvailability.available !== null
+    && (now - shopFeedbackTableAvailability.checkedAt) < TABLE_AVAILABILITY_CACHE_TTL_MS
+  ) {
+    return shopFeedbackTableAvailability.available;
+  }
+
+  try {
+    const rows = await prisma.$queryRawUnsafe("SELECT to_regclass('public.shop_feedbacks') AS table_name");
+    const available = Boolean(rows?.[0]?.table_name);
+    shopFeedbackTableAvailability = {
+      checkedAt: now,
+      available
+    };
+    return available;
+  } catch {
+    shopFeedbackTableAvailability = {
+      checkedAt: now,
+      available: false
+    };
+    return false;
+  }
 }
 
 export async function createOrder({ userId, shopId, total, items = [], idempotencyKey }) {
@@ -451,7 +481,7 @@ export async function confirmDelivery({
     }
   });
 
-  if (hasRating && order.shop_id) {
+  if (hasRating && order.shop_id && await hasShopFeedbackTable()) {
     try {
       await prisma.shop_feedbacks.upsert({
         where: { order_id: order.id },
@@ -496,6 +526,9 @@ export async function confirmDelivery({
 }
 
 async function syncShopRatingFromFeedback(shopId) {
+  if (!(await hasShopFeedbackTable())) {
+    return;
+  }
   const aggregate = await prisma.shop_feedbacks.aggregate({
     where: { shop_id: shopId },
     _avg: { rating: true }
