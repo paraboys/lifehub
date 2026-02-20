@@ -204,10 +204,48 @@ export async function deliverPendingBatch(limit = 100) {
 }
 
 export async function listUserNotifications(userId, limit = 50) {
+  const normalizedLimit = Math.min(Math.max(Number(limit) || 50, 1), 200);
   return prisma.notifications.findMany({
     where: { user_id: BigInt(userId) },
     orderBy: { created_at: "desc" },
-    take: Math.min(Math.max(Number(limit) || 50, 1), 200)
+    take: normalizedLimit
+  });
+}
+
+function normalizeNotificationScope(scope = "all") {
+  const value = String(scope || "all").toLowerCase();
+  if (value === "system" || value === "chat" || value === "all") {
+    return value;
+  }
+  return "all";
+}
+
+export async function listUserNotificationsScoped(userId, {
+  limit = 50,
+  scope = "all"
+} = {}) {
+  const normalizedScope = normalizeNotificationScope(scope);
+  const where = {
+    user_id: BigInt(userId)
+  };
+
+  if (normalizedScope === "system") {
+    where.NOT = {
+      event_type: {
+        startsWith: "CHAT."
+      }
+    };
+  } else if (normalizedScope === "chat") {
+    where.event_type = {
+      startsWith: "CHAT."
+    };
+  }
+
+  const normalizedLimit = Math.min(Math.max(Number(limit) || 50, 1), 200);
+  return prisma.notifications.findMany({
+    where,
+    orderBy: { created_at: "desc" },
+    take: normalizedLimit
   });
 }
 

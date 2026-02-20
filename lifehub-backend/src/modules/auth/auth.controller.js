@@ -1,4 +1,7 @@
+import prisma from "../../config/db.js";
+import { generateAccessToken, generateRefreshToken } from "../../common/authUtils.js";
 import * as service from "./auth.service.js";
+import { buildPhoneCandidates, sendOTP, verifyOTP } from "./otp.service.js";
 
 const publicUser = (u) => ({
   id: u.id.toString(),
@@ -52,19 +55,21 @@ export const refresh = async (req,res)=>{
   }
 };
 export const logout = async (req,res)=>{
-  await prisma.user_sessions.delete({
-    where:{ refresh_token:req.body.refreshToken }
-  });
-
-  res.json({message:"Logged out securely"});
+  try {
+    await prisma.user_sessions.delete({
+      where:{ refresh_token:req.body.refreshToken }
+    });
+    res.json({message:"Logged out securely"});
+  } catch {
+    res.json({ message: "Logged out securely" });
+  }
 };
-
-import { sendOTP, verifyOTP } from "./otp.service.js";
-import { generateAccessToken, generateRefreshToken } from "../../common/authUtils.js";
-import prisma from "../../config/db.js";
 
 export const requestOtpLogin = async (req,res)=>{
   try{
+    if (!req.body?.phone) {
+      throw new Error("phone is required");
+    }
     await sendOTP(req.body.phone);
     res.json({message:"OTP sent"});
   }catch(e){
@@ -74,10 +79,21 @@ export const requestOtpLogin = async (req,res)=>{
 
 export const loginWithOtp = async (req,res)=>{
   try{
+    if (!req.body?.phone) {
+      throw new Error("phone is required");
+    }
+    if (!req.body?.code) {
+      throw new Error("code is required");
+    }
     await verifyOTP(req.body.phone, req.body.code);
 
-    const user = await prisma.users.findUnique({
-      where:{ phone:req.body.phone },
+    const candidates = buildPhoneCandidates(req.body.phone);
+    const user = await prisma.users.findFirst({
+      where: {
+        phone: {
+          in: candidates
+        }
+      },
       include: {
         user_roles: { include: { roles: true } }
       }
@@ -86,10 +102,22 @@ export const loginWithOtp = async (req,res)=>{
     if(!user) throw new Error("User not registered");
 
     const payload = { id: user.id.toString() };
+    const accessToken = generateAccessToken(payload);
+    const refreshToken = generateRefreshToken(payload);
+
+    await prisma.user_sessions.create({
+      data: {
+        user_id: user.id,
+        refresh_token: refreshToken,
+        device: req.headers["x-device-id"] || req.headers["user-agent"] || "unknown",
+        ip: req.ip,
+        expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+      }
+    });
 
     res.json({
-      accessToken: generateAccessToken(payload),
-      refreshToken: generateRefreshToken(payload),
+      accessToken,
+      refreshToken,
       user: {
         id:user.id.toString(),
         name:user.name,

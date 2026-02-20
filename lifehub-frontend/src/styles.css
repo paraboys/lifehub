@@ -511,7 +511,7 @@ button.danger {
   background: linear-gradient(180deg, #0d151d, #0b1219);
   box-shadow: 0 22px 36px rgba(10, 20, 29, 0.28);
   display: grid;
-  grid-template-columns: 72px 1fr;
+  grid-template-columns: 1fr;
   min-height: 74vh;
 }
 
@@ -1274,7 +1274,7 @@ button.danger {
   }
 
   .chat-shell {
-    grid-template-columns: 64px 1fr;
+    grid-template-columns: 1fr;
   }
 
   .chat-layout {
@@ -1497,12 +1497,12 @@ button:hover {
   padding: 24px;
 }
 
-.superapp-shell {
-  grid-template-columns: 300px 1fr;
-  gap: 18px;
+.superapp-shell,
+.superapp-shell-full {
+  grid-template-columns: 1fr;
+  gap: 14px;
 }
 
-.sidebar,
 .topbar,
 .panel-card,
 .command-deck {
@@ -1597,6 +1597,10 @@ button:hover {
   gap: 14px;
 }
 
+.main-stage-full {
+  width: 100%;
+}
+
 .topbar {
   border-radius: 26px;
   border: 1px solid rgba(255, 255, 255, 0.46);
@@ -1605,6 +1609,16 @@ button:hover {
     radial-gradient(circle at 90% 12%, rgba(11, 137, 209, 0.12), transparent 40%),
     linear-gradient(170deg, rgba(255, 255, 255, 0.92), rgba(242, 248, 255, 0.84));
   box-shadow: var(--soft-shadow);
+  display: grid;
+  gap: 12px;
+}
+
+.topbar-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
 .topbar-main h3 {
@@ -1615,6 +1629,49 @@ button:hover {
 .topbar-main p {
   margin-top: 6px;
   max-width: 620px;
+}
+
+.module-nav-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+  gap: 8px;
+}
+
+.module-nav-item {
+  border-radius: 14px;
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid rgba(16, 58, 92, 0.12);
+  background: rgba(255, 255, 255, 0.7);
+  color: var(--ink);
+  box-shadow: none;
+}
+
+.module-nav-item span:last-child {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.module-nav-item.active {
+  background: linear-gradient(115deg, var(--brand), #0b7f84, #0f5f9c);
+  box-shadow: 0 10px 20px rgba(11, 106, 170, 0.3);
+  color: #fff;
+}
+
+.module-nav-icon {
+  width: 26px;
+  height: 26px;
+  border-radius: 9px;
+  display: inline-grid;
+  place-items: center;
+  position: relative;
+  background: rgba(11, 137, 209, 0.14);
+}
+
+.module-nav-item.active .module-nav-icon {
+  background: rgba(255, 255, 255, 0.18);
 }
 
 .command-deck {
@@ -1688,6 +1745,62 @@ button:hover {
   text-align: left;
 }
 
+.module-launch-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.module-launch-card {
+  border-radius: 14px;
+  border: 1px solid rgba(10, 82, 133, 0.18);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.84), rgba(238, 247, 255, 0.9));
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  text-align: left;
+  color: var(--ink);
+  box-shadow: none;
+}
+
+.module-launch-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 10px;
+  background: rgba(11, 137, 209, 0.16);
+  display: inline-grid;
+  place-items: center;
+}
+
+.module-launch-content {
+  display: grid;
+  gap: 2px;
+}
+
+.module-launch-content strong {
+  font-size: 13px;
+}
+
+.module-launch-content small {
+  font-size: 11px;
+  color: var(--ink-dim);
+}
+
+.module-launch-badge {
+  min-width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  display: inline-grid;
+  place-items: center;
+  padding: 0 6px;
+  font-size: 10px;
+  font-weight: 700;
+  color: #fff;
+  background: #ec6a44;
+}
+
 .signal-strip {
   display: grid;
   grid-template-columns: repeat(3, minmax(120px, 1fr));
@@ -1736,6 +1849,10 @@ button:hover {
   backdrop-filter: blur(8px);
 }
 
+.seller-image-row small {
+  color: var(--ink-dim);
+}
+
 @keyframes liftIn {
   from {
     opacity: 0;
@@ -1763,11 +1880,6 @@ button:hover {
   .superapp-shell {
     grid-template-columns: 1fr;
   }
-
-  .sidebar {
-    position: static;
-    height: auto;
-  }
 }
 
 @media (max-width: 860px) {
@@ -1785,6 +1897,7 @@ button:hover {
   }
 
   .quick-action-grid,
+  .module-launch-grid,
   .signal-strip {
     grid-template-columns: 1fr;
   }
@@ -1795,6 +1908,21 @@ button:hover {
   }
 
   .workspace-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .topbar-meta {
+    align-items: flex-start;
+  }
+
+  .module-nav-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 560px) {
+  .module-nav-grid,
+  .command-deck {
     grid-template-columns: 1fr;
   }
 }

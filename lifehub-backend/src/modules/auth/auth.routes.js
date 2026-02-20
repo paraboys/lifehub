@@ -19,8 +19,8 @@ router.post("/signup", abuseGuard("auth"), signup);
 router.post("/login", authLimiter, abuseGuard("auth"), login);
 router.post("/refresh", abuseGuard("auth"), refresh);
 router.post("/logout", abuseGuard("auth"), logout);
-router.post("/otp/request", abuseGuard("auth"), requestOtpLogin);
-router.post("/otp/verify", abuseGuard("auth"), loginWithOtp);
+router.post("/otp/request", authLimiter, abuseGuard("auth"), requestOtpLogin);
+router.post("/otp/verify", authLimiter, abuseGuard("auth"), loginWithOtp);
 router.get("/sessions", authenticate, abuseGuard("auth"), sessions);
 router.delete("/sessions/:sessionId", authenticate, abuseGuard("auth"), revokeSession);
 

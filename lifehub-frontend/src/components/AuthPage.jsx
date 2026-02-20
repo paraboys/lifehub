@@ -219,13 +219,21 @@ export default function AuthPage({ onAuthSuccess }) {
                   Phone
                   <input
                     value={otpForm.phone}
-                    onChange={event =>
-                      setOtpForm(prev => ({ ...prev, phone: event.target.value }))
-                    }
-                    placeholder="9000000001"
+                    onChange={event => {
+                      const nextPhone = event.target.value;
+                      setOtpForm(prev => ({ ...prev, phone: nextPhone }));
+                      if (otpRequested) {
+                        setOtpRequested(false);
+                      }
+                    }}
+                    inputMode="tel"
+                    placeholder="+919000000001"
                     required
                   />
                 </label>
+                <small>
+                  Use an international number format with country code for reliable OTP delivery.
+                </small>
                 {otpRequested && (
                   <label>
                     OTP Code
@@ -246,6 +254,11 @@ export default function AuthPage({ onAuthSuccess }) {
                       ? "Verify OTP"
                       : "Send OTP"}
                 </button>
+                {otpRequested && (
+                  <button type="button" onClick={requestOtp} disabled={loading}>
+                    Resend OTP
+                  </button>
+                )}
               </form>
             )}
           </>

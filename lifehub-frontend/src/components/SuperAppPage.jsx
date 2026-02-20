@@ -76,6 +76,20 @@ function tabIconName(tabId) {
   return "settings";
 }
 
+function tabSubtitle(tabId) {
+  const key = String(tabId || "").toLowerCase();
+  if (key === "home") return "System health, activity, and workspace controls";
+  if (key === "chat") return "Direct and group conversations with live delivery state";
+  if (key === "marketplace") return "Nearby groceries with pricing and reliability scoring";
+  if (key === "services") return "Book and track service providers around your location";
+  if (key === "orders") return "Order lifecycle, delivery OTP, and feedback pipeline";
+  if (key === "seller") return "Inventory management, product uploads, and quantity control";
+  if (key === "wallet") return "Topups, settlements, and transaction visibility";
+  if (key === "ops") return "Workflow and reconciliation operations";
+  if (key === "profile") return "Account settings, security, and notification preferences";
+  return "Module";
+}
+
 function titleCase(value) {
   return String(value || "")
     .toLowerCase()
@@ -331,6 +345,7 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
   const [activeCallRoomId, setActiveCallRoomId] = useState("");
   const [onlineUsers, setOnlineUsers] = useState({});
   const [notifications, setNotifications] = useState([]);
+  const [chatNotifications, setChatNotifications] = useState([]);
   const [notificationPrefs, setNotificationPrefs] = useState({
     quietHours: { enabled: false, startHour: 22, endHour: 7, timezone: "UTC" },
     perEventRules: {},
@@ -461,6 +476,22 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
   const totalUnreadChats = useMemo(
     () => conversations.reduce((sum, conv) => sum + Number(conv.unreadCount || 0), 0),
     [conversations]
+  );
+  const moduleCards = useMemo(
+    () =>
+      tabs
+        .filter(tab => tab.id !== "home")
+        .map(tab => ({
+          ...tab,
+          subtitle: tabSubtitle(tab.id),
+          badge:
+            tab.id === "chat"
+              ? totalUnreadChats
+              : tab.id === "home"
+                ? notifications.length
+                : 0
+        })),
+    [tabs, totalUnreadChats, notifications.length]
   );
   const visibleConversations = useMemo(() => {
     if (chatListMode === "unread") {
@@ -1445,18 +1476,24 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
   }
 
   async function loadNotifications() {
-    const data = await api("/notifications/me?limit=30");
-    const rows = data.notifications || [];
-    setNotifications(rows);
+    const [systemData, chatData] = await Promise.all([
+      api("/notifications/me?limit=30&scope=system"),
+      api("/notifications/me?limit=30&scope=chat")
+    ]);
+    const systemRows = systemData.notifications || [];
+    const chatRows = chatData.notifications || [];
 
-    const incoming = rows
+    setNotifications(systemRows);
+    setChatNotifications(chatRows);
+
+    const incoming = systemRows
       .map(item => String(item.id))
       .filter(id => !seenMessageIds.has(id));
     if (incoming.length) {
       const next = new Set([...seenMessageIds, ...incoming]);
       setSeenMessageIds(next);
       localStorage.setItem(seenStoreKey, JSON.stringify([...next]));
-      const latest = rows[0];
+      const latest = systemRows[0];
       setToast(`New notification: ${latest?.event_type || "Update received"}`);
       if (
         browserPushPermission === "granted" &&
@@ -1946,6 +1983,29 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
               Wallet & Payouts
             </button>
           </div>
+          <div className="module-launch-grid">
+            {moduleCards.map(module => (
+              <button
+                key={module.id}
+                type="button"
+                className="module-launch-card"
+                onClick={() => setActiveTab(module.id)}
+              >
+                <span className="module-launch-icon">
+                  <UiIcon name={tabIconName(module.id)} />
+                </span>
+                <span className="module-launch-content">
+                  <strong>{module.label}</strong>
+                  <small>{module.subtitle}</small>
+                </span>
+                {module.badge > 0 && (
+                  <span className="module-launch-badge">
+                    {module.badge > 99 ? "99+" : module.badge}
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
           <div className="signal-strip">
             <div className="signal-chip">
               <span>Active Orders</span>
@@ -1982,8 +2042,12 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
               <strong>{shops.length}</strong>
             </div>
             <div className="metric-card">
-              <h3>Notifications</h3>
+              <h3>System Alerts</h3>
               <strong>{notifications.length}</strong>
+            </div>
+            <div className="metric-card">
+              <h3>Chat Alerts</h3>
+              <strong>{totalUnreadChats}</strong>
             </div>
           </div>
 
@@ -1996,7 +2060,7 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
         </article>
 
         <article className="panel-card home-activity-card">
-          <h2>Recent Activity</h2>
+          <h2>System Activity</h2>
           <div className="stack-list compact">
             {(notifications || []).slice(0, 8).map(item => (
               <div key={item.id} className="item-card compact">
@@ -2004,7 +2068,7 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
                 <small>{formatClock(item.created_at)}</small>
               </div>
             ))}
-            {!notifications.length && <div className="empty-line">No recent notifications.</div>}
+            {!notifications.length && <div className="empty-line">No recent system notifications.</div>}
           </div>
         </article>
       </section>
@@ -2041,59 +2105,7 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
 
     return (
       <section className="chat-shell">
-        <aside className="chat-nav-rail">
-          <div className="chat-nav-top">
-            <button className="rail-item active" type="button" title="Chats">
-              <UiIcon name="chat" />
-              {totalUnreadChats > 0 && <span className="rail-badge">{totalUnreadChats}</span>}
-            </button>
-            <button
-              className="rail-item"
-              type="button"
-              title="Notifications"
-              onClick={() => setActiveTab("home")}
-            >
-              <UiIcon name="bell" />
-              {notifications.length > 0 && <span className="rail-badge">{notifications.length}</span>}
-            </button>
-            <button
-              className="rail-item"
-              type="button"
-              title="Grocery marketplace"
-              onClick={() => setActiveTab("marketplace")}
-            >
-              <UiIcon name="cart" />
-            </button>
-            <button
-              className="rail-item"
-              type="button"
-              title="Service providers"
-              onClick={() => setActiveTab("services")}
-            >
-              <UiIcon name="tool" />
-            </button>
-          </div>
-          <div className="chat-nav-bottom">
-            <button
-              className="rail-item"
-              type="button"
-              title="Settings"
-              onClick={() => setActiveTab("profile")}
-            >
-              <UiIcon name="settings" />
-            </button>
-            <button
-              className="rail-item"
-              type="button"
-              title="My profile"
-              onClick={() => setActiveTab("profile")}
-            >
-              <UiIcon name="user" />
-            </button>
-          </div>
-        </aside>
-
-        <div className="chat-layout">
+        <div className="chat-layout full-width-chat">
           <aside className="chat-sidebar">
             <div className="chat-sidebar-head">
               <h2>Chats</h2>
@@ -3088,14 +3100,16 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
             <input
               value={sellerForm.imageUrl}
               onChange={event => setSellerForm(prev => ({ ...prev, imageUrl: event.target.value }))}
-              placeholder="Product image URL"
+              placeholder="Product image URL (optional)"
             />
-            <input
-              type="file"
-              accept="image/*"
-              onChange={handleSellerImageSelection}
-            />
-            <small>{sellerImageUploading ? "Uploading..." : "Pick image file to upload"}</small>
+          </div>
+          <div className="field-row seller-image-row">
+            <input type="file" accept="image/*" onChange={handleSellerImageSelection} disabled={sellerImageUploading} />
+            <small>
+              {sellerImageUploading
+                ? "Uploading image to media storage..."
+                : "Upload from device to auto-fill image URL."}
+            </small>
           </div>
           {!!sellerForm.imageUrl && (
             <div className="field-row">
@@ -3577,78 +3591,83 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
   }
 
   return (
-    <div className="superapp-shell">
-      <aside className="sidebar">
-        <div className="brand-block">
-          <div className="brand-mark">LH</div>
-          <div>
-            <h2>LifeHub</h2>
-            <p>{roleLabel(userRoles)} Workspace</p>
-          </div>
-        </div>
-        <nav className="side-nav">
-          {tabs.map(tab => (
-            <button key={tab.id} className={`nav-item ${activeTab === tab.id ? "active" : ""}`} onClick={() => setActiveTab(tab.id)}>
-              <span className="nav-icon">
-                <UiIcon name={tabIconName(tab.id)} />
-                {tab.id === "home" && notifications.length > 0 && (
-                  <span className="nav-badge">{notifications.length > 99 ? "99+" : notifications.length}</span>
-                )}
-                {tab.id === "chat" && totalUnreadChats > 0 && (
-                  <span className="nav-badge">{totalUnreadChats > 99 ? "99+" : totalUnreadChats}</span>
-                )}
-              </span>
-              <span>{tab.label}</span>
-            </button>
-          ))}
-        </nav>
-        <div className="sidebar-foot">
-          <small>{loading ? "Syncing live data..." : "Live sync active"}</small>
-          <small>{new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</small>
-        </div>
-      </aside>
-
-      <main className="main-stage">
-        <header className="topbar">
+    <div className="superapp-shell superapp-shell-full">
+      <main className="main-stage main-stage-full">
+        <header className="topbar topbar-full">
           <div className="topbar-main">
             <h3>Hi, {user.name}</h3>
             <p>
               Persistent chats, fair wallet transactions, nearby marketplace, and role-aware workflows.
             </p>
           </div>
-          <div className="topbar-avatar">
-            {profilePhoto ? (
-              <img src={profilePhoto} alt="Profile" className="profile-avatar" />
-            ) : (
-              <div className="profile-avatar">{String(user.name || "U").slice(0, 1)}</div>
-            )}
+          <div className="topbar-meta">
+            <div className="topbar-avatar">
+              {profilePhoto ? (
+                <img src={profilePhoto} alt="Profile" className="profile-avatar" />
+              ) : (
+                <div className="profile-avatar">{String(user.name || "U").slice(0, 1)}</div>
+              )}
+            </div>
+            <div className="chip-row">
+              <button type="button" className="chip chip-button" onClick={() => setActiveTab("home")}>
+                System Alerts: {notifications.length}
+              </button>
+              <button type="button" className="chip chip-button" onClick={() => setActiveTab("chat")}>
+                Chat Alerts: {totalUnreadChats}
+              </button>
+              <span className="chip">Role: {roleLabel(userRoles)}</span>
+              <span className="chip">Chat Events: {chatNotifications.length}</span>
+              <span className="chip chip-live">
+                {loading ? "Loading data..." : "Live session"}
+              </span>
+            </div>
           </div>
-          <div className="chip-row">
-            <button type="button" className="chip chip-button" onClick={() => setActiveTab("home")}>
-              Notifications: {notifications.length}
-            </button>
-            <span className="chip">Role: {roleLabel(userRoles)}</span>
-            <span className="chip chip-live">
-              {loading ? "Loading data..." : "Live session"}
-            </span>
-          </div>
+          <nav className="module-nav-grid">
+            {tabs.map(tab => (
+              <button
+                key={tab.id}
+                type="button"
+                className={`module-nav-item ${activeTab === tab.id ? "active" : ""}`}
+                onClick={() => setActiveTab(tab.id)}
+              >
+                <span className="module-nav-icon">
+                  <UiIcon name={tabIconName(tab.id)} />
+                  {tab.id === "home" && notifications.length > 0 && (
+                    <span className="nav-badge">{notifications.length > 99 ? "99+" : notifications.length}</span>
+                  )}
+                  {tab.id === "chat" && totalUnreadChats > 0 && (
+                    <span className="nav-badge">{totalUnreadChats > 99 ? "99+" : totalUnreadChats}</span>
+                  )}
+                </span>
+                <span>{tab.label}</span>
+              </button>
+            ))}
+          </nav>
         </header>
         <div className="command-deck">
           <button type="button" className="ghost-btn" onClick={bootstrap}>
             Sync Workspace
           </button>
-          <button type="button" className="ghost-btn" onClick={() => setActiveTab("marketplace")}>
-            Nearby Groceries
-          </button>
-          <button type="button" className="ghost-btn" onClick={() => setActiveTab("chat")}>
-            Open Inbox
-          </button>
-          <button type="button" className="ghost-btn" onClick={() => setActiveTab("orders")}>
-            Active Deliveries
-          </button>
-          <button type="button" className="ghost-btn" onClick={() => setActiveTab("seller")}>
-            Seller Inventory
-          </button>
+          {canAccess.marketplace && (
+            <button type="button" className="ghost-btn" onClick={() => setActiveTab("marketplace")}>
+              Nearby Groceries
+            </button>
+          )}
+          {canAccess.chat && (
+            <button type="button" className="ghost-btn" onClick={() => setActiveTab("chat")}>
+              Open Inbox
+            </button>
+          )}
+          {canAccess.orders && (
+            <button type="button" className="ghost-btn" onClick={() => setActiveTab("orders")}>
+              Active Deliveries
+            </button>
+          )}
+          {canAccess.seller && (
+            <button type="button" className="ghost-btn" onClick={() => setActiveTab("seller")}>
+              Seller Inventory
+            </button>
+          )}
         </div>
 
         {error && <div className="alert danger">{error}</div>}

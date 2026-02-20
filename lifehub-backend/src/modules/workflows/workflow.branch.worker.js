@@ -1,12 +1,20 @@
 import prisma from "../../config/db.js";
 import { eventBus } from "../../common/events/eventBus.js";
 
-eventBus.on("WORKFLOW.BRANCH.START", async ({ branchId, stateId }) => {
+const BRANCH_PROCESS_DELAY_MS = Math.max(
+  Number(process.env.WORKFLOW_BRANCH_PROCESS_DELAY_MS || 0),
+  0
+);
 
+function wait(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+eventBus.on("WORKFLOW.BRANCH.START", async ({ branchId }) => {
   try {
-
-    // simulate work
-    await new Promise(r => setTimeout(r, 1000));
+    if (BRANCH_PROCESS_DELAY_MS > 0) {
+      await wait(BRANCH_PROCESS_DELAY_MS);
+    }
 
     await prisma.workflow_branches.update({
       where: { id: branchId },
@@ -17,8 +25,7 @@ eventBus.on("WORKFLOW.BRANCH.START", async ({ branchId, stateId }) => {
 
     eventBus.emit("WORKFLOW.BRANCH.DONE", { branchId });
 
-  } catch (err) {
-
+  } catch {
     await prisma.workflow_branches.update({
       where: { id: branchId },
       data: { status: "FAILED" }

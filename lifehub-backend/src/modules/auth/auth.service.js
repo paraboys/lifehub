@@ -6,11 +6,19 @@ import {
   generateAccessToken,
   generateRefreshToken
 } from "../../common/authUtils.js";
+import { buildPhoneCandidates } from "./otp.service.js";
 
 export const signupUser = async (data) => {
+  const normalizedPhone = String(data.phone || "").trim();
+  const normalizedEmail = data.email ? String(data.email).trim().toLowerCase() : null;
+  if (!normalizedPhone) throw new Error("phone is required");
+
   const exists = await prisma.users.findFirst({
     where: {
-      OR: [{ phone: data.phone }, { email: data.email }]
+      OR: [
+        { phone: normalizedPhone },
+        ...(normalizedEmail ? [{ email: normalizedEmail }] : [])
+      ]
     }
   });
 
@@ -32,8 +40,8 @@ export const signupUser = async (data) => {
   const user = await prisma.users.create({
     data: {
       name: data.name,
-      phone: data.phone,
-      email: data.email,
+      phone: normalizedPhone,
+      email: normalizedEmail,
       password_hash: await hashPassword(data.password),
       wallets: { create: { balance: 0 } },
       user_roles: {
@@ -48,8 +56,15 @@ export const signupUser = async (data) => {
 };
 
 export const loginUser = async (data, meta) => {
-  const user = await prisma.users.findUnique({
-    where: { phone: data.phone },
+  const phoneCandidates = buildPhoneCandidates(data.phone);
+  if (!phoneCandidates.length) throw new Error("Invalid credentials");
+
+  const user = await prisma.users.findFirst({
+    where: {
+      phone: {
+        in: phoneCandidates
+      }
+    },
     include: {
       user_roles: {
         include: { roles: true }

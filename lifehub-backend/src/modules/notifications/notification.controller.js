@@ -2,7 +2,7 @@ import {
   createSelfTestNotification,
   createNotification,
   deliverPendingBatch,
-  listUserNotifications,
+  listUserNotificationsScoped,
   getNotificationPreferences,
   updateNotificationPreferences
 } from "./notification.service.js";
@@ -25,7 +25,10 @@ export async function createNotificationApi(req, res) {
 
 export async function listMyNotifications(req, res) {
   try {
-    const items = await listUserNotifications(req.user.id, req.query.limit);
+    const items = await listUserNotificationsScoped(req.user.id, {
+      limit: req.query.limit,
+      scope: req.query.scope
+    });
     res.json(jsonSafe({ notifications: items }));
   } catch (err) {
     res.status(400).json({ error: err.message });

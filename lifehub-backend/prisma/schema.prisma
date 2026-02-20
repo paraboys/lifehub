@@ -501,4 +501,7 @@ model login_otps {
   phone      String
   code       String
   expires_at DateTime
+  created_at DateTime @default(now()) @db.Timestamp(6)
+
+  @@index([phone, created_at(sort: Desc)])
 }
