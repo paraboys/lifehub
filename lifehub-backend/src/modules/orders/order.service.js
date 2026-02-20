@@ -1,4 +1,5 @@
 import prisma from "../../config/db.js";
+import { Prisma } from "@prisma/client";
 import {
   startWorkflow,
   applyEvent,
@@ -24,6 +25,21 @@ const redis = new IORedis(process.env.REDIS_URL || "redis://localhost:6379", {
 
 function toBigInt(id) {
   return BigInt(id);
+}
+
+function isShopFeedbackTableMissingError(error) {
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError)) return false;
+  if (!["P2021", "P2022"].includes(String(error.code || ""))) return false;
+
+  const table = String(error?.meta?.table || "").toLowerCase();
+  const column = String(error?.meta?.column || "").toLowerCase();
+  const message = String(error.message || "").toLowerCase();
+
+  return (
+    table.includes("shop_feedbacks")
+    || column.includes("shop_feedbacks")
+    || message.includes("shop_feedbacks")
+  );
 }
 
 export async function createOrder({ userId, shopId, total, items = [], idempotencyKey }) {
@@ -436,21 +452,27 @@ export async function confirmDelivery({
   });
 
   if (hasRating && order.shop_id) {
-    await prisma.shop_feedbacks.upsert({
-      where: { order_id: order.id },
-      update: {
-        rating: Number(numericRating.toFixed(1)),
-        comment: normalizedFeedback
-      },
-      create: {
-        shop_id: order.shop_id,
-        user_id: toBigInt(actorId),
-        order_id: order.id,
-        rating: Number(numericRating.toFixed(1)),
-        comment: normalizedFeedback
+    try {
+      await prisma.shop_feedbacks.upsert({
+        where: { order_id: order.id },
+        update: {
+          rating: Number(numericRating.toFixed(1)),
+          comment: normalizedFeedback
+        },
+        create: {
+          shop_id: order.shop_id,
+          user_id: toBigInt(actorId),
+          order_id: order.id,
+          rating: Number(numericRating.toFixed(1)),
+          comment: normalizedFeedback
+        }
+      });
+      await syncShopRatingFromFeedback(order.shop_id);
+    } catch (error) {
+      if (!isShopFeedbackTableMissingError(error)) {
+        throw error;
       }
-    });
-    await syncShopRatingFromFeedback(order.shop_id);
+    }
   }
 
   eventBus.emit("ORDER.DELIVERED", {

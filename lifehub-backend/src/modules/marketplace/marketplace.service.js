@@ -1,9 +1,27 @@
 import prisma from "../../config/db.js";
+import { Prisma } from "@prisma/client";
 
 const MAX_LIMIT = 200;
 
+const SHOP_FEEDBACK_MIGRATION_HINT = "Run migration `20260220101000_marketplace_inventory_feedback` to enable shop feedback features.";
+
 function hasValue(value) {
   return value !== null && value !== undefined && String(value).trim() !== "";
+}
+
+function isShopFeedbackTableMissingError(error) {
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError)) return false;
+  if (!["P2021", "P2022"].includes(String(error.code || ""))) return false;
+
+  const table = String(error?.meta?.table || "").toLowerCase();
+  const column = String(error?.meta?.column || "").toLowerCase();
+  const message = String(error.message || "").toLowerCase();
+
+  return (
+    table.includes("shop_feedbacks")
+    || column.includes("shop_feedbacks")
+    || message.includes("shop_feedbacks")
+  );
 }
 
 function toDecimalNumber(value) {
@@ -174,14 +192,22 @@ async function getShopFeedbackSummaryMap(shopIds = []) {
 
   if (!normalizedIds.length) return new Map();
 
-  const grouped = await prisma.shop_feedbacks.groupBy({
-    by: ["shop_id"],
-    where: {
-      shop_id: { in: normalizedIds }
-    },
-    _avg: { rating: true },
-    _count: { _all: true }
-  });
+  let grouped = [];
+  try {
+    grouped = await prisma.shop_feedbacks.groupBy({
+      by: ["shop_id"],
+      where: {
+        shop_id: { in: normalizedIds }
+      },
+      _avg: { rating: true },
+      _count: { _all: true }
+    });
+  } catch (error) {
+    if (isShopFeedbackTableMissingError(error)) {
+      return new Map();
+    }
+    throw error;
+  }
 
   const summaryMap = new Map();
   for (const row of grouped) {
@@ -227,22 +253,36 @@ async function upsertInventory(productId, quantity) {
 
 export async function refreshShopRatingFromFeedback(shopId) {
   const normalizedShopId = toBigInt(shopId, "shopId");
-  const grouped = await prisma.shop_feedbacks.groupBy({
-    by: ["shop_id"],
-    where: { shop_id: normalizedShopId },
-    _avg: { rating: true },
-    _count: { _all: true }
-  });
+  let grouped = [];
+  let isFeedbackTableMissing = false;
+  try {
+    grouped = await prisma.shop_feedbacks.groupBy({
+      by: ["shop_id"],
+      where: { shop_id: normalizedShopId },
+      _avg: { rating: true },
+      _count: { _all: true }
+    });
+  } catch (error) {
+    if (isShopFeedbackTableMissingError(error)) {
+      isFeedbackTableMissing = true;
+    } else {
+      throw error;
+    }
+  }
 
   const averageRating = grouped[0]?._avg?.rating;
-  const feedbackCount = Number(grouped[0]?._count?._all || 0);
-  const nextRating = averageRating === null || averageRating === undefined
-    ? null
-    : Number(Number(averageRating).toFixed(1));
+  const feedbackCount = isFeedbackTableMissing ? 0 : Number(grouped[0]?._count?._all || 0);
+  const nextRating = isFeedbackTableMissing
+    ? undefined
+    : averageRating === null || averageRating === undefined
+      ? null
+      : Number(Number(averageRating).toFixed(1));
 
   const shop = await prisma.shop_profiles.update({
     where: { id: normalizedShopId },
-    data: { rating: nextRating },
+    data: {
+      ...(nextRating === undefined ? {} : { rating: nextRating })
+    },
     select: {
       id: true,
       verified: true,
@@ -887,33 +927,40 @@ export async function createShopFeedback({
     maxLength: 1000
   });
 
-  const existing = await prisma.shop_feedbacks.findUnique({
-    where: { order_id: eligibleOrder.id }
-  });
+  try {
+    const existing = await prisma.shop_feedbacks.findUnique({
+      where: { order_id: eligibleOrder.id }
+    });
 
-  const feedback = existing
-    ? await prisma.shop_feedbacks.update({
-        where: { id: existing.id },
-        data: {
-          rating: Number(numericRating.toFixed(1)),
-          comment: normalizedComment
-        }
-      })
-    : await prisma.shop_feedbacks.create({
-        data: {
-          shop_id: resolvedShopId,
-          user_id: userId,
-          order_id: eligibleOrder.id,
-          rating: Number(numericRating.toFixed(1)),
-          comment: normalizedComment
-        }
-      });
+    const feedback = existing
+      ? await prisma.shop_feedbacks.update({
+          where: { id: existing.id },
+          data: {
+            rating: Number(numericRating.toFixed(1)),
+            comment: normalizedComment
+          }
+        })
+      : await prisma.shop_feedbacks.create({
+          data: {
+            shop_id: resolvedShopId,
+            user_id: userId,
+            order_id: eligibleOrder.id,
+            rating: Number(numericRating.toFixed(1)),
+            comment: normalizedComment
+          }
+        });
 
-  const summary = await refreshShopRatingFromFeedback(resolvedShopId);
-  return {
-    feedback: mapShopFeedbackForResponse(feedback),
-    summary
-  };
+    const summary = await refreshShopRatingFromFeedback(resolvedShopId);
+    return {
+      feedback: mapShopFeedbackForResponse(feedback),
+      summary
+    };
+  } catch (error) {
+    if (isShopFeedbackTableMissingError(error)) {
+      throw new Error(`Shop feedback is temporarily unavailable. ${SHOP_FEEDBACK_MIGRATION_HINT}`);
+    }
+    throw error;
+  }
 }
 
 export async function listShopFeedback({
@@ -922,24 +969,32 @@ export async function listShopFeedback({
 }) {
   const resolvedShopId = toBigInt(shopId, "shopId");
 
-  const [rows, feedbackCount] = await Promise.all([
-    prisma.shop_feedbacks.findMany({
-      where: { shop_id: resolvedShopId },
-      include: {
-        users: {
-          select: {
-            id: true,
-            name: true
+  let rows = [];
+  let feedbackCount = 0;
+  try {
+    [rows, feedbackCount] = await Promise.all([
+      prisma.shop_feedbacks.findMany({
+        where: { shop_id: resolvedShopId },
+        include: {
+          users: {
+            select: {
+              id: true,
+              name: true
+            }
           }
-        }
-      },
-      orderBy: { created_at: "desc" },
-      take: clampLimit(limit, 20)
-    }),
-    prisma.shop_feedbacks.count({
-      where: { shop_id: resolvedShopId }
-    })
-  ]);
+        },
+        orderBy: { created_at: "desc" },
+        take: clampLimit(limit, 20)
+      }),
+      prisma.shop_feedbacks.count({
+        where: { shop_id: resolvedShopId }
+      })
+    ]);
+  } catch (error) {
+    if (!isShopFeedbackTableMissingError(error)) {
+      throw error;
+    }
+  }
 
   const shop = await prisma.shop_profiles.findUnique({
     where: { id: resolvedShopId },

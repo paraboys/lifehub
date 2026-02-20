@@ -392,6 +392,7 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
     quantity: ""
   });
   const [sellerProducts, setSellerProducts] = useState([]);
+  const [sellerImageUploading, setSellerImageUploading] = useState(false);
   const [shopLocationForm, setShopLocationForm] = useState({
     lat: "28.6139",
     lng: "77.2090"
@@ -703,14 +704,15 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
     setPendingAttachments(prev => prev.filter(item => String(item.fileId) !== String(fileId)));
   }
 
-  async function uploadChatAttachment(file) {
+  async function uploadChatAttachment(file, options = {}) {
+    const isPrivate = options.isPrivate !== undefined ? Boolean(options.isPrivate) : true;
     const init = await api("/media/upload/init", {
       method: "POST",
       body: JSON.stringify({
         fileName: file.name,
         fileType: file.type || "application/octet-stream",
         fileSize: file.size,
-        isPrivate: true
+        isPrivate
       })
     });
 
@@ -1549,6 +1551,31 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
       quantity: ""
     }));
     await loadSellerProducts();
+  }
+
+  async function handleSellerImageSelection(event) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    if (!String(file.type || "").toLowerCase().startsWith("image/")) {
+      setError("Please select a valid image file.");
+      return;
+    }
+
+    setSellerImageUploading(true);
+    try {
+      const uploaded = await uploadChatAttachment(file, { isPrivate: false });
+      setSellerForm(prev => ({
+        ...prev,
+        imageUrl: uploaded.fileUrl
+      }));
+      setToast("Product image uploaded successfully.");
+      setTimeout(() => setToast(""), 2500);
+    } catch (err) {
+      setError(err.message || "Image upload failed");
+    } finally {
+      setSellerImageUploading(false);
+    }
   }
 
   async function updateShopLocation() {
@@ -3006,7 +3033,22 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
               onChange={event => setSellerForm(prev => ({ ...prev, imageUrl: event.target.value }))}
               placeholder="Product image URL"
             />
+            <input
+              type="file"
+              accept="image/*"
+              onChange={handleSellerImageSelection}
+            />
+            <small>{sellerImageUploading ? "Uploading..." : "Pick image file to upload"}</small>
           </div>
+          {!!sellerForm.imageUrl && (
+            <div className="field-row">
+              <img
+                src={sellerForm.imageUrl}
+                alt="Product preview"
+                style={{ width: 140, height: 90, objectFit: "cover", borderRadius: 10 }}
+              />
+            </div>
+          )}
           <div className="field-row">
             <input
               value={sellerForm.description}
