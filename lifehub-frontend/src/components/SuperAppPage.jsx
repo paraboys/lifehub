@@ -90,6 +90,11 @@ function tabSubtitle(tabId) {
   return "Module";
 }
 
+function categoryKey(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  return normalized || "uncategorized";
+}
+
 function titleCase(value) {
   return String(value || "")
     .toLowerCase()
@@ -365,6 +370,7 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
     minShopRating: "0",
     sortBy: "fair"
   });
+  const [marketCategory, setMarketCategory] = useState("all");
   const locationThrottleRef = useRef(0);
   const messageEndRef = useRef(null);
 
@@ -453,6 +459,46 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
     () => cart.reduce((sum, item) => sum + Number(item.price || 0) * Number(item.quantity || 0), 0),
     [cart]
   );
+  const selectedShop = useMemo(
+    () => shops.find(shop => String(shop.id) === String(selectedShopId)) || null,
+    [shops, selectedShopId]
+  );
+  const marketplaceCategories = useMemo(() => {
+    const set = new Set();
+    for (const product of shopProducts) {
+      set.add(categoryKey(product?.category));
+    }
+    for (const result of productResults) {
+      set.add(categoryKey(result?.category));
+    }
+    return ["all", ...Array.from(set).filter(value => value !== "uncategorized"), "uncategorized"];
+  }, [shopProducts, productResults]);
+  const visibleShopProducts = useMemo(() => {
+    if (marketCategory === "all") return shopProducts;
+    return shopProducts.filter(product => categoryKey(product?.category) === marketCategory);
+  }, [shopProducts, marketCategory]);
+  const visibleProductResults = useMemo(() => {
+    if (marketCategory === "all") return productResults;
+    return productResults.filter(result => categoryKey(result?.category) === marketCategory);
+  }, [productResults, marketCategory]);
+  const serviceSkillOptions = useMemo(() => {
+    const seed = [
+      "plumber",
+      "electrician",
+      "ac technician",
+      "cleaner",
+      "carpenter",
+      "appliance repair"
+    ];
+    const set = new Set(seed);
+    for (const provider of providers) {
+      for (const skill of provider?.skills || []) {
+        const normalized = String(skill || "").trim().toLowerCase();
+        if (normalized) set.add(normalized);
+      }
+    }
+    return Array.from(set).slice(0, 10);
+  }, [providers]);
 
   const selectedThread = useMemo(
     () => conversations.find(conv => String(conv.id) === String(selectedConversationId)) || null,
@@ -1888,6 +1934,12 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
   }, [tabs, activeTab]);
 
   useEffect(() => {
+    if (!marketplaceCategories.includes(marketCategory)) {
+      setMarketCategory("all");
+    }
+  }, [marketplaceCategories, marketCategory]);
+
+  useEffect(() => {
     if (activeTab === "chat" && selectedConversationId) {
       loadMessages(selectedConversationId, { markRead: true }).catch(() => {});
     }
@@ -2105,6 +2157,19 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
 
     return (
       <section className="chat-shell">
+        <header className="chat-platform-bar">
+          <div className="chat-platform-meta">
+            <h2>LifeHub Messenger</h2>
+            <p>
+              Dedicated communication workspace with realtime delivery state, contact sync, and voice/video calling.
+            </p>
+          </div>
+          <div className="chat-platform-actions">
+            <span className="status-pill">Conversations {conversations.length}</span>
+            <span className="status-pill">Unread {totalUnreadChats}</span>
+            <span className="status-pill">Live users {Object.keys(onlineUsers).length}</span>
+          </div>
+        </header>
         <div className="chat-layout full-width-chat">
           <aside className="chat-sidebar">
             <div className="chat-sidebar-head">
@@ -2536,241 +2601,294 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
 
   function renderMarketplaceTab() {
     return (
-      <section className="workspace-grid">
-        <article className="panel-card">
-          <h2>Nearby Grocery Stores</h2>
-          <div className="field-row">
+      <section className="market-shell">
+        <header className="panel-card market-hero">
+          <div>
+            <h2>LifeHub Grocery</h2>
+            <p>
+              Discover nearby stores, compare price and reliability, and shop by category with a modern retail workflow.
+            </p>
+          </div>
+          <div className="market-search-wrap">
+            <UiIcon name="search" />
             <input
               value={productQuery}
               onChange={event => setProductQuery(event.target.value)}
-              placeholder="Search item like Amazon/Flipkart (debounced)"
+              placeholder="Search products, brands, and categories"
             />
+            <button type="button" onClick={() => searchProductsNearby(productQuery)}>
+              Search
+            </button>
           </div>
-          <div className="field-row">
-            <input
-              value={productSearchFilters.maxPrice}
-              onChange={event =>
-                setProductSearchFilters(prev => ({ ...prev, maxPrice: event.target.value }))
-              }
-              placeholder="Max price"
-            />
-            <input
-              value={productSearchFilters.minShopRating}
-              onChange={event =>
-                setProductSearchFilters(prev => ({ ...prev, minShopRating: event.target.value }))
-              }
-              placeholder="Min rating (0-5)"
-            />
-            <select
-              value={productSearchFilters.sortBy}
-              onChange={event =>
-                setProductSearchFilters(prev => ({ ...prev, sortBy: event.target.value }))
-              }
-            >
-              <option value="fair">Best Fair Deal</option>
-              <option value="distance">Nearest</option>
-              <option value="price">Lowest Price</option>
-              <option value="reliable">Most Reliable Shop</option>
-            </select>
+          <div className="market-chip-row">
+            <span className="status-pill">Nearby shops {shops.length}</span>
+            <span className="status-pill">Catalog items {shopProducts.length}</span>
+            <span className="status-pill">Cart items {cart.length}</span>
           </div>
-          {!!productQuery.trim() && (
-            <div className="stack-list compact">
-              {searchingProducts && <div className="empty-line">Searching nearby inventory...</div>}
-              {!searchingProducts && !!productSearchError && (
-                <div className="empty-line">{productSearchError}</div>
-              )}
-              {!searchingProducts &&
-                productResults.map(item => (
+        </header>
+
+        <div className="market-grid">
+          <aside className="panel-card market-shop-panel">
+            <div className="market-panel-head">
+              <h3>Nearby Shops</h3>
+              <button type="button" className="ghost-btn" onClick={searchShops}>
+                Refresh
+              </button>
+            </div>
+            <div className="market-location-grid">
+              <button type="button" onClick={useCurrentLocation}>
+                Use Current Location
+              </button>
+              <input
+                value={shopFilters.lat}
+                onChange={event => setShopFilters(prev => ({ ...prev, lat: event.target.value }))}
+                placeholder="Latitude"
+              />
+              <input
+                value={shopFilters.lng}
+                onChange={event => setShopFilters(prev => ({ ...prev, lng: event.target.value }))}
+                placeholder="Longitude"
+              />
+              <input
+                value={shopFilters.radiusKm}
+                onChange={event =>
+                  setShopFilters(prev => ({ ...prev, radiusKm: event.target.value }))
+                }
+                placeholder="Radius KM"
+              />
+            </div>
+            <div className="market-filter-grid">
+              <input
+                value={productSearchFilters.maxPrice}
+                onChange={event =>
+                  setProductSearchFilters(prev => ({ ...prev, maxPrice: event.target.value }))
+                }
+                placeholder="Max price"
+              />
+              <input
+                value={productSearchFilters.minShopRating}
+                onChange={event =>
+                  setProductSearchFilters(prev => ({ ...prev, minShopRating: event.target.value }))
+                }
+                placeholder="Min rating"
+              />
+              <select
+                value={productSearchFilters.sortBy}
+                onChange={event =>
+                  setProductSearchFilters(prev => ({ ...prev, sortBy: event.target.value }))
+                }
+              >
+                <option value="fair">Best Fair Deal</option>
+                <option value="distance">Nearest</option>
+                <option value="price">Lowest Price</option>
+                <option value="reliable">Most Reliable Shop</option>
+              </select>
+            </div>
+            <div className="market-shop-list">
+              {shops.map(shop => (
+                <button
+                  key={shop.id}
+                  className={`market-shop-card ${String(shop.id) === String(selectedShopId) ? "active" : ""}`}
+                  onClick={() => loadShopProducts(shop.id)}
+                  type="button"
+                >
+                  <strong>{shop.shopName}</strong>
+                  <small>{shop.address}</small>
+                  <small>
+                    {shop.distanceKm !== null && shop.distanceKm !== undefined
+                      ? `${shop.distanceKm.toFixed(1)} km`
+                      : "distance n/a"} | Rating {Number(shop.rating || 0).toFixed(1)} | Reliability{" "}
+                    {Number(shop.reliabilityScore || 0).toFixed(1)}
+                  </small>
+                  <span className="status-pill">{shop.openNow ? "Open now" : "Closed now"}</span>
+                </button>
+              ))}
+              {!shops.length && <div className="empty-line">No shops loaded yet.</div>}
+            </div>
+          </aside>
+
+          <div className="market-main">
+            {!!productQuery.trim() && (
+              <article className="panel-card market-search-results">
+                <div className="market-panel-head">
+                  <h3>Live Search Results</h3>
+                  <small>
+                    {!searchingProducts ? `${visibleProductResults.length} product matches` : "Searching..."}
+                  </small>
+                </div>
+                {searchingProducts && <div className="empty-line">Searching nearby inventory...</div>}
+                {!searchingProducts && !!productSearchError && (
+                  <div className="empty-line">{productSearchError}</div>
+                )}
+                {!searchingProducts && !productSearchError && !visibleProductResults.length && (
+                  <div className="empty-line">No nearby shops found for this item.</div>
+                )}
+                <div className="market-search-grid">
+                  {!searchingProducts &&
+                    visibleProductResults.map(item => (
+                      <button
+                        key={`${item?.shop?.id || "shop"}-${item.productId}`}
+                        className="market-result-card"
+                        onClick={async () => {
+                          if (!item?.shop?.id) return;
+                          setSelectedShopId(String(item.shop.id));
+                          await loadShopProducts(item.shop.id);
+                        }}
+                        type="button"
+                        disabled={!item?.shop?.id}
+                      >
+                        {!!item.imageUrl && (
+                          <img src={item.imageUrl} alt={item.productName} className="market-result-thumb" />
+                        )}
+                        <div>
+                          <strong>{item.productName}</strong>
+                          <small>
+                            {(item.company ? `${item.company} | ` : "")}
+                            {item?.shop?.shopName || "Unknown shop"} | {toCurrency(item.price)} | Qty{" "}
+                            {item.availableQuantity}
+                          </small>
+                          <small>
+                            {item.distanceKm !== null && item.distanceKm !== undefined
+                              ? `${item.distanceKm.toFixed(1)} km`
+                              : "distance n/a"} | Shop rating {Number(item?.shop?.rating || 0).toFixed(1)}
+                          </small>
+                        </div>
+                      </button>
+                    ))}
+                </div>
+              </article>
+            )}
+
+            <article className="panel-card market-catalog-panel">
+              <div className="market-panel-head">
+                <h3>{selectedShop ? `${selectedShop.shopName} Catalog` : "Product Catalog"}</h3>
+                <small>
+                  {selectedShop ? "Browse category, compare details, add to cart." : "Select a shop to load inventory."}
+                </small>
+              </div>
+              <div className="category-nav-row">
+                {marketplaceCategories.map(category => (
                   <button
-                    key={`${item?.shop?.id || "shop"}-${item.productId}`}
-                    className="item-card button-like"
-                    onClick={async () => {
-                      setSelectedShopId(String(item.shop.id));
-                      await loadShopProducts(item.shop.id);
-                    }}
-                    disabled={!item?.shop?.id}
+                    key={category}
+                    type="button"
+                    className={`category-chip ${marketCategory === category ? "active" : ""}`}
+                    onClick={() => setMarketCategory(category)}
                   >
-                    <strong>{item.productName}</strong>
-                    <small>
-                      {(item.company ? `${item.company} | ` : "")}
-                      {item?.shop?.shopName || "Unknown shop"} | {toCurrency(item.price)} | Qty {item.availableQuantity} |{" "}
-                      {item.distanceKm !== null && item.distanceKm !== undefined ? `${item.distanceKm.toFixed(1)} km` : "distance n/a"}
-                    </small>
-                    <small>
-                      Shop rating {Number(item?.shop?.rating || 0).toFixed(1)} | Reliability {Number(item?.shop?.reliabilityScore || 0).toFixed(1)} | Reviews {item?.shop?.feedbackCount || 0}
-                    </small>
+                    {category === "all" ? "All" : titleCase(category)}
                   </button>
                 ))}
-              {!searchingProducts && !productSearchError && !productResults.length && (
-                <div className="empty-line">No nearby shops found for this item.</div>
-              )}
-            </div>
-          )}
-          <div className="field-row">
-            <button type="button" onClick={useCurrentLocation}>
-              Use Current Location
-            </button>
-            <input
-              value={shopFilters.lat}
-              onChange={event => setShopFilters(prev => ({ ...prev, lat: event.target.value }))}
-              placeholder="Latitude"
-            />
-            <input
-              value={shopFilters.lng}
-              onChange={event => setShopFilters(prev => ({ ...prev, lng: event.target.value }))}
-              placeholder="Longitude"
-            />
-            <input
-              value={shopFilters.radiusKm}
-              onChange={event =>
-                setShopFilters(prev => ({ ...prev, radiusKm: event.target.value }))
-              }
-              placeholder="Radius KM"
-            />
-            <button onClick={searchShops}>Search</button>
-          </div>
-          <div className="stack-list">
-            {shops.map(shop => (
-              <button
-                key={shop.id}
-                className={`item-card button-like ${
-                  String(shop.id) === String(selectedShopId) ? "active" : ""
-                }`}
-                onClick={() => loadShopProducts(shop.id)}
-              >
-                <strong>{shop.shopName}</strong>
-                <small>
-                  {shop.address} | {shop.distanceKm !== null && shop.distanceKm !== undefined ? `${shop.distanceKm.toFixed(1)} km` : "Distance n/a"} |
-                  Rating {shop.rating || "n/a"} | Reliability {Number(shop.reliabilityScore || 0).toFixed(1)} | Reviews {shop.feedbackCount || 0}
-                </small>
-                <small>
-                  {shop.openNow ? "Open now" : "Closed now"}{" "}
-                  {shop.location?.lat && shop.location?.lng ? (
-                    <a
-                      href={`https://www.google.com/maps?q=${shop.location.lat},${shop.location.lng}`}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      Open in Maps
-                    </a>
-                  ) : null}
-                </small>
-              </button>
-            ))}
-            {!shops.length && <div className="empty-line">No shops loaded yet.</div>}
-          </div>
-        </article>
-
-        <article className="panel-card">
-          <h2>Products and Quick Cart</h2>
-          <div className="stack-list">
-            {shopProducts.map(product => (
-              <div key={product.id} className="item-card">
-                {!!product.imageUrl && (
-                  <img
-                    src={product.imageUrl}
-                    alt={product.name}
-                    style={{ width: "100%", maxHeight: 140, objectFit: "cover", borderRadius: 10 }}
-                  />
-                )}
-                <div className="item-header">
-                  <strong>{product.name}</strong>
-                  <span className="status-pill">Qty {product.availableQuantity}</span>
-                </div>
-                <small>
-                  {(product.company ? `Company: ${product.company} | ` : "")}
-                  Price: {toCurrency(product.price)} | Category: {product.category || "general"}
-                </small>
-                {!!product.description && <small>{product.description}</small>}
-                <button onClick={() => addToCart(product)}>Add to Cart</button>
               </div>
-            ))}
-            {!shopProducts.length && (
-              <div className="empty-line">Select a shop to view products and prices.</div>
-            )}
+              <div className="market-product-grid">
+                {visibleShopProducts.map(product => (
+                  <div key={product.id} className="market-product-card">
+                    {!!product.imageUrl ? (
+                      <img src={product.imageUrl} alt={product.name} className="market-product-thumb" />
+                    ) : (
+                      <div className="market-product-thumb market-thumb-placeholder">
+                        <span>{initials(product.name)}</span>
+                      </div>
+                    )}
+                    <div className="market-product-body">
+                      <strong>{product.name}</strong>
+                      <small>{product.company ? `Brand ${product.company}` : "Local inventory"}</small>
+                      <small>{product.description || "Fresh stock available from nearby store."}</small>
+                    </div>
+                    <div className="market-product-foot">
+                      <span className="status-pill">Qty {product.availableQuantity}</span>
+                      <span className="status-pill">{titleCase(product.category || "general")}</span>
+                    </div>
+                    <div className="market-product-actions">
+                      <strong>{toCurrency(product.price)}</strong>
+                      <button type="button" onClick={() => addToCart(product)}>
+                        Add to cart
+                      </button>
+                    </div>
+                  </div>
+                ))}
+                {!visibleShopProducts.length && (
+                  <div className="empty-line">Select a shop and category to view products.</div>
+                )}
+              </div>
+            </article>
           </div>
 
-          <div className="divider" />
-          <h3>Cart</h3>
-          <div className="stack-list compact">
-            {cart.map(item => (
-              <div key={item.productId} className="item-card compact">
-                <strong>{item.name}</strong>
-                <small>Unit: {toCurrency(item.price)}</small>
-                <div className="field-row">
+          <aside className="panel-card market-cart-panel">
+            <div className="market-panel-head">
+              <h3>Smart Cart</h3>
+              <small>{selectedShop ? selectedShop.shopName : "No shop selected"}</small>
+            </div>
+            <div className="market-cart-list">
+              {cart.map(item => (
+                <div key={item.productId} className="market-cart-item">
+                  <div>
+                    <strong>{item.name}</strong>
+                    <small>Unit {toCurrency(item.price)}</small>
+                  </div>
                   <input
                     value={item.quantity}
                     onChange={event => updateCartQuantity(item.productId, event.target.value)}
                     placeholder="Qty"
                   />
                 </div>
+              ))}
+              {!cart.length && <div className="empty-line">Your cart is empty.</div>}
+            </div>
+            <div className="market-cart-footer">
+              <div className="market-total-row">
+                <span>Total</span>
+                <strong>{toCurrency(cartTotal)}</strong>
               </div>
-            ))}
-            {!cart.length && <div className="empty-line">Your cart is empty.</div>}
-          </div>
-          <div className="field-row">
-            <strong>Total: {toCurrency(cartTotal)}</strong>
-            <select value={checkoutMode} onChange={event => setCheckoutMode(event.target.value)}>
-              <option value="RAZORPAY">Razorpay Checkout</option>
-              <option value="WALLET">Wallet Balance</option>
-            </select>
-            <button onClick={proceedCheckout} disabled={!cart.length || !selectedShopId}>
-              Proceed Payment
-            </button>
-          </div>
-        </article>
+              <select value={checkoutMode} onChange={event => setCheckoutMode(event.target.value)}>
+                <option value="RAZORPAY">Razorpay Checkout</option>
+                <option value="WALLET">Wallet Balance</option>
+              </select>
+              <button type="button" onClick={proceedCheckout} disabled={!cart.length || !selectedShopId}>
+                Proceed Payment
+              </button>
+            </div>
+          </aside>
+        </div>
       </section>
     );
   }
 
   function renderServicesTab() {
     return (
-      <section className="workspace-grid">
-        <article className="panel-card">
-          <h2>Nearby Service Providers</h2>
-          {(hasRole("PROVIDER") || hasRole("ADMIN")) && (
-            <div className="field-row">
-              <input
-                value={providerLocationForm.lat}
-                onChange={event =>
-                  setProviderLocationForm(prev => ({ ...prev, lat: event.target.value }))
-                }
-                placeholder="My lat"
-              />
-              <input
-                value={providerLocationForm.lng}
-                onChange={event =>
-                  setProviderLocationForm(prev => ({ ...prev, lng: event.target.value }))
-                }
-                placeholder="My lng"
-              />
-              <select
-                value={providerLocationForm.available ? "true" : "false"}
-                onChange={event =>
-                  setProviderLocationForm(prev => ({
+      <section className="service-shell">
+        <header className="panel-card service-hero">
+          <div>
+            <h2>Service Booking Hub</h2>
+            <p>
+              Discover skilled professionals nearby, compare ratings and availability, and book work orders with one flow.
+            </p>
+          </div>
+          <div className="service-skill-row">
+            {serviceSkillOptions.map(skill => (
+              <button
+                key={skill}
+                type="button"
+                className={`service-skill-chip ${String(providerSkill).toLowerCase() === String(skill).toLowerCase() ? "active" : ""}`}
+                onClick={() => {
+                  setProviderSkill(skill);
+                  setServiceForm(prev => ({
                     ...prev,
-                    available: event.target.value === "true"
-                  }))
-                }
+                    serviceType: skill
+                  }));
+                }}
               >
-                <option value="true">Available</option>
-                <option value="false">Unavailable</option>
-              </select>
-              <button onClick={updateMyProviderLocation}>Update My Location</button>
-            </div>
-          )}
-          <div className="field-row">
+                {titleCase(skill)}
+              </button>
+            ))}
+          </div>
+          <div className="service-filter-grid">
             <button type="button" onClick={useCurrentLocation}>
               Use Current Location
             </button>
             <input
               value={providerSkill}
               onChange={event => setProviderSkill(event.target.value)}
-              placeholder="plumber / electrician / technician"
+              placeholder="Search skill"
             />
-            <button onClick={loadProviders}>Search</button>
-          </div>
-          <div className="field-row">
             <input
               value={serviceFilters.lat}
               onChange={event => setServiceFilters(prev => ({ ...prev, lat: event.target.value }))}
@@ -2788,48 +2906,91 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
               }
               placeholder="Radius KM"
             />
+            <button type="button" onClick={loadProviders}>
+              Search Providers
+            </button>
           </div>
-          <div className="stack-list">
-            {providers.map(provider => (
-              <button
-                key={provider.id}
-                className="item-card button-like"
-                onClick={() =>
-                  setServiceForm(prev => ({
+          {(hasRole("PROVIDER") || hasRole("ADMIN")) && (
+            <div className="service-provider-self">
+              <input
+                value={providerLocationForm.lat}
+                onChange={event =>
+                  setProviderLocationForm(prev => ({ ...prev, lat: event.target.value }))
+                }
+                placeholder="My latitude"
+              />
+              <input
+                value={providerLocationForm.lng}
+                onChange={event =>
+                  setProviderLocationForm(prev => ({ ...prev, lng: event.target.value }))
+                }
+                placeholder="My longitude"
+              />
+              <select
+                value={providerLocationForm.available ? "true" : "false"}
+                onChange={event =>
+                  setProviderLocationForm(prev => ({
                     ...prev,
-                    serviceType: provider.skills?.[0] || providerSkill,
-                    preferredProviderId: String(provider.id)
+                    available: event.target.value === "true"
                   }))
                 }
               >
-                <strong>{provider.name}</strong>
-                <small>
-                  Skills: {(provider.skills || []).join(", ")} | Rating {provider.rating || "n/a"}
-                </small>
-                <small>
-                  {provider.available ? "Available" : "Unavailable"} |{" "}
-                  {provider.distanceKm !== null && provider.distanceKm !== undefined ? `${provider.distanceKm.toFixed(1)} km` : "distance n/a"}{" "}
-                  {provider.location?.lat && provider.location?.lng ? (
-                    <a
-                      href={`https://www.google.com/maps?q=${provider.location.lat},${provider.location.lng}`}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      Open in Maps
-                    </a>
-                  ) : null}
-                </small>
+                <option value="true">Available</option>
+                <option value="false">Unavailable</option>
+              </select>
+              <button type="button" onClick={updateMyProviderLocation}>
+                Update My Provider Status
               </button>
-            ))}
-            {!providers.length && <div className="empty-line">No providers loaded yet.</div>}
-          </div>
-        </article>
+            </div>
+          )}
+        </header>
 
-        <article className="panel-card">
-          <h2>Book Service Request</h2>
-          {canCreateServiceRequest ? (
-            <>
-              <div className="field-row">
+        <div className="service-layout">
+          <article className="panel-card service-provider-panel">
+            <div className="market-panel-head">
+              <h3>Available Experts</h3>
+              <small>{providers.length} providers nearby</small>
+            </div>
+            <div className="service-provider-grid">
+              {providers.map(provider => (
+                <button
+                  key={provider.id}
+                  className="service-provider-card"
+                  type="button"
+                  onClick={() =>
+                    setServiceForm(prev => ({
+                      ...prev,
+                      serviceType: provider.skills?.[0] || providerSkill,
+                      preferredProviderId: String(provider.id)
+                    }))
+                  }
+                >
+                  <div className="service-provider-top">
+                    <strong>{provider.name}</strong>
+                    <span className="status-pill">{provider.available ? "Available" : "Unavailable"}</span>
+                  </div>
+                  <small>Skills: {(provider.skills || []).join(", ") || "General service"}</small>
+                  <small>
+                    Rating {Number(provider.rating || 0).toFixed(1)} |{" "}
+                    {provider.distanceKm !== null && provider.distanceKm !== undefined
+                      ? `${provider.distanceKm.toFixed(1)} km away`
+                      : "distance n/a"}
+                  </small>
+                  <small>
+                    {provider.location?.lat && provider.location?.lng
+                      ? `${provider.location.lat}, ${provider.location.lng}`
+                      : "Location unavailable"}
+                  </small>
+                </button>
+              ))}
+              {!providers.length && <div className="empty-line">No providers loaded yet.</div>}
+            </div>
+          </article>
+
+          <aside className="panel-card service-book-panel">
+            <h3>Book Service Request</h3>
+            {canCreateServiceRequest ? (
+              <div className="service-book-form">
                 <input
                   value={serviceForm.serviceType}
                   onChange={event =>
@@ -2844,45 +3005,50 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
                   }
                   placeholder="Preferred provider ID"
                 />
-              </div>
-              <div className="field-row">
-                <input
+                <textarea
                   value={serviceForm.description}
                   onChange={event =>
                     setServiceForm(prev => ({ ...prev, description: event.target.value }))
                   }
-                  placeholder="Describe issue and location details"
+                  placeholder="Describe your issue, preferred timing, and address details"
+                  rows={4}
                 />
-                <button onClick={createServiceRequest}>Book</button>
+                <button type="button" onClick={createServiceRequest}>
+                  Book Service
+                </button>
               </div>
-            </>
-          ) : (
-            <div className="info-line">You can track and complete assigned service requests in this view.</div>
-          )}
+            ) : (
+              <div className="info-line">You can track and complete assigned service requests in this view.</div>
+            )}
 
-          <div className="stack-list">
-            {serviceRequests.map(request => (
-              <div key={request.id} className="item-card">
-                <div className="item-header">
-                  <strong>#{request.id} | {request.service_type}</strong>
-                  <span className="status-pill">{request.status}</span>
+            <div className="divider" />
+            <h3>Request Activity</h3>
+            <div className="service-request-list">
+              {serviceRequests.map(request => (
+                <div key={request.id} className="service-request-card">
+                  <div className="item-header">
+                    <strong>#{request.id} | {request.service_type}</strong>
+                    <span className="status-pill">{request.status}</span>
+                  </div>
+                  <small>{request.description || "No description"}</small>
+                  <div className="item-actions">
+                    {canCompleteServiceRequest && (
+                      <button type="button" onClick={() => completeServiceRequest(request.id)}>
+                        Complete
+                      </button>
+                    )}
+                    {canCancelServiceRequest && (
+                      <button type="button" className="danger" onClick={() => cancelServiceRequest(request.id)}>
+                        Cancel
+                      </button>
+                    )}
+                  </div>
                 </div>
-                <small>{request.description || "No description"}</small>
-                <div className="item-actions">
-                  {canCompleteServiceRequest && (
-                    <button onClick={() => completeServiceRequest(request.id)}>Complete</button>
-                  )}
-                  {canCancelServiceRequest && (
-                    <button className="danger" onClick={() => cancelServiceRequest(request.id)}>
-                      Cancel
-                    </button>
-                  )}
-                </div>
-              </div>
-            ))}
-            {!serviceRequests.length && <div className="empty-line">No service requests yet.</div>}
-          </div>
-        </article>
+              ))}
+              {!serviceRequests.length && <div className="empty-line">No service requests yet.</div>}
+            </div>
+          </aside>
+        </div>
       </section>
     );
   }
