@@ -124,6 +124,25 @@ export default function AuthPage({ onAuthSuccess }) {
           Unified marketplace + services + chat platform with workflow automation,
           fair transactions, and multi-role operations.
         </p>
+        <div className="auth-pill-row">
+          <span className="auth-pill">Realtime Messaging</span>
+          <span className="auth-pill">Geo Marketplace</span>
+          <span className="auth-pill">Workflow Engine</span>
+        </div>
+        <div className="auth-stat-grid">
+          <div className="auth-stat-card">
+            <strong>4</strong>
+            <small>Core Modules</small>
+          </div>
+          <div className="auth-stat-card">
+            <strong>6</strong>
+            <small>User Roles</small>
+          </div>
+          <div className="auth-stat-card">
+            <strong>24x7</strong>
+            <small>Live Updates</small>
+          </div>
+        </div>
       </div>
 
       <div className="auth-card">

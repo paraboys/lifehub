@@ -63,6 +63,19 @@ function roleLabel(roles = []) {
     .replace(/\b\w/g, char => char.toUpperCase());
 }
 
+function tabIconName(tabId) {
+  const key = String(tabId || "").toLowerCase();
+  if (key === "home") return "bell";
+  if (key === "chat") return "chat";
+  if (key === "marketplace") return "cart";
+  if (key === "services") return "tool";
+  if (key === "orders") return "check";
+  if (key === "seller") return "plus";
+  if (key === "wallet") return "dots";
+  if (key === "profile") return "user";
+  return "settings";
+}
+
 function titleCase(value) {
   return String(value || "")
     .toLowerCase()
@@ -1904,20 +1917,52 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
   }, [paymentIntent?.intentId, pendingOrderAfterPayment]);
 
   function renderHomeTab() {
+    const activeOrdersCount = orders.filter(order =>
+      !["DELIVERED", "COMPLETED", "CANCELLED"].includes(String(order.status || "").toUpperCase())
+    ).length;
+    const pendingServiceCount = serviceRequests.filter(request =>
+      !["COMPLETED", "CANCELLED"].includes(String(request.status || "").toUpperCase())
+    ).length;
+    const lowStockCount = sellerProducts.filter(product => Number(product.availableQuantity || 0) <= 10).length;
+
     return (
-      <section className="workspace-grid">
-        <article className="panel-card">
-          <h2>Welcome to LifeHub</h2>
+      <section className="workspace-grid home-grid">
+        <article className="panel-card home-hero-card">
+          <h2>Control Center</h2>
           <p className="info-line">
-            Use Home as your landing screen. Open Chat only when you want to read messages.
+            One workspace for grocery operations, customer support, service requests, and wallet reconciliation.
           </p>
-          <div className="field-row">
-            <button onClick={() => setActiveTab("chat")}>Open Chats</button>
-            <button onClick={() => setActiveTab("marketplace")}>Explore Grocery</button>
-            <button onClick={() => setActiveTab("services")}>Book Services</button>
+          <div className="quick-action-grid">
+            <button className="quick-action-btn" onClick={() => setActiveTab("marketplace")}>
+              Find Nearby Deals
+            </button>
+            <button className="quick-action-btn" onClick={() => setActiveTab("chat")}>
+              Jump To Inbox
+            </button>
+            <button className="quick-action-btn" onClick={() => setActiveTab("orders")}>
+              Track Orders
+            </button>
+            <button className="quick-action-btn" onClick={() => setActiveTab("wallet")}>
+              Wallet & Payouts
+            </button>
+          </div>
+          <div className="signal-strip">
+            <div className="signal-chip">
+              <span>Active Orders</span>
+              <strong>{activeOrdersCount}</strong>
+            </div>
+            <div className="signal-chip">
+              <span>Pending Services</span>
+              <strong>{pendingServiceCount}</strong>
+            </div>
+            <div className="signal-chip">
+              <span>Low Stock Items</span>
+              <strong>{hasRole("SHOPKEEPER") || hasRole("ADMIN") || hasRole("BUSINESS") ? lowStockCount : "--"}</strong>
+            </div>
           </div>
         </article>
-        <article className="panel-card">
+
+        <article className="panel-card home-signal-card">
           <h2>Live Snapshot</h2>
           <div className="metric-grid">
             <div className="metric-card">
@@ -1941,13 +1986,25 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
               <strong>{notifications.length}</strong>
             </div>
           </div>
+
+          <div className="home-status-ribbon">
+            <span className="status-pill">Geo-aware Search</span>
+            <span className="status-pill">Workflow Automation</span>
+            <span className="status-pill">Role-aware Access</span>
+            <span className="status-pill">Realtime Events</span>
+          </div>
+        </article>
+
+        <article className="panel-card home-activity-card">
+          <h2>Recent Activity</h2>
           <div className="stack-list compact">
-            {(notifications || []).slice(0, 5).map(item => (
+            {(notifications || []).slice(0, 8).map(item => (
               <div key={item.id} className="item-card compact">
                 <strong>{item.event_type}</strong>
                 <small>{formatClock(item.created_at)}</small>
               </div>
             ))}
+            {!notifications.length && <div className="empty-line">No recent notifications.</div>}
           </div>
         </article>
       </section>
@@ -3531,20 +3588,29 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
         </div>
         <nav className="side-nav">
           {tabs.map(tab => (
-            <button
-              key={tab.id}
-              className={`nav-item ${activeTab === tab.id ? "active" : ""}`}
-              onClick={() => setActiveTab(tab.id)}
-            >
-              {tab.label}
+            <button key={tab.id} className={`nav-item ${activeTab === tab.id ? "active" : ""}`} onClick={() => setActiveTab(tab.id)}>
+              <span className="nav-icon">
+                <UiIcon name={tabIconName(tab.id)} />
+                {tab.id === "home" && notifications.length > 0 && (
+                  <span className="nav-badge">{notifications.length > 99 ? "99+" : notifications.length}</span>
+                )}
+                {tab.id === "chat" && totalUnreadChats > 0 && (
+                  <span className="nav-badge">{totalUnreadChats > 99 ? "99+" : totalUnreadChats}</span>
+                )}
+              </span>
+              <span>{tab.label}</span>
             </button>
           ))}
         </nav>
+        <div className="sidebar-foot">
+          <small>{loading ? "Syncing live data..." : "Live sync active"}</small>
+          <small>{new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</small>
+        </div>
       </aside>
 
       <main className="main-stage">
         <header className="topbar">
-          <div>
+          <div className="topbar-main">
             <h3>Hi, {user.name}</h3>
             <p>
               Persistent chats, fair wallet transactions, nearby marketplace, and role-aware workflows.
@@ -3567,6 +3633,23 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
             </span>
           </div>
         </header>
+        <div className="command-deck">
+          <button type="button" className="ghost-btn" onClick={bootstrap}>
+            Sync Workspace
+          </button>
+          <button type="button" className="ghost-btn" onClick={() => setActiveTab("marketplace")}>
+            Nearby Groceries
+          </button>
+          <button type="button" className="ghost-btn" onClick={() => setActiveTab("chat")}>
+            Open Inbox
+          </button>
+          <button type="button" className="ghost-btn" onClick={() => setActiveTab("orders")}>
+            Active Deliveries
+          </button>
+          <button type="button" className="ghost-btn" onClick={() => setActiveTab("seller")}>
+            Seller Inventory
+          </button>
+        </div>
 
         {error && <div className="alert danger">{error}</div>}
         {toast && <div className="alert info">{toast}</div>}
