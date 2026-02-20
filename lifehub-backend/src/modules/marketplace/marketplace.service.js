@@ -1,8 +1,86 @@
 import prisma from "../../config/db.js";
 
+const MAX_LIMIT = 200;
+
+function hasValue(value) {
+  return value !== null && value !== undefined && String(value).trim() !== "";
+}
+
 function toDecimalNumber(value) {
   if (value === null || value === undefined) return null;
   return Number(value);
+}
+
+function toBigInt(value, label = "id") {
+  try {
+    if (!hasValue(value)) throw new Error();
+    return BigInt(value);
+  } catch {
+    throw new Error(`Invalid ${label}`);
+  }
+}
+
+function clampLimit(limit, fallback = 50) {
+  const numeric = Number(limit);
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.min(Math.max(Math.floor(numeric), 1), MAX_LIMIT);
+}
+
+function normalizeText(value, {
+  field = "value",
+  maxLength = 500,
+  required = false
+} = {}) {
+  if (value === undefined) {
+    if (required) throw new Error(`${field} is required`);
+    return undefined;
+  }
+  if (value === null) {
+    if (required) throw new Error(`${field} is required`);
+    return null;
+  }
+
+  const text = String(value).trim();
+  if (!text) {
+    if (required) throw new Error(`${field} is required`);
+    return null;
+  }
+  if (text.length > maxLength) {
+    throw new Error(`${field} must be ${maxLength} characters or less`);
+  }
+  return text;
+}
+
+function normalizePrice(value, { required = false } = {}) {
+  if (value === undefined) {
+    if (required) throw new Error("Product price is required");
+    return undefined;
+  }
+  const numericPrice = Number(value);
+  if (!Number.isFinite(numericPrice) || numericPrice <= 0) {
+    throw new Error("Product price must be a positive number");
+  }
+  return Number(numericPrice.toFixed(2));
+}
+
+function normalizeQuantity(value, { required = false } = {}) {
+  if (value === undefined) {
+    if (required) throw new Error("Quantity is required");
+    return undefined;
+  }
+  const quantity = Number(value);
+  if (!Number.isInteger(quantity) || quantity < 0) {
+    throw new Error("Quantity must be a whole number greater than or equal to 0");
+  }
+  return quantity;
+}
+
+function normalizeCoordinate(value, { field, min, max }) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric < min || numeric > max) {
+    throw new Error(`${field} must be between ${min} and ${max}`);
+  }
+  return Number(numeric.toFixed(6));
 }
 
 function distanceKm(lat1, lon1, lat2, lon2) {
@@ -30,6 +108,162 @@ function computeOpenNow() {
   return hour >= openHour || hour < closeHour;
 }
 
+function normalizeRoles(actorRoles = []) {
+  return actorRoles.map(role => String(role).toUpperCase());
+}
+
+function isAdminOrBusiness(actorRoles = []) {
+  const normalizedRoles = normalizeRoles(actorRoles);
+  return normalizedRoles.includes("ADMIN") || normalizedRoles.includes("BUSINESS");
+}
+
+function calculateReliabilityScore({
+  rating = 0,
+  feedbackCount = 0,
+  verified = false
+}) {
+  const normalizedRating = Math.max(0, Math.min(5, Number(rating || 0)));
+  const volumeBoost = Math.min(Math.log10(Number(feedbackCount || 0) + 1) / 2, 1);
+  const score = normalizedRating * 16 + volumeBoost * 12 + (verified ? 8 : 0);
+  return Number(Math.max(0, Math.min(100, score)).toFixed(1));
+}
+
+function mapProductForResponse(product) {
+  return {
+    id: product.id,
+    shopId: product.shop_id,
+    name: product.name,
+    company: product.company || null,
+    description: product.description || null,
+    imageUrl: product.image_url || null,
+    category: product.category || null,
+    price: Number(product.price || 0),
+    availableQuantity: Number(product.inventory?.quantity || 0)
+  };
+}
+
+function mapShopFeedbackForResponse(feedback) {
+  return {
+    id: feedback.id,
+    shopId: feedback.shop_id,
+    userId: feedback.user_id,
+    orderId: feedback.order_id,
+    rating: Number(feedback.rating || 0),
+    comment: feedback.comment || null,
+    createdAt: feedback.created_at,
+    customer: feedback.users
+      ? {
+          id: feedback.users.id,
+          name: feedback.users.name
+        }
+      : null
+  };
+}
+
+async function getShopFeedbackSummaryMap(shopIds = []) {
+  const seen = new Set();
+  const normalizedIds = [];
+
+  for (const shopId of shopIds) {
+    if (!hasValue(shopId)) continue;
+    const key = String(shopId);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    normalizedIds.push(BigInt(key));
+  }
+
+  if (!normalizedIds.length) return new Map();
+
+  const grouped = await prisma.shop_feedbacks.groupBy({
+    by: ["shop_id"],
+    where: {
+      shop_id: { in: normalizedIds }
+    },
+    _avg: { rating: true },
+    _count: { _all: true }
+  });
+
+  const summaryMap = new Map();
+  for (const row of grouped) {
+    summaryMap.set(String(row.shop_id), {
+      avgRating: row._avg.rating === null ? null : Number(row._avg.rating),
+      feedbackCount: Number(row._count?._all || 0)
+    });
+  }
+  return summaryMap;
+}
+
+async function ensureShopEditable({
+  actorUserId,
+  actorRoles = [],
+  shopId
+}) {
+  const isAdmin = isAdminOrBusiness(actorRoles);
+  const shop = await prisma.shop_profiles.findUnique({
+    where: { id: toBigInt(shopId, "shopId") }
+  });
+
+  if (!shop) throw new Error("Shop not found");
+  if (!isAdmin && String(shop.user_id) !== String(actorUserId)) {
+    throw new Error("Only shop owner can manage this inventory");
+  }
+  return shop;
+}
+
+async function upsertInventory(productId, quantity) {
+  const normalizedQuantity = normalizeQuantity(quantity ?? 0, { required: true });
+  await prisma.inventory.upsert({
+    where: { product_id: productId },
+    update: {
+      quantity: normalizedQuantity,
+      last_updated: new Date()
+    },
+    create: {
+      product_id: productId,
+      quantity: normalizedQuantity
+    }
+  });
+}
+
+export async function refreshShopRatingFromFeedback(shopId) {
+  const normalizedShopId = toBigInt(shopId, "shopId");
+  const grouped = await prisma.shop_feedbacks.groupBy({
+    by: ["shop_id"],
+    where: { shop_id: normalizedShopId },
+    _avg: { rating: true },
+    _count: { _all: true }
+  });
+
+  const averageRating = grouped[0]?._avg?.rating;
+  const feedbackCount = Number(grouped[0]?._count?._all || 0);
+  const nextRating = averageRating === null || averageRating === undefined
+    ? null
+    : Number(Number(averageRating).toFixed(1));
+
+  const shop = await prisma.shop_profiles.update({
+    where: { id: normalizedShopId },
+    data: { rating: nextRating },
+    select: {
+      id: true,
+      verified: true,
+      rating: true
+    }
+  });
+
+  const score = calculateReliabilityScore({
+    rating: Number(shop.rating || 0),
+    feedbackCount,
+    verified: Boolean(shop.verified)
+  });
+
+  return {
+    shopId: shop.id,
+    avgRating: Number(shop.rating || 0),
+    feedbackCount,
+    reliabilityScore: score
+  };
+}
+
 export async function searchProviders({
   skill,
   availableOnly = true,
@@ -41,7 +275,7 @@ export async function searchProviders({
 }) {
   const providers = await prisma.provider_profiles.findMany({
     where: {
-      ...(minRating ? { rating: { gte: minRating } } : {}),
+      ...(hasValue(minRating) ? { rating: { gte: Number(minRating) } } : {}),
       provider_locations: availableOnly ? { is: { available: true } } : undefined,
       provider_skills: skill
         ? {
@@ -65,11 +299,11 @@ export async function searchProviders({
       provider_locations: true,
       provider_skills: true
     },
-    take: Math.min(Math.max(Number(limit) || 50, 1), 200)
+    take: clampLimit(limit, 50)
   });
 
-  const baseLat = lat !== undefined ? Number(lat) : null;
-  const baseLng = lng !== undefined ? Number(lng) : null;
+  const baseLat = hasValue(lat) ? Number(lat) : null;
+  const baseLng = hasValue(lng) ? Number(lng) : null;
   const radius = Number(radiusKm || 20);
 
   const mapped = providers.map(provider => {
@@ -107,7 +341,7 @@ export async function searchProviders({
 
 export async function getProviderById(providerId) {
   const provider = await prisma.provider_profiles.findUnique({
-    where: { id: BigInt(providerId) },
+    where: { id: toBigInt(providerId, "providerId") },
     include: {
       users: {
         select: { id: true, name: true, phone: true, email: true }
@@ -126,12 +360,13 @@ export async function searchShops({
   lat,
   lng,
   radiusKm = 20,
+  sortBy = "distance",
   limit = 50
 }) {
   const shops = await prisma.shop_profiles.findMany({
     where: {
       ...(availableOnly ? { verified: true } : {}),
-      ...(minRating ? { rating: { gte: minRating } } : {})
+      ...(hasValue(minRating) ? { rating: { gte: Number(minRating) } } : {})
     },
     include: {
       users: {
@@ -142,15 +377,26 @@ export async function searchShops({
         }
       }
     },
-    take: Math.min(Math.max(Number(limit) || 50, 1), 200)
+    take: clampLimit(limit, 50)
   });
 
-  const baseLat = lat !== undefined ? Number(lat) : null;
-  const baseLng = lng !== undefined ? Number(lng) : null;
+  const summaryMap = await getShopFeedbackSummaryMap(shops.map(shop => shop.id));
+  const baseLat = hasValue(lat) ? Number(lat) : null;
+  const baseLng = hasValue(lng) ? Number(lng) : null;
   const radius = Number(radiusKm || 20);
+  const normalizedSort = String(sortBy || "distance").toLowerCase();
 
   return shops
     .map(shop => {
+      const feedbackSummary = summaryMap.get(String(shop.id));
+      const avgRating = feedbackSummary?.avgRating ?? Number(shop.rating || 0);
+      const feedbackCount = Number(feedbackSummary?.feedbackCount || 0);
+      const reliabilityScore = calculateReliabilityScore({
+        rating: avgRating,
+        feedbackCount,
+        verified: Boolean(shop.verified)
+      });
+
       const shopLat = toDecimalNumber(shop.lat);
       const shopLng = toDecimalNumber(shop.lng);
       const km = distanceKm(baseLat, baseLng, shopLat, shopLng);
@@ -162,7 +408,9 @@ export async function searchShops({
         shopName: shop.shop_name,
         address: shop.address,
         verified: shop.verified,
-        rating: shop.rating,
+        rating: Number(avgRating || 0),
+        feedbackCount,
+        reliabilityScore,
         openNow: computeOpenNow(),
         location: {
           lat: shopLat,
@@ -173,27 +421,68 @@ export async function searchShops({
     })
     .filter(shop => shop.distanceKm === null || shop.distanceKm <= radius)
     .sort((a, b) => {
-      if (a.distanceKm === null && b.distanceKm === null) return 0;
-      if (a.distanceKm === null) return 1;
-      if (b.distanceKm === null) return -1;
-      return a.distanceKm - b.distanceKm;
+      const da = a.distanceKm === null ? 9999 : a.distanceKm;
+      const db = b.distanceKm === null ? 9999 : b.distanceKm;
+
+      if (normalizedSort === "reliable" || normalizedSort === "reliability") {
+        if (b.reliabilityScore !== a.reliabilityScore) {
+          return b.reliabilityScore - a.reliabilityScore;
+        }
+        return da - db;
+      }
+
+      if (normalizedSort === "fair" || normalizedSort === "best") {
+        const scoreA = da * 0.65 - a.reliabilityScore * 0.35;
+        const scoreB = db * 0.65 - b.reliabilityScore * 0.35;
+        return scoreA - scoreB;
+      }
+
+      if (da !== db) return da - db;
+      return b.reliabilityScore - a.reliabilityScore;
     });
 }
 
 export async function listShopProducts({
   shopId,
   category,
+  query,
   limit = 100
 }) {
+  const textQuery = normalizeText(query, { field: "query", maxLength: 120 });
+
   const products = await prisma.products.findMany({
     where: {
-      shop_id: BigInt(shopId),
+      shop_id: toBigInt(shopId, "shopId"),
       ...(category
         ? {
             category: {
-              contains: category,
+              contains: String(category).trim(),
               mode: "insensitive"
             }
+          }
+        : {}),
+      ...(textQuery
+        ? {
+            OR: [
+              {
+                name: {
+                  contains: textQuery,
+                  mode: "insensitive"
+                }
+              },
+              {
+                company: {
+                  contains: textQuery,
+                  mode: "insensitive"
+                }
+              },
+              {
+                description: {
+                  contains: textQuery,
+                  mode: "insensitive"
+                }
+              }
+            ]
           }
         : {})
     },
@@ -201,13 +490,15 @@ export async function listShopProducts({
       inventory: true
     },
     orderBy: { id: "desc" },
-    take: Math.min(Math.max(Number(limit) || 100, 1), 200)
+    take: clampLimit(limit, 100)
   });
 
-  return products.map(product => ({
-    ...product,
-    availableQuantity: product.inventory?.quantity ?? 0
-  }));
+  return products.map(mapProductForResponse);
+}
+
+function scoreProductForFairSort(item) {
+  const distance = item.distanceKm === null ? 9999 : item.distanceKm;
+  return item.price * 0.55 + distance * 0.25 - item.shop.reliabilityScore * 0.2;
 }
 
 export async function searchProductsNearby({
@@ -216,7 +507,7 @@ export async function searchProductsNearby({
   lng,
   maxPrice,
   minShopRating,
-  sortBy = "distance",
+  sortBy = "fair",
   radiusKm = 20,
   limit = 50
 }) {
@@ -225,7 +516,7 @@ export async function searchProductsNearby({
 
   const products = await prisma.products.findMany({
     where: {
-      ...(maxPrice !== undefined ? { price: { lte: Number(maxPrice) } } : {}),
+      ...(hasValue(maxPrice) ? { price: { lte: Number(maxPrice) } } : {}),
       OR: [
         {
           name: {
@@ -238,6 +529,18 @@ export async function searchProductsNearby({
             contains: trimmed,
             mode: "insensitive"
           }
+        },
+        {
+          company: {
+            contains: trimmed,
+            mode: "insensitive"
+          }
+        },
+        {
+          description: {
+            contains: trimmed,
+            mode: "insensitive"
+          }
         }
       ]
     },
@@ -245,17 +548,32 @@ export async function searchProductsNearby({
       inventory: true,
       shop_profiles: true
     },
-    take: Math.min(Math.max(Number(limit) || 50, 1), 300)
+    take: clampLimit(limit * 4, 300)
   });
 
-  const baseLat = lat !== undefined ? Number(lat) : null;
-  const baseLng = lng !== undefined ? Number(lng) : null;
+  const summaryMap = await getShopFeedbackSummaryMap(
+    products.map(product => product.shop_profiles?.id).filter(Boolean)
+  );
+
+  const baseLat = hasValue(lat) ? Number(lat) : null;
+  const baseLng = hasValue(lng) ? Number(lng) : null;
   const radius = Number(radiusKm || 20);
+  const normalizedSort = String(sortBy || "fair").toLowerCase();
 
   return products
     .map(product => {
       const availableQuantity = Number(product.inventory?.quantity || 0);
       if (availableQuantity <= 0) return null;
+
+      const shopId = product.shop_profiles?.id;
+      const feedbackSummary = summaryMap.get(String(shopId || ""));
+      const shopRating = feedbackSummary?.avgRating ?? Number(product.shop_profiles?.rating || 0);
+      const feedbackCount = Number(feedbackSummary?.feedbackCount || 0);
+      const reliabilityScore = calculateReliabilityScore({
+        rating: shopRating,
+        feedbackCount,
+        verified: Boolean(product.shop_profiles?.verified)
+      });
 
       const shopLat = toDecimalNumber(product.shop_profiles?.lat);
       const shopLng = toDecimalNumber(product.shop_profiles?.lng);
@@ -264,14 +582,19 @@ export async function searchProductsNearby({
       return {
         productId: product.id,
         productName: product.name,
+        company: product.company || null,
+        description: product.description || null,
+        imageUrl: product.image_url || null,
         category: product.category,
         price: Number(product.price || 0),
         availableQuantity,
         shop: {
-          id: product.shop_profiles?.id || null,
+          id: shopId || null,
           shopName: product.shop_profiles?.shop_name || "Unknown shop",
           address: product.shop_profiles?.address || null,
-          rating: Number(product.shop_profiles?.rating || 0),
+          rating: Number(shopRating || 0),
+          feedbackCount,
+          reliabilityScore,
           verified: Boolean(product.shop_profiles?.verified)
         },
         distanceKm: km
@@ -279,28 +602,40 @@ export async function searchProductsNearby({
     })
     .filter(Boolean)
     .filter(item => {
-      if (minShopRating === undefined || minShopRating === null) return true;
+      if (!hasValue(minShopRating)) return true;
       return Number(item.shop.rating || 0) >= Number(minShopRating);
     })
     .filter(item => item.distanceKm === null || item.distanceKm <= radius)
     .sort((a, b) => {
       const da = a.distanceKm === null ? 9999 : a.distanceKm;
       const db = b.distanceKm === null ? 9999 : b.distanceKm;
-      const ra = Number(a.shop.rating || 0);
-      const rb = Number(b.shop.rating || 0);
 
-      if (String(sortBy).toLowerCase() === "fair") {
-        const scoreA = a.price * 0.55 + da * 0.3 - ra * 8;
-        const scoreB = b.price * 0.55 + db * 0.3 - rb * 8;
-        return scoreA - scoreB;
+      if (normalizedSort === "price") {
+        if (a.price !== b.price) return a.price - b.price;
+        return da - db;
       }
-      if (String(sortBy).toLowerCase() === "price") {
+
+      if (normalizedSort === "distance") {
+        if (da !== db) return da - db;
         return a.price - b.price;
       }
-      if (da === db) return a.price - b.price;
-      return da - db;
+
+      if (normalizedSort === "reliable" || normalizedSort === "reliability") {
+        if (b.shop.reliabilityScore !== a.shop.reliabilityScore) {
+          return b.shop.reliabilityScore - a.shop.reliabilityScore;
+        }
+        return da - db;
+      }
+
+      if (normalizedSort === "fair" || normalizedSort === "best") {
+        return scoreProductForFairSort(a) - scoreProductForFairSort(b);
+      }
+
+      if (da !== db) return da - db;
+      if (a.price !== b.price) return a.price - b.price;
+      return b.shop.reliabilityScore - a.shop.reliabilityScore;
     })
-    .slice(0, Math.min(Math.max(Number(limit) || 50, 1), 200));
+    .slice(0, clampLimit(limit, 50));
 }
 
 export async function updateShopLocation({
@@ -310,21 +645,17 @@ export async function updateShopLocation({
   lat,
   lng
 }) {
-  const normalizedRoles = actorRoles.map(role => String(role).toUpperCase());
-  const isAdmin = normalizedRoles.includes("ADMIN") || normalizedRoles.includes("BUSINESS");
-  const shop = await prisma.shop_profiles.findUnique({
-    where: { id: BigInt(shopId) }
+  const shop = await ensureShopEditable({
+    actorUserId,
+    actorRoles,
+    shopId
   });
-  if (!shop) throw new Error("Shop not found");
-  if (!isAdmin && String(shop.user_id) !== String(actorUserId)) {
-    throw new Error("Only shop owner can update shop location");
-  }
 
   return prisma.shop_profiles.update({
     where: { id: shop.id },
     data: {
-      lat: Number(lat),
-      lng: Number(lng)
+      lat: normalizeCoordinate(lat, { field: "lat", min: -90, max: 90 }),
+      lng: normalizeCoordinate(lng, { field: "lng", min: -180, max: 180 })
     }
   });
 }
@@ -337,10 +668,9 @@ export async function updateProviderLocation({
   lng,
   available
 }) {
-  const normalizedRoles = actorRoles.map(role => String(role).toUpperCase());
-  const isAdmin = normalizedRoles.includes("ADMIN") || normalizedRoles.includes("BUSINESS");
+  const isAdmin = isAdminOrBusiness(actorRoles);
   const provider = await prisma.provider_profiles.findUnique({
-    where: { id: BigInt(providerId) }
+    where: { id: toBigInt(providerId, "providerId") }
   });
   if (!provider) throw new Error("Provider not found");
   if (!isAdmin && String(provider.user_id) !== String(actorUserId)) {
@@ -350,14 +680,14 @@ export async function updateProviderLocation({
   return prisma.provider_locations.upsert({
     where: { provider_id: provider.id },
     update: {
-      lat: Number(lat),
-      lng: Number(lng),
+      lat: normalizeCoordinate(lat, { field: "lat", min: -90, max: 90 }),
+      lng: normalizeCoordinate(lng, { field: "lng", min: -180, max: 180 }),
       ...(available === undefined ? {} : { available: Boolean(available) })
     },
     create: {
       provider_id: provider.id,
-      lat: Number(lat),
-      lng: Number(lng),
+      lat: normalizeCoordinate(lat, { field: "lat", min: -90, max: 90 }),
+      lng: normalizeCoordinate(lng, { field: "lng", min: -180, max: 180 }),
       available: available === undefined ? true : Boolean(available)
     }
   });
@@ -368,107 +698,273 @@ export async function createShopProduct({
   actorRoles = [],
   shopId,
   name,
+  company,
+  description,
+  imageUrl,
   price,
   category,
   quantity
 }) {
-  const normalizedRoles = actorRoles.map(role => String(role).toUpperCase());
-  const isAdmin = normalizedRoles.includes("ADMIN") || normalizedRoles.includes("BUSINESS");
-
-  const shop = await prisma.shop_profiles.findUnique({
-    where: { id: BigInt(shopId) }
+  const shop = await ensureShopEditable({
+    actorUserId,
+    actorRoles,
+    shopId
   });
-  if (!shop) throw new Error("Shop not found");
-  if (!isAdmin && String(shop.user_id) !== String(actorUserId)) {
-    throw new Error("Only shop owner can manage this inventory");
-  }
-  if (!name) throw new Error("Product name is required");
-
-  const numericPrice = Number(price);
-  if (!Number.isFinite(numericPrice) || numericPrice <= 0) {
-    throw new Error("Product price must be a positive number");
-  }
 
   const product = await prisma.products.create({
     data: {
-      shop_id: BigInt(shopId),
-      name: String(name).trim(),
-      category: category ? String(category).trim() : null,
-      price: numericPrice
+      shop_id: shop.id,
+      name: normalizeText(name, { field: "name", maxLength: 120, required: true }),
+      company: normalizeText(company, { field: "company", maxLength: 120 }),
+      description: normalizeText(description, { field: "description", maxLength: 2000 }),
+      image_url: normalizeText(imageUrl, { field: "imageUrl", maxLength: 2000 }),
+      category: normalizeText(category, { field: "category", maxLength: 50 }),
+      price: normalizePrice(price, { required: true })
     }
   });
 
-  await prisma.inventory.upsert({
-    where: { product_id: product.id },
-    update: {
-      quantity: Number(quantity || 0),
-      last_updated: new Date()
-    },
-    create: {
-      product_id: product.id,
-      quantity: Number(quantity || 0)
-    }
-  });
+  await upsertInventory(product.id, quantity ?? 0);
 
-  return prisma.products.findUnique({
+  const withInventory = await prisma.products.findUnique({
     where: { id: product.id },
     include: { inventory: true }
   });
+  return mapProductForResponse(withInventory);
 }
 
 export async function updateShopProduct({
   actorUserId,
   actorRoles = [],
   productId,
+  shopId,
   name,
+  company,
+  description,
+  imageUrl,
   price,
   category,
   quantity
 }) {
-  const normalizedRoles = actorRoles.map(role => String(role).toUpperCase());
-  const isAdmin = normalizedRoles.includes("ADMIN") || normalizedRoles.includes("BUSINESS");
-
+  const isAdmin = isAdminOrBusiness(actorRoles);
   const existing = await prisma.products.findUnique({
-    where: { id: BigInt(productId) },
-    include: { shop_profiles: true }
+    where: { id: toBigInt(productId, "productId") },
+    include: { shop_profiles: true, inventory: true }
   });
+
   if (!existing) throw new Error("Product not found");
   if (!isAdmin && String(existing.shop_profiles?.user_id) !== String(actorUserId)) {
     throw new Error("Only shop owner can update this inventory");
   }
-
-  const payload = {};
-  if (name !== undefined) payload.name = String(name).trim();
-  if (category !== undefined) payload.category = category ? String(category).trim() : null;
-  if (price !== undefined) {
-    const numericPrice = Number(price);
-    if (!Number.isFinite(numericPrice) || numericPrice <= 0) {
-      throw new Error("Product price must be a positive number");
-    }
-    payload.price = numericPrice;
+  if (hasValue(shopId) && String(existing.shop_id) !== String(toBigInt(shopId, "shopId"))) {
+    throw new Error("Product does not belong to this shop");
   }
 
-  const updated = await prisma.products.update({
-    where: { id: existing.id },
-    data: payload
-  });
+  const payload = {};
+  if (name !== undefined) payload.name = normalizeText(name, { field: "name", maxLength: 120, required: true });
+  if (company !== undefined) payload.company = normalizeText(company, { field: "company", maxLength: 120 });
+  if (description !== undefined) payload.description = normalizeText(description, { field: "description", maxLength: 2000 });
+  if (imageUrl !== undefined) payload.image_url = normalizeText(imageUrl, { field: "imageUrl", maxLength: 2000 });
+  if (category !== undefined) payload.category = normalizeText(category, { field: "category", maxLength: 50 });
+  if (price !== undefined) payload.price = normalizePrice(price);
 
-  if (quantity !== undefined) {
-    await prisma.inventory.upsert({
-      where: { product_id: existing.id },
-      update: {
-        quantity: Number(quantity),
-        last_updated: new Date()
-      },
-      create: {
-        product_id: existing.id,
-        quantity: Number(quantity)
-      }
+  if (!Object.keys(payload).length && quantity === undefined) {
+    throw new Error("Provide at least one product field to update");
+  }
+
+  if (Object.keys(payload).length) {
+    await prisma.products.update({
+      where: { id: existing.id },
+      data: payload
     });
   }
 
-  return prisma.products.findUnique({
-    where: { id: updated.id },
+  if (quantity !== undefined) {
+    await upsertInventory(existing.id, quantity);
+  }
+
+  const withInventory = await prisma.products.findUnique({
+    where: { id: existing.id },
     include: { inventory: true }
   });
+  return mapProductForResponse(withInventory);
+}
+
+export async function upsertShopInventoryItems({
+  actorUserId,
+  actorRoles = [],
+  shopId,
+  items = []
+}) {
+  const shop = await ensureShopEditable({
+    actorUserId,
+    actorRoles,
+    shopId
+  });
+
+  if (!Array.isArray(items) || !items.length) {
+    throw new Error("At least one inventory item is required");
+  }
+  if (items.length > MAX_LIMIT) {
+    throw new Error(`Max ${MAX_LIMIT} inventory items allowed per request`);
+  }
+
+  const results = [];
+  for (const item of items) {
+    if (hasValue(item?.productId)) {
+      const updated = await updateShopProduct({
+        actorUserId,
+        actorRoles,
+        productId: item.productId,
+        shopId: shop.id,
+        name: item.name,
+        company: item.company,
+        description: item.description,
+        imageUrl: item.imageUrl,
+        price: item.price,
+        category: item.category,
+        quantity: item.quantity
+      });
+      results.push(updated);
+      continue;
+    }
+
+    const created = await createShopProduct({
+      actorUserId,
+      actorRoles,
+      shopId: shop.id,
+      name: item.name,
+      company: item.company,
+      description: item.description,
+      imageUrl: item.imageUrl,
+      price: item.price,
+      category: item.category,
+      quantity: item.quantity
+    });
+    results.push(created);
+  }
+
+  return results;
+}
+
+export async function createShopFeedback({
+  actorUserId,
+  shopId,
+  rating,
+  comment,
+  orderId
+}) {
+  const userId = toBigInt(actorUserId, "userId");
+  const resolvedShopId = toBigInt(shopId, "shopId");
+  const numericRating = Number(rating);
+  if (!Number.isFinite(numericRating) || numericRating < 1 || numericRating > 5) {
+    throw new Error("Rating must be between 1 and 5");
+  }
+
+  const shop = await prisma.shop_profiles.findUnique({
+    where: { id: resolvedShopId },
+    select: { id: true }
+  });
+  if (!shop) throw new Error("Shop not found");
+
+  const eligibleOrder = await prisma.orders.findFirst({
+    where: {
+      ...(hasValue(orderId) ? { id: toBigInt(orderId, "orderId") } : {}),
+      user_id: userId,
+      shop_id: resolvedShopId,
+      status: {
+        in: ["DELIVERED", "COMPLETED"]
+      }
+    },
+    orderBy: { created_at: "desc" }
+  });
+
+  if (!eligibleOrder) {
+    throw new Error("Only customers with delivered orders can submit feedback");
+  }
+
+  const normalizedComment = normalizeText(comment, {
+    field: "comment",
+    maxLength: 1000
+  });
+
+  const existing = await prisma.shop_feedbacks.findUnique({
+    where: { order_id: eligibleOrder.id }
+  });
+
+  const feedback = existing
+    ? await prisma.shop_feedbacks.update({
+        where: { id: existing.id },
+        data: {
+          rating: Number(numericRating.toFixed(1)),
+          comment: normalizedComment
+        }
+      })
+    : await prisma.shop_feedbacks.create({
+        data: {
+          shop_id: resolvedShopId,
+          user_id: userId,
+          order_id: eligibleOrder.id,
+          rating: Number(numericRating.toFixed(1)),
+          comment: normalizedComment
+        }
+      });
+
+  const summary = await refreshShopRatingFromFeedback(resolvedShopId);
+  return {
+    feedback: mapShopFeedbackForResponse(feedback),
+    summary
+  };
+}
+
+export async function listShopFeedback({
+  shopId,
+  limit = 20
+}) {
+  const resolvedShopId = toBigInt(shopId, "shopId");
+
+  const [rows, feedbackCount] = await Promise.all([
+    prisma.shop_feedbacks.findMany({
+      where: { shop_id: resolvedShopId },
+      include: {
+        users: {
+          select: {
+            id: true,
+            name: true
+          }
+        }
+      },
+      orderBy: { created_at: "desc" },
+      take: clampLimit(limit, 20)
+    }),
+    prisma.shop_feedbacks.count({
+      where: { shop_id: resolvedShopId }
+    })
+  ]);
+
+  const shop = await prisma.shop_profiles.findUnique({
+    where: { id: resolvedShopId },
+    select: {
+      id: true,
+      verified: true,
+      rating: true
+    }
+  });
+  if (!shop) throw new Error("Shop not found");
+
+  const avgRating = Number(shop.rating || 0);
+  const reliabilityScore = calculateReliabilityScore({
+    rating: avgRating,
+    feedbackCount,
+    verified: Boolean(shop.verified)
+  });
+
+  return {
+    summary: {
+      shopId: shop.id,
+      avgRating,
+      feedbackCount,
+      reliabilityScore
+    },
+    feedback: rows.map(mapShopFeedbackForResponse)
+  };
 }

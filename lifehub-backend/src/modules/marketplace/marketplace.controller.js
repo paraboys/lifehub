@@ -34,6 +34,7 @@ export async function searchShops(req, res) {
       minRating: req.query.minRating ? Number(req.query.minRating) : undefined,
       lat: req.query.lat,
       lng: req.query.lng,
+      sortBy: req.query.sortBy,
       radiusKm: req.query.radiusKm,
       limit: req.query.limit
     });
@@ -48,6 +49,7 @@ export async function getShopProducts(req, res) {
     const products = await marketplaceService.listShopProducts({
       shopId: req.params.shopId,
       category: req.query.category,
+      query: req.query.query,
       limit: req.query.limit
     });
     res.json(jsonSafe({ products }));
@@ -81,6 +83,9 @@ export async function createShopProduct(req, res) {
       actorRoles: req.user.roles || [],
       shopId: req.params.shopId,
       name: req.body.name,
+      company: req.body.company,
+      description: req.body.description,
+      imageUrl: req.body.imageUrl,
       price: req.body.price,
       category: req.body.category,
       quantity: req.body.quantity
@@ -97,7 +102,11 @@ export async function updateShopProduct(req, res) {
       actorUserId: req.user.id,
       actorRoles: req.user.roles || [],
       productId: req.params.productId,
+      shopId: req.body.shopId,
       name: req.body.name,
+      company: req.body.company,
+      description: req.body.description,
+      imageUrl: req.body.imageUrl,
       price: req.body.price,
       category: req.body.category,
       quantity: req.body.quantity
@@ -134,6 +143,47 @@ export async function updateProviderLocation(req, res) {
       available: req.body.available
     });
     res.json(jsonSafe(row));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+}
+
+export async function upsertShopInventory(req, res) {
+  try {
+    const products = await marketplaceService.upsertShopInventoryItems({
+      actorUserId: req.user.id,
+      actorRoles: req.user.roles || [],
+      shopId: req.params.shopId,
+      items: req.body.items || []
+    });
+    res.status(201).json(jsonSafe({ products }));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+}
+
+export async function createShopFeedback(req, res) {
+  try {
+    const payload = await marketplaceService.createShopFeedback({
+      actorUserId: req.user.id,
+      shopId: req.params.shopId,
+      rating: req.body.rating,
+      comment: req.body.comment,
+      orderId: req.body.orderId
+    });
+    res.status(201).json(jsonSafe(payload));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+}
+
+export async function getShopFeedback(req, res) {
+  try {
+    const payload = await marketplaceService.listShopFeedback({
+      shopId: req.params.shopId,
+      limit: req.query.limit
+    });
+    res.json(jsonSafe(payload));
   } catch (err) {
     res.status(400).json({ error: err.message });
   }

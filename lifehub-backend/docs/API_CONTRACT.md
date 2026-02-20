@@ -123,6 +123,87 @@ Request:
 ### POST `/service-requests/:requestId/complete`
 Owner/assigned provider/admin can mark complete.
 
+## Marketplace (Grocery Inventory + Reliability)
+
+### GET `/marketplace/shops/search?lat=28.61&lng=77.20&radiusKm=8&sortBy=fair`
+Returns nearby shops with:
+- `rating`
+- `feedbackCount`
+- `reliabilityScore`
+- `distanceKm`
+
+`sortBy` supports: `distance`, `fair`, `reliable`.
+
+### GET `/marketplace/products/search?query=milk&lat=28.61&lng=77.20&radiusKm=8&sortBy=fair`
+Product search now supports:
+- price + distance + reliability ranking
+- filters by `maxPrice`, `minShopRating`
+- product metadata: `company`, `description`, `imageUrl`
+
+`sortBy` supports: `fair`, `price`, `distance`, `reliable`.
+
+### GET `/marketplace/shops/:shopId/products`
+Returns full inventory for a shop with:
+- `name`
+- `company`
+- `description`
+- `imageUrl`
+- `category`
+- `price`
+- `availableQuantity`
+
+### POST `/marketplace/shops/:shopId/products`
+Shopkeeper product create payload:
+```json
+{
+  "name": "Milk 1L",
+  "company": "Amul",
+  "description": "Fresh toned milk",
+  "imageUrl": "https://...",
+  "category": "dairy",
+  "price": 56,
+  "quantity": 100
+}
+```
+
+### POST `/marketplace/shops/:shopId/inventory/bulk`
+Bulk create/update for shop inventory:
+```json
+{
+  "items": [
+    {
+      "name": "Rice 5kg",
+      "company": "Fortune",
+      "description": "Long grain rice",
+      "imageUrl": "https://...",
+      "category": "grocery",
+      "price": 499,
+      "quantity": 40
+    },
+    {
+      "productId": "12",
+      "price": 479,
+      "quantity": 50
+    }
+  ]
+}
+```
+
+### POST `/marketplace/shops/:shopId/feedback`
+Customer can submit feedback only after delivered/completed order:
+```json
+{
+  "orderId": "21",
+  "rating": 5,
+  "comment": "Fast delivery and best price nearby."
+}
+```
+
+### GET `/marketplace/shops/:shopId/feedback`
+Returns:
+- `summary` (`avgRating`, `feedbackCount`, `reliabilityScore`)
+- `feedback[]` recent reviews
+
 ## 4. Wallet & Transactions
 
 ### GET `/transactions/wallet`

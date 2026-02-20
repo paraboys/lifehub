@@ -384,6 +384,9 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
   const [sellerForm, setSellerForm] = useState({
     shopId: "1",
     name: "",
+    company: "",
+    description: "",
+    imageUrl: "",
     category: "",
     price: "",
     quantity: ""
@@ -1072,6 +1075,7 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
       lat: source.lat,
       lng: source.lng,
       radiusKm: source.radiusKm,
+      sortBy: "fair",
       limit: "30"
     });
     const data = await api(`/marketplace/shops/search?${query}`);
@@ -1526,6 +1530,9 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
       method: "POST",
       body: JSON.stringify({
         name: sellerForm.name,
+        company: sellerForm.company,
+        description: sellerForm.description,
+        imageUrl: sellerForm.imageUrl,
         category: sellerForm.category,
         price: Number(sellerForm.price || 0),
         quantity: Number(sellerForm.quantity || 0)
@@ -1534,6 +1541,9 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
     setSellerForm(prev => ({
       ...prev,
       name: "",
+      company: "",
+      description: "",
+      imageUrl: "",
       category: "",
       price: "",
       quantity: ""
@@ -2464,6 +2474,7 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
               <option value="fair">Best Fair Deal</option>
               <option value="distance">Nearest</option>
               <option value="price">Lowest Price</option>
+              <option value="reliable">Most Reliable Shop</option>
             </select>
           </div>
           {!!productQuery.trim() && (
@@ -2485,8 +2496,12 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
                   >
                     <strong>{item.productName}</strong>
                     <small>
+                      {(item.company ? `${item.company} | ` : "")}
                       {item?.shop?.shopName || "Unknown shop"} | {toCurrency(item.price)} | Qty {item.availableQuantity} |{" "}
-                      {item.distanceKm ? `${item.distanceKm.toFixed(1)} km` : "distance n/a"}
+                      {item.distanceKm !== null && item.distanceKm !== undefined ? `${item.distanceKm.toFixed(1)} km` : "distance n/a"}
+                    </small>
+                    <small>
+                      Shop rating {Number(item?.shop?.rating || 0).toFixed(1)} | Reliability {Number(item?.shop?.reliabilityScore || 0).toFixed(1)} | Reviews {item?.shop?.feedbackCount || 0}
                     </small>
                   </button>
                 ))}
@@ -2529,8 +2544,8 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
               >
                 <strong>{shop.shopName}</strong>
                 <small>
-                  {shop.address} | {shop.distanceKm ? `${shop.distanceKm.toFixed(1)} km` : "Distance n/a"} |
-                  Rating {shop.rating || "n/a"}
+                  {shop.address} | {shop.distanceKm !== null && shop.distanceKm !== undefined ? `${shop.distanceKm.toFixed(1)} km` : "Distance n/a"} |
+                  Rating {shop.rating || "n/a"} | Reliability {Number(shop.reliabilityScore || 0).toFixed(1)} | Reviews {shop.feedbackCount || 0}
                 </small>
                 <small>
                   {shop.openNow ? "Open now" : "Closed now"}{" "}
@@ -2555,11 +2570,22 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
           <div className="stack-list">
             {shopProducts.map(product => (
               <div key={product.id} className="item-card">
+                {!!product.imageUrl && (
+                  <img
+                    src={product.imageUrl}
+                    alt={product.name}
+                    style={{ width: "100%", maxHeight: 140, objectFit: "cover", borderRadius: 10 }}
+                  />
+                )}
                 <div className="item-header">
                   <strong>{product.name}</strong>
                   <span className="status-pill">Qty {product.availableQuantity}</span>
                 </div>
-                <small>Price: {toCurrency(product.price)} | Category: {product.category || "general"}</small>
+                <small>
+                  {(product.company ? `Company: ${product.company} | ` : "")}
+                  Price: {toCurrency(product.price)} | Category: {product.category || "general"}
+                </small>
+                {!!product.description && <small>{product.description}</small>}
                 <button onClick={() => addToCart(product)}>Add to Cart</button>
               </div>
             ))}
@@ -2686,7 +2712,7 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
                 </small>
                 <small>
                   {provider.available ? "Available" : "Unavailable"} |{" "}
-                  {provider.distanceKm ? `${provider.distanceKm.toFixed(1)} km` : "distance n/a"}{" "}
+                  {provider.distanceKm !== null && provider.distanceKm !== undefined ? `${provider.distanceKm.toFixed(1)} km` : "distance n/a"}{" "}
                   {provider.location?.lat && provider.location?.lng ? (
                     <a
                       href={`https://www.google.com/maps?q=${provider.location.lat},${provider.location.lng}`}
@@ -2964,9 +2990,28 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
               placeholder="Product name"
             />
             <input
+              value={sellerForm.company}
+              onChange={event => setSellerForm(prev => ({ ...prev, company: event.target.value }))}
+              placeholder="Company / Brand"
+            />
+            <input
               value={sellerForm.category}
               onChange={event => setSellerForm(prev => ({ ...prev, category: event.target.value }))}
               placeholder="Category"
+            />
+          </div>
+          <div className="field-row">
+            <input
+              value={sellerForm.imageUrl}
+              onChange={event => setSellerForm(prev => ({ ...prev, imageUrl: event.target.value }))}
+              placeholder="Product image URL"
+            />
+          </div>
+          <div className="field-row">
+            <input
+              value={sellerForm.description}
+              onChange={event => setSellerForm(prev => ({ ...prev, description: event.target.value }))}
+              placeholder="Product description"
             />
           </div>
           <div className="field-row">
@@ -2982,9 +3027,6 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
             />
             <button onClick={createSellerProduct}>Add Product</button>
           </div>
-          <div className="info-line">
-            Current DB supports `name`, `category`, `price`, `quantity`. For manufacturing date, expiry date, and product image gallery, we should add dedicated product metadata columns + media linkage next.
-          </div>
         </article>
 
         <article className="panel-card">
@@ -2992,13 +3034,22 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
           <div className="stack-list">
             {sellerProducts.map(product => (
               <div key={product.id} className="item-card">
+                {!!product.imageUrl && (
+                  <img
+                    src={product.imageUrl}
+                    alt={product.name}
+                    style={{ width: "100%", maxHeight: 140, objectFit: "cover", borderRadius: 10 }}
+                  />
+                )}
                 <div className="item-header">
                   <strong>{product.name}</strong>
                   <span className="status-pill">Qty {product.availableQuantity}</span>
                 </div>
                 <small>
+                  {(product.company ? `Company ${product.company} | ` : "")}
                   Price {toCurrency(product.price)} | Category {product.category || "general"}
                 </small>
+                {!!product.description && <small>{product.description}</small>}
                 <div className="field-row">
                   <input
                     placeholder="New quantity"

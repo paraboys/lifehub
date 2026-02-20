@@ -387,6 +387,15 @@ export async function confirmDelivery({
     throw new Error("Only customer can confirm delivery");
   }
 
+  const hasRating = rating !== undefined && rating !== null && String(rating).trim() !== "";
+  const numericRating = hasRating ? Number(rating) : null;
+  if (hasRating && (!Number.isFinite(numericRating) || numericRating < 1 || numericRating > 5)) {
+    throw new Error("Rating must be between 1 and 5");
+  }
+  const normalizedFeedback = feedback === undefined || feedback === null
+    ? null
+    : String(feedback).trim().slice(0, 1000);
+
   const key = `order:delivery:otp:${String(order.id)}`;
   const raw = await redis.get(key);
   if (!raw) throw new Error("Delivery OTP expired or missing");
@@ -419,29 +428,35 @@ export async function confirmDelivery({
       entity_id: order.id,
       user_id: toBigInt(actorId),
       metadata: {
-        rating: rating ? Number(rating) : null,
-        feedback: feedback || null,
+        rating: numericRating,
+        feedback: normalizedFeedback,
         shopId: String(order.shop_id || "")
       }
     }
   });
 
-  if (rating && order.shop_id) {
-    const shop = await prisma.shop_profiles.findUnique({
-      where: { id: order.shop_id }
+  if (hasRating && order.shop_id) {
+    await prisma.shop_feedbacks.upsert({
+      where: { order_id: order.id },
+      update: {
+        rating: Number(numericRating.toFixed(1)),
+        comment: normalizedFeedback
+      },
+      create: {
+        shop_id: order.shop_id,
+        user_id: toBigInt(actorId),
+        order_id: order.id,
+        rating: Number(numericRating.toFixed(1)),
+        comment: normalizedFeedback
+      }
     });
-    const current = Number(shop?.rating || 0);
-    const next = current > 0 ? Number(((current * 0.85) + (Number(rating) * 0.15)).toFixed(1)) : Number(rating);
-    await prisma.shop_profiles.update({
-      where: { id: order.shop_id },
-      data: { rating: next }
-    });
+    await syncShopRatingFromFeedback(order.shop_id);
   }
 
   eventBus.emit("ORDER.DELIVERED", {
     orderId: order.id,
     userId: actorId,
-    rating: rating ? Number(rating) : null
+    rating: numericRating
   });
 
   await createNotification({
@@ -450,12 +465,28 @@ export async function confirmDelivery({
     priority: "HIGH",
     payload: {
       orderId: String(order.id),
-      rating: rating ? Number(rating) : null
+      rating: numericRating
     },
     channels: ["IN_APP", "PUSH", "SMS"]
   });
 
   return { orderId: String(order.id), status: "DELIVERED" };
+}
+
+async function syncShopRatingFromFeedback(shopId) {
+  const aggregate = await prisma.shop_feedbacks.aggregate({
+    where: { shop_id: shopId },
+    _avg: { rating: true }
+  });
+  const avgRating = aggregate?._avg?.rating;
+  await prisma.shop_profiles.update({
+    where: { id: shopId },
+    data: {
+      rating: avgRating === null || avgRating === undefined
+        ? null
+        : Number(Number(avgRating).toFixed(1))
+    }
+  });
 }
 
 async function ensureCancellationTransition(instance) {

@@ -168,9 +168,33 @@ async function ensureShopData(shopUserId) {
   });
 
   const productSpecs = [
-    { name: "Rice 5kg", category: "grocery", price: 499, qty: 120 },
-    { name: "Milk 1L", category: "dairy", price: 56, qty: 350 },
-    { name: "Eggs 12 Pack", category: "dairy", price: 78, qty: 200 }
+    {
+      name: "Rice 5kg",
+      company: "Fortune",
+      description: "Premium long grain basmati rice, 5kg family pack.",
+      imageUrl: "https://images.unsplash.com/photo-1586201375761-83865001e31c?auto=format&fit=crop&w=900&q=80",
+      category: "grocery",
+      price: 499,
+      qty: 120
+    },
+    {
+      name: "Milk 1L",
+      company: "Amul",
+      description: "Fresh toned milk, 1L pouch.",
+      imageUrl: "https://images.unsplash.com/photo-1550583724-b2692b85b150?auto=format&fit=crop&w=900&q=80",
+      category: "dairy",
+      price: 56,
+      qty: 350
+    },
+    {
+      name: "Eggs 12 Pack",
+      company: "Farm Fresh",
+      description: "Grade A white eggs, hygienically packed.",
+      imageUrl: "https://images.unsplash.com/photo-1506976785307-8732e854ad03?auto=format&fit=crop&w=900&q=80",
+      category: "dairy",
+      price: 78,
+      qty: 200
+    }
   ];
 
   for (const spec of productSpecs) {
@@ -186,6 +210,9 @@ async function ensureShopData(shopUserId) {
         data: {
           shop_id: shop.id,
           name: spec.name,
+          company: spec.company,
+          description: spec.description,
+          image_url: spec.imageUrl,
           category: spec.category,
           price: spec.price
         }
@@ -194,6 +221,9 @@ async function ensureShopData(shopUserId) {
       product = await prisma.products.update({
         where: { id: product.id },
         data: {
+          company: spec.company,
+          description: spec.description,
+          image_url: spec.imageUrl,
           category: spec.category,
           price: spec.price
         }
@@ -214,6 +244,42 @@ async function ensureShopData(shopUserId) {
   }
 
   return shop;
+}
+
+async function ensureShopFeedback(customerId, shopId) {
+  const existing = await prisma.shop_feedbacks.findFirst({
+    where: {
+      shop_id: shopId,
+      user_id: customerId,
+      order_id: null
+    }
+  });
+
+  if (!existing) {
+    await prisma.shop_feedbacks.create({
+      data: {
+        shop_id: shopId,
+        user_id: customerId,
+        order_id: null,
+        rating: 4.8,
+        comment: "Quick delivery and fair pricing. Inventory is usually accurate."
+      }
+    });
+  }
+
+  const aggregate = await prisma.shop_feedbacks.aggregate({
+    where: { shop_id: shopId },
+    _avg: { rating: true }
+  });
+  const avgRating = aggregate?._avg?.rating;
+  if (avgRating !== null && avgRating !== undefined) {
+    await prisma.shop_profiles.update({
+      where: { id: shopId },
+      data: {
+        rating: Number(Number(avgRating).toFixed(1))
+      }
+    });
+  }
 }
 
 async function ensureProvider(userId, skillNames, location) {
@@ -371,6 +437,7 @@ async function main() {
   }
 
   const shop = await ensureShopData(users.shopkeeper.id);
+  await ensureShopFeedback(users.customer.id, shop.id);
   await ensureProvider(users.plumber.id, ["plumber", "pipe_repair"], { lat: 28.6139, lng: 77.209 });
   await ensureProvider(users.electrician.id, ["electrician", "wiring"], { lat: 28.612, lng: 77.2295 });
   await ensureProvider(users.delivery.id, ["delivery", "pickup_drop"], { lat: 28.611, lng: 77.221 });
