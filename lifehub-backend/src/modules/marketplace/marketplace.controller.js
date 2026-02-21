@@ -76,6 +76,24 @@ export async function searchProducts(req, res) {
   }
 }
 
+export async function recommendProducts(req, res) {
+  try {
+    const products = await marketplaceService.recommendProductsNearby({
+      lat: req.query.lat,
+      lng: req.query.lng,
+      radiusKm: req.query.radiusKm,
+      maxPrice: req.query.maxPrice,
+      minShopRating: req.query.minShopRating,
+      seedProductIds: req.query.seedProductIds,
+      query: req.query.query,
+      limit: req.query.limit
+    });
+    res.json(jsonSafe({ products }));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+}
+
 export async function createShopProduct(req, res) {
   try {
     const product = await marketplaceService.createShopProduct({

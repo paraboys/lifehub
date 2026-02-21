@@ -687,6 +687,100 @@ function scoreProductForFairSort(item) {
   return item.price * 0.55 + distance * 0.25 - item.shop.reliabilityScore * 0.2;
 }
 
+function normalizeSeedProductIds(raw) {
+  if (!raw) return [];
+  const parts = Array.isArray(raw) ? raw : String(raw).split(",");
+  const normalized = [];
+  const seen = new Set();
+
+  for (const value of parts) {
+    const text = String(value || "").trim();
+    if (!text || seen.has(text)) continue;
+    try {
+      normalized.push(BigInt(text));
+      seen.add(text);
+    } catch {
+      // Ignore invalid product ids.
+    }
+  }
+
+  return normalized;
+}
+
+function pairKey(a, b) {
+  const left = String(a);
+  const right = String(b);
+  return left < right ? `${left}:${right}` : `${right}:${left}`;
+}
+
+function buildAssociationStats(orderRows = []) {
+  const itemFrequency = new Map();
+  const pairFrequency = new Map();
+  let basketCount = 0;
+
+  for (const order of orderRows) {
+    const uniqueProducts = [...new Set(
+      (order.order_items || [])
+        .map(item => String(item.product_id || ""))
+        .filter(Boolean)
+    )];
+    if (!uniqueProducts.length) continue;
+
+    basketCount += 1;
+    for (const productId of uniqueProducts) {
+      itemFrequency.set(productId, Number(itemFrequency.get(productId) || 0) + 1);
+    }
+    for (let i = 0; i < uniqueProducts.length; i += 1) {
+      for (let j = i + 1; j < uniqueProducts.length; j += 1) {
+        const key = pairKey(uniqueProducts[i], uniqueProducts[j]);
+        pairFrequency.set(key, Number(pairFrequency.get(key) || 0) + 1);
+      }
+    }
+  }
+
+  return {
+    basketCount,
+    itemFrequency,
+    pairFrequency
+  };
+}
+
+function getAssociationScore({
+  candidateProductId,
+  seedProductIds = [],
+  stats
+}) {
+  if (!seedProductIds.length || !stats?.basketCount) {
+    return 0;
+  }
+
+  const candidateId = String(candidateProductId);
+  const candidateCount = Number(stats.itemFrequency.get(candidateId) || 0);
+  if (!candidateCount) return 0;
+
+  let maxScore = 0;
+  for (const seed of seedProductIds) {
+    const seedId = String(seed);
+    if (seedId === candidateId) continue;
+
+    const seedCount = Number(stats.itemFrequency.get(seedId) || 0);
+    const pairCount = Number(stats.pairFrequency.get(pairKey(seedId, candidateId)) || 0);
+    if (!seedCount || !pairCount) continue;
+
+    const support = pairCount / Math.max(stats.basketCount, 1);
+    const confidence = pairCount / Math.max(seedCount, 1);
+    const baseline = candidateCount / Math.max(stats.basketCount, 1);
+    const lift = baseline > 0 ? confidence / baseline : 0;
+    const normalizedLift = Math.max(0, Math.min((lift - 1) / 2, 1));
+    const score = confidence * 0.7 + normalizedLift * 0.2 + support * 0.1;
+    if (score > maxScore) {
+      maxScore = score;
+    }
+  }
+
+  return Number(maxScore.toFixed(4));
+}
+
 export async function searchProductsNearby({
   query,
   lat,
@@ -829,6 +923,221 @@ export async function searchProductsNearby({
       return b.shop.reliabilityScore - a.shop.reliabilityScore;
     })
     .slice(0, clampLimit(limit, 50));
+}
+
+export async function recommendProductsNearby({
+  lat,
+  lng,
+  radiusKm = 20,
+  maxPrice,
+  minShopRating,
+  seedProductIds,
+  query,
+  limit = 18
+}) {
+  const nearbyShops = await searchShops({
+    availableOnly: true,
+    minRating: hasValue(minShopRating) ? Number(minShopRating) : undefined,
+    lat,
+    lng,
+    radiusKm,
+    sortBy: "fair",
+    limit: 40
+  });
+
+  if (!nearbyShops.length) return [];
+
+  const nearbyShopMap = new Map(nearbyShops.map(shop => [String(shop.id), shop]));
+  const nearbyShopIds = nearbyShops.map(shop => BigInt(String(shop.id)));
+  const metadata = await getProductMetadataAvailability();
+  const trimmedQuery = String(query || "").trim();
+
+  const textOr = [
+    {
+      name: {
+        contains: trimmedQuery,
+        mode: "insensitive"
+      }
+    },
+    {
+      category: {
+        contains: trimmedQuery,
+        mode: "insensitive"
+      }
+    }
+  ];
+  if (metadata.hasCompany) {
+    textOr.push({
+      company: {
+        contains: trimmedQuery,
+        mode: "insensitive"
+      }
+    });
+  }
+  if (metadata.hasDescription) {
+    textOr.push({
+      description: {
+        contains: trimmedQuery,
+        mode: "insensitive"
+      }
+    });
+  }
+
+  const products = await prisma.products.findMany({
+    select: buildProductSelect({
+      metadata,
+      includeInventory: true,
+      includeShop: true
+    }),
+    where: {
+      shop_id: { in: nearbyShopIds },
+      ...(hasValue(maxPrice) ? { price: { lte: Number(maxPrice) } } : {}),
+      ...(trimmedQuery ? { OR: textOr } : {})
+    },
+    take: clampLimit(limit * 10, 300)
+  });
+
+  if (!products.length) return [];
+
+  const productIds = products.map(product => product.id);
+  const [salesRows, orderRows] = await Promise.all([
+    prisma.order_items.groupBy({
+      by: ["product_id"],
+      where: {
+        product_id: { in: productIds },
+        orders: {
+          shop_id: { in: nearbyShopIds },
+          status: {
+            in: ["DELIVERED", "COMPLETED"]
+          }
+        }
+      },
+      _sum: {
+        quantity: true
+      },
+      _count: {
+        _all: true
+      }
+    }),
+    prisma.orders.findMany({
+      where: {
+        shop_id: { in: nearbyShopIds },
+        status: {
+          in: ["DELIVERED", "COMPLETED"]
+        }
+      },
+      orderBy: { created_at: "desc" },
+      take: 600,
+      select: {
+        id: true,
+        order_items: {
+          select: {
+            product_id: true
+          }
+        }
+      }
+    })
+  ]);
+
+  const salesMap = new Map(
+    salesRows.map(row => [
+      String(row.product_id),
+      {
+        unitsSold: Number(row._sum.quantity || 0),
+        orderFrequency: Number(row._count?._all || 0)
+      }
+    ])
+  );
+  const associationStats = buildAssociationStats(orderRows);
+  const seeds = normalizeSeedProductIds(seedProductIds);
+
+  const values = products
+    .map(product => {
+      const availableQuantity = Number(product.inventory?.quantity || 0);
+      if (availableQuantity <= 0) return null;
+
+      const shop = nearbyShopMap.get(String(product.shop_id));
+      const shopRating = Number(shop?.rating || product.shop_profiles?.rating || 0);
+      const reliabilityScore = Number(shop?.reliabilityScore || 0);
+      const distance = shop?.distanceKm === null || shop?.distanceKm === undefined
+        ? null
+        : Number(shop.distanceKm);
+      const sales = salesMap.get(String(product.id)) || {
+        unitsSold: 0,
+        orderFrequency: 0
+      };
+      const associationScore = getAssociationScore({
+        candidateProductId: product.id,
+        seedProductIds: seeds,
+        stats: associationStats
+      });
+
+      return {
+        productId: product.id,
+        productName: product.name,
+        company: product.company || null,
+        description: product.description || null,
+        imageUrl: product.image_url || null,
+        category: product.category || null,
+        price: Number(product.price || 0),
+        availableQuantity,
+        unitsSold: sales.unitsSold,
+        orderFrequency: sales.orderFrequency,
+        associationScore,
+        shop: {
+          id: shop?.id || product.shop_profiles?.id || null,
+          shopName: shop?.shopName || product.shop_profiles?.shop_name || "Unknown shop",
+          address: shop?.address || product.shop_profiles?.address || null,
+          rating: shopRating,
+          feedbackCount: Number(shop?.feedbackCount || 0),
+          reliabilityScore,
+          verified: Boolean(shop?.verified || product.shop_profiles?.verified)
+        },
+        distanceKm: distance
+      };
+    })
+    .filter(Boolean);
+
+  if (!values.length) return [];
+
+  const maxUnits = Math.max(...values.map(item => Number(item.unitsSold || 0)), 1);
+  const maxOrders = Math.max(...values.map(item => Number(item.orderFrequency || 0)), 1);
+  const maxAssoc = Math.max(...values.map(item => Number(item.associationScore || 0)), 0.0001);
+  const minPrice = Math.min(...values.map(item => Number(item.price || 0)));
+  const maxPriceObserved = Math.max(...values.map(item => Number(item.price || 0)));
+  const priceRange = Math.max(maxPriceObserved - minPrice, 0.0001);
+
+  const scored = values
+    .map(item => {
+      const popularity = (item.unitsSold / maxUnits) * 0.6 + (item.orderFrequency / maxOrders) * 0.4;
+      const association = item.associationScore > 0 ? item.associationScore / maxAssoc : 0;
+      const reliability = Number(item.shop.reliabilityScore || 0) / 100;
+      const affordability = 1 - ((Number(item.price || 0) - minPrice) / priceRange);
+      const distanceScore = item.distanceKm === null
+        ? 0.3
+        : 1 / (1 + Math.max(Number(item.distanceKm || 0), 0));
+      const recommendationScore = (
+        popularity * 0.35 +
+        association * 0.25 +
+        reliability * 0.2 +
+        affordability * 0.12 +
+        distanceScore * 0.08
+      );
+
+      return {
+        ...item,
+        recommendationScore: Number(recommendationScore.toFixed(4)),
+        recommendationReason:
+          association > 0.2
+            ? "Frequently bought together near you"
+            : popularity > 0.35
+              ? "Trending in nearby stores"
+              : "Best balance of rating and price"
+      };
+    })
+    .sort((a, b) => b.recommendationScore - a.recommendationScore);
+
+  return scored.slice(0, clampLimit(limit, 18));
 }
 
 export async function updateShopLocation({

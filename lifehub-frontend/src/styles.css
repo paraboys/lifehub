@@ -1723,11 +1723,13 @@ button:hover {
 }
 
 .home-hero-card {
-  grid-column: span 7;
+  grid-column: span 8;
 }
 
 .home-signal-card {
-  grid-column: span 5;
+  grid-column: span 4;
+  max-width: 520px;
+  justify-self: end;
 }
 
 .home-activity-card {
@@ -1836,6 +1838,14 @@ button:hover {
   border: 1px solid rgba(8, 83, 131, 0.14);
   border-radius: 14px;
   background: rgba(255, 255, 255, 0.72);
+}
+
+.metric-grid.compact {
+  grid-template-columns: repeat(2, minmax(120px, 1fr));
+}
+
+.metric-grid.compact .metric-card strong {
+  font-size: 22px;
 }
 
 .item-card {
@@ -2062,6 +2072,29 @@ button:hover {
 .market-search-grid {
   display: grid;
   gap: 8px;
+}
+
+.market-recommend-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 9px;
+}
+
+.market-recommend-card {
+  border-radius: 14px;
+  border: 1px solid rgba(13, 74, 121, 0.14);
+  background: rgba(255, 255, 255, 0.82);
+  padding: 9px;
+  display: grid;
+  grid-template-columns: 72px 1fr;
+  gap: 9px;
+  text-align: left;
+  color: var(--ink);
+  box-shadow: none;
+}
+
+.market-recommend-card small {
+  color: var(--ink-dim);
 }
 
 .market-result-card {
@@ -2404,4 +2437,111 @@ button:hover {
   .service-provider-grid {
     grid-template-columns: 1fr;
   }
+}
+
+/* Dark Theme Preference */
+:root {
+  --bg-base: #070b12;
+  --bg-top: #101722;
+  --ink: #e7f0ff;
+  --ink-dim: #9bb0cc;
+  --surface: rgba(19, 27, 40, 0.86);
+  --surface-strong: rgba(20, 29, 43, 0.95);
+  --line: rgba(114, 147, 183, 0.24);
+  --brand: #2da9ff;
+  --brand-deep: #0f5f9f;
+  --accent: #25c991;
+  --accent-warm: #ef9f4a;
+  --danger: #f87171;
+}
+
+body {
+  color: var(--ink);
+  background:
+    radial-gradient(circle at 8% 10%, rgba(45, 169, 255, 0.2), transparent 30%),
+    radial-gradient(circle at 88% 6%, rgba(37, 201, 145, 0.14), transparent 32%),
+    linear-gradient(180deg, var(--bg-top), var(--bg-base));
+}
+
+.topbar,
+.panel-card,
+.command-deck,
+.module-nav-item,
+.market-shop-card,
+.market-result-card,
+.market-recommend-card,
+.market-product-card,
+.market-cart-item,
+.service-provider-card,
+.service-request-card,
+.auth-card {
+  background: rgba(18, 26, 39, 0.88);
+  border-color: rgba(116, 154, 190, 0.2);
+  color: var(--ink);
+}
+
+.module-nav-item,
+.market-shop-card,
+.market-result-card,
+.market-recommend-card,
+.service-provider-card {
+  color: var(--ink);
+}
+
+.module-nav-item span:last-child,
+.market-shop-card small,
+.market-result-card small,
+.market-recommend-card small,
+.market-product-body small,
+.service-provider-card small,
+.service-request-card small,
+.market-panel-head small,
+.chat-platform-meta p {
+  color: var(--ink-dim);
+}
+
+input,
+select,
+textarea {
+  color: var(--ink);
+  border-color: rgba(109, 145, 180, 0.26);
+  background: rgba(12, 20, 32, 0.9);
+}
+
+.market-search-wrap,
+.market-search-wrap input {
+  background: rgba(12, 20, 32, 0.9);
+  color: var(--ink);
+}
+
+.info-line,
+.empty-line {
+  background: rgba(18, 26, 39, 0.72);
+  color: var(--ink-dim);
+  border-color: rgba(109, 145, 180, 0.26);
+}
+
+.status-pill {
+  border-color: rgba(109, 145, 180, 0.32);
+  background: rgba(45, 169, 255, 0.12);
+  color: #c8e8ff;
+}
+
+.command-deck {
+  justify-content: flex-end;
+}
+
+.quick-action-btn,
+.module-launch-card,
+.category-chip,
+.service-skill-chip,
+.ghost-btn {
+  background: rgba(15, 24, 38, 0.9);
+  color: #d7eaff;
+  border-color: rgba(109, 145, 180, 0.26);
+}
+
+.module-launch-badge,
+.nav-badge {
+  background: #ff7b69;
 }

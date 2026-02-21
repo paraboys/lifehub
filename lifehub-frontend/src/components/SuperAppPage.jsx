@@ -365,9 +365,12 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
   const [productResults, setProductResults] = useState([]);
   const [searchingProducts, setSearchingProducts] = useState(false);
   const [productSearchError, setProductSearchError] = useState("");
+  const [recommendedProducts, setRecommendedProducts] = useState([]);
+  const [loadingRecommendations, setLoadingRecommendations] = useState(false);
+  const [recommendationError, setRecommendationError] = useState("");
   const [productSearchFilters, setProductSearchFilters] = useState({
     maxPrice: "",
-    minShopRating: "0",
+    minShopRating: "3",
     sortBy: "fair"
   });
   const [marketCategory, setMarketCategory] = useState("all");
@@ -471,8 +474,11 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
     for (const result of productResults) {
       set.add(categoryKey(result?.category));
     }
+    for (const item of recommendedProducts) {
+      set.add(categoryKey(item?.category));
+    }
     return ["all", ...Array.from(set).filter(value => value !== "uncategorized"), "uncategorized"];
-  }, [shopProducts, productResults]);
+  }, [shopProducts, productResults, recommendedProducts]);
   const visibleShopProducts = useMemo(() => {
     if (marketCategory === "all") return shopProducts;
     return shopProducts.filter(product => categoryKey(product?.category) === marketCategory);
@@ -481,6 +487,10 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
     if (marketCategory === "all") return productResults;
     return productResults.filter(result => categoryKey(result?.category) === marketCategory);
   }, [productResults, marketCategory]);
+  const visibleRecommendedProducts = useMemo(() => {
+    if (marketCategory === "all") return recommendedProducts;
+    return recommendedProducts.filter(item => categoryKey(item?.category) === marketCategory);
+  }, [recommendedProducts, marketCategory]);
   const serviceSkillOptions = useMemo(() => {
     const seed = [
       "plumber",
@@ -1172,6 +1182,11 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
     });
     const data = await api(`/marketplace/shops/search?${query}`);
     setShops(data.shops || []);
+    await loadRecommendedProducts({
+      lat: source.lat,
+      lng: source.lng,
+      radiusKm: source.radiusKm
+    });
   }
 
   async function loadShopProducts(shopId) {
@@ -1596,6 +1611,50 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
     }
   }
 
+  async function loadRecommendedProducts(options = {}) {
+    const {
+      seedProductIds = cart.map(item => item.productId).slice(0, 6),
+      query = "",
+      lat = shopFilters.lat,
+      lng = shopFilters.lng,
+      radiusKm = shopFilters.radiusKm
+    } = options;
+
+    setLoadingRecommendations(true);
+    setRecommendationError("");
+    try {
+      const params = new URLSearchParams({
+        lat,
+        lng,
+        radiusKm,
+        limit: "18"
+      });
+      if (productSearchFilters.maxPrice) {
+        params.set("maxPrice", productSearchFilters.maxPrice);
+      }
+      if (productSearchFilters.minShopRating) {
+        params.set("minShopRating", productSearchFilters.minShopRating);
+      }
+      if (Array.isArray(seedProductIds) && seedProductIds.length) {
+        params.set("seedProductIds", seedProductIds.map(String).join(","));
+      }
+      if (query) {
+        params.set("query", String(query));
+      }
+
+      const data = await api(`/marketplace/products/recommendations?${params}`);
+      setRecommendedProducts(data.products || []);
+      if (!(data.products || []).length) {
+        setRecommendationError("No dynamic recommendations available for this location yet.");
+      }
+    } catch (err) {
+      setRecommendedProducts([]);
+      setRecommendationError(err.message || "Unable to load top products right now.");
+    } finally {
+      setLoadingRecommendations(false);
+    }
+  }
+
   async function topupWallet() {
     try {
       const intent = await api("/payments/intents", {
@@ -1984,6 +2043,22 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
   ]);
 
   useEffect(() => {
+    if (!canAccess.marketplace) return;
+    const handle = setTimeout(() => {
+      loadRecommendedProducts().catch(() => {});
+    }, 450);
+    return () => clearTimeout(handle);
+  }, [
+    canAccess.marketplace,
+    shopFilters.lat,
+    shopFilters.lng,
+    shopFilters.radiusKm,
+    productSearchFilters.maxPrice,
+    productSearchFilters.minShopRating,
+    cart
+  ]);
+
+  useEffect(() => {
     if (!paymentIntent?.intentId) return;
     const interval = setInterval(async () => {
       try {
@@ -2021,28 +2096,9 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
           <p className="info-line">
             One workspace for grocery operations, customer support, service requests, and wallet reconciliation.
           </p>
-          <div className="quick-action-grid">
-            <button className="quick-action-btn" onClick={() => setActiveTab("marketplace")}>
-              Find Nearby Deals
-            </button>
-            <button className="quick-action-btn" onClick={() => setActiveTab("chat")}>
-              Jump To Inbox
-            </button>
-            <button className="quick-action-btn" onClick={() => setActiveTab("orders")}>
-              Track Orders
-            </button>
-            <button className="quick-action-btn" onClick={() => setActiveTab("wallet")}>
-              Wallet & Payouts
-            </button>
-          </div>
           <div className="module-launch-grid">
             {moduleCards.map(module => (
-              <button
-                key={module.id}
-                type="button"
-                className="module-launch-card"
-                onClick={() => setActiveTab(module.id)}
-              >
+              <div key={module.id} className="module-launch-card">
                 <span className="module-launch-icon">
                   <UiIcon name={tabIconName(module.id)} />
                 </span>
@@ -2055,7 +2111,7 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
                     {module.badge > 99 ? "99+" : module.badge}
                   </span>
                 )}
-              </button>
+              </div>
             ))}
           </div>
           <div className="signal-strip">
@@ -2076,30 +2132,22 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
 
         <article className="panel-card home-signal-card">
           <h2>Live Snapshot</h2>
-          <div className="metric-grid">
+          <div className="metric-grid compact">
             <div className="metric-card">
-              <h3>Orders</h3>
-              <strong>{orders.length}</strong>
+              <h3>Active Orders</h3>
+              <strong>{activeOrdersCount}</strong>
             </div>
             <div className="metric-card">
-              <h3>Chats</h3>
-              <strong>{conversations.length}</strong>
+              <h3>Unread Chats</h3>
+              <strong>{totalUnreadChats}</strong>
             </div>
             <div className="metric-card">
-              <h3>Providers</h3>
-              <strong>{providers.length}</strong>
-            </div>
-            <div className="metric-card">
-              <h3>Shops</h3>
+              <h3>Nearby Shops</h3>
               <strong>{shops.length}</strong>
             </div>
             <div className="metric-card">
               <h3>System Alerts</h3>
               <strong>{notifications.length}</strong>
-            </div>
-            <div className="metric-card">
-              <h3>Chat Alerts</h3>
-              <strong>{totalUnreadChats}</strong>
             </div>
           </div>
 
@@ -2107,7 +2155,6 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
             <span className="status-pill">Geo-aware Search</span>
             <span className="status-pill">Workflow Automation</span>
             <span className="status-pill">Role-aware Access</span>
-            <span className="status-pill">Realtime Events</span>
           </div>
         </article>
 
@@ -2607,6 +2654,7 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
             <h2>LifeHub Grocery</h2>
             <p>
               Discover nearby stores, compare price and reliability, and shop by category with a modern retail workflow.
+              Search always prioritizes nearby top-rated groceries with fair pricing.
             </p>
           </div>
           <div className="market-search-wrap">
@@ -2708,6 +2756,57 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
           </aside>
 
           <div className="market-main">
+            <article className="panel-card market-recommend-panel">
+              <div className="market-panel-head">
+                <h3>Top Picks Near You</h3>
+                <small>
+                  Dynamic ranking using nearby demand, shop reliability, pricing, and basket co-occurrence.
+                </small>
+              </div>
+              {loadingRecommendations && <div className="empty-line">Building recommendations...</div>}
+              {!loadingRecommendations && !!recommendationError && (
+                <div className="empty-line">{recommendationError}</div>
+              )}
+              {!loadingRecommendations && !recommendationError && !visibleRecommendedProducts.length && (
+                <div className="empty-line">No top picks available yet for this area.</div>
+              )}
+              <div className="market-recommend-grid">
+                {!loadingRecommendations &&
+                  visibleRecommendedProducts.map(item => (
+                    <button
+                      key={`rec_${item.productId}_${item?.shop?.id || "shop"}`}
+                      type="button"
+                      className="market-recommend-card"
+                      onClick={async () => {
+                        if (!item?.shop?.id) return;
+                        setSelectedShopId(String(item.shop.id));
+                        await loadShopProducts(item.shop.id);
+                      }}
+                    >
+                      {!!item.imageUrl ? (
+                        <img src={item.imageUrl} alt={item.productName} className="market-result-thumb" />
+                      ) : (
+                        <div className="market-result-thumb market-thumb-placeholder">
+                          <span>{initials(item.productName)}</span>
+                        </div>
+                      )}
+                      <div>
+                        <strong>{item.productName}</strong>
+                        <small>
+                          {item?.shop?.shopName || "Nearby shop"} | {toCurrency(item.price)} | Qty {item.availableQuantity}
+                        </small>
+                        <small>
+                          Score {Number(item.recommendationScore || 0).toFixed(2)} | Rating{" "}
+                          {Number(item?.shop?.rating || 0).toFixed(1)} | Reliability{" "}
+                          {Number(item?.shop?.reliabilityScore || 0).toFixed(1)}
+                        </small>
+                        <small>{item.recommendationReason}</small>
+                      </div>
+                    </button>
+                  ))}
+              </div>
+            </article>
+
             {!!productQuery.trim() && (
               <article className="panel-card market-search-results">
                 <div className="market-panel-head">
@@ -3814,26 +3913,6 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
           <button type="button" className="ghost-btn" onClick={bootstrap}>
             Sync Workspace
           </button>
-          {canAccess.marketplace && (
-            <button type="button" className="ghost-btn" onClick={() => setActiveTab("marketplace")}>
-              Nearby Groceries
-            </button>
-          )}
-          {canAccess.chat && (
-            <button type="button" className="ghost-btn" onClick={() => setActiveTab("chat")}>
-              Open Inbox
-            </button>
-          )}
-          {canAccess.orders && (
-            <button type="button" className="ghost-btn" onClick={() => setActiveTab("orders")}>
-              Active Deliveries
-            </button>
-          )}
-          {canAccess.seller && (
-            <button type="button" className="ghost-btn" onClick={() => setActiveTab("seller")}>
-              Seller Inventory
-            </button>
-          )}
         </div>
 
         {error && <div className="alert danger">{error}</div>}

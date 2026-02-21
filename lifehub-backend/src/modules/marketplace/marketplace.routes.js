@@ -6,6 +6,7 @@ import {
   getProvider,
   searchShops,
   searchProducts,
+  recommendProducts,
   getShopProducts,
   createShopProduct,
   updateShopProduct,
@@ -22,6 +23,7 @@ router.get("/providers/search", authenticate, authorize("CUSTOMER", "PROVIDER", 
 router.get("/providers/:providerId", authenticate, authorize("CUSTOMER", "PROVIDER", "SHOPKEEPER", "DELIVERY", "BUSINESS", "ADMIN"), getProvider);
 router.get("/shops/search", authenticate, authorize("CUSTOMER", "PROVIDER", "SHOPKEEPER", "DELIVERY", "BUSINESS", "ADMIN"), searchShops);
 router.get("/products/search", authenticate, authorize("CUSTOMER", "PROVIDER", "SHOPKEEPER", "DELIVERY", "BUSINESS", "ADMIN"), searchProducts);
+router.get("/products/recommendations", authenticate, authorize("CUSTOMER", "PROVIDER", "SHOPKEEPER", "DELIVERY", "BUSINESS", "ADMIN"), recommendProducts);
 router.get("/shops/:shopId/products", authenticate, authorize("CUSTOMER", "PROVIDER", "SHOPKEEPER", "DELIVERY", "BUSINESS", "ADMIN"), getShopProducts);
 router.get("/shops/:shopId/feedback", authenticate, authorize("CUSTOMER", "PROVIDER", "SHOPKEEPER", "DELIVERY", "BUSINESS", "ADMIN"), getShopFeedback);
 router.post("/shops/:shopId/products", authenticate, authorize("SHOPKEEPER", "BUSINESS", "ADMIN"), createShopProduct);
