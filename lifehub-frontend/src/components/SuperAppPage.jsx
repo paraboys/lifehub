@@ -2859,6 +2859,7 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
                   <button
                     key={contact.id}
                     className="item-card button-like"
+                    type="button"
                     onClick={async () => {
                       try {
                         const conversation = await api("/chat/conversations/by-phone", {
@@ -4186,12 +4187,12 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
                 <div className="item-actions">
                   {(hasRole("SHOPKEEPER") || hasRole("DELIVERY") || hasRole("ADMIN")) && (
                     <>
-                      <button onClick={() => startDelivery(order.id)}>Start Delivery</button>
-                      <button onClick={() => sendDeliveryOtp(order.id)}>Send OTP</button>
+                      <button type="button" onClick={() => startDelivery(order.id)}>Start Delivery</button>
+                      <button type="button" onClick={() => sendDeliveryOtp(order.id)}>Send OTP</button>
                     </>
                   )}
                   {(hasRole("SHOPKEEPER") || hasRole("ADMIN") || hasRole("BUSINESS")) && (
-                    <button onClick={() => payoutShopkeeper(order.id)}>Payout</button>
+                    <button type="button" onClick={() => payoutShopkeeper(order.id)}>Payout</button>
                   )}
                   {(hasRole("CUSTOMER") || hasRole("ADMIN")) && (
                     <>
@@ -4215,11 +4216,12 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
                         onChange={event => setDeliveryFeedback(event.target.value)}
                         placeholder="Feedback for shopkeeper"
                       />
-                      <button onClick={() => confirmDelivery(order.id)}>Confirm Delivery</button>
-                      <button onClick={() => requestRefund(order.id)}>Refund</button>
+                      <button type="button" onClick={() => confirmDelivery(order.id)}>Confirm Delivery</button>
+                      <button type="button" onClick={() => requestRefund(order.id)}>Refund</button>
                     </>
                   )}
                   <button
+                    type="button"
                     className="danger"
                     disabled={["CANCELLED", "COMPLETED"].includes(String(order.status).toUpperCase())}
                     onClick={() => cancelOrder(order.id)}
@@ -4242,13 +4244,13 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
         <article className="panel-card">
           <h2>Wallet and Payments</h2>
           <div className="field-row">
-            <button onClick={loadWallet}>Refresh</button>
+            <button type="button" onClick={loadWallet}>Refresh</button>
             <input
               value={topupAmount}
               onChange={event => setTopupAmount(event.target.value)}
               placeholder="Topup amount"
             />
-            <button onClick={topupWallet}>Topup via Razorpay</button>
+            <button type="button" onClick={topupWallet}>Topup via Razorpay</button>
           </div>
           {paymentIntent && (
             <div className="item-card">
@@ -4316,7 +4318,7 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
               }
               placeholder="Note (optional)"
             />
-            <button onClick={transferWalletBalance} disabled={transferBusy}>
+            <button type="button" onClick={transferWalletBalance} disabled={transferBusy}>
               {transferBusy ? "Transferring..." : "Send"}
             </button>
           </div>
@@ -4399,7 +4401,7 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
               }
               placeholder="Shop lng"
             />
-            <button onClick={updateShopLocation}>Update Shop Location</button>
+            <button type="button" onClick={updateShopLocation}>Update Shop Location</button>
           </div>
           <div className="field-row">
             <input
@@ -4407,7 +4409,7 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
               onChange={event => setSellerForm(prev => ({ ...prev, shopId: event.target.value }))}
               placeholder="Shop ID"
             />
-            <button onClick={() => loadSellerProducts()}>Load Inventory</button>
+            <button type="button" onClick={() => loadSellerProducts()}>Load Inventory</button>
           </div>
           <div className="field-row">
             <input
@@ -4468,7 +4470,7 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
               onChange={event => setSellerForm(prev => ({ ...prev, quantity: event.target.value }))}
               placeholder="Quantity"
             />
-            <button onClick={createSellerProduct}>Add Product</button>
+            <button type="button" onClick={createSellerProduct}>Add Product</button>
           </div>
         </article>
 
@@ -4523,7 +4525,7 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
               onChange={event => setWorkflowId(event.target.value)}
               placeholder="Workflow ID"
             />
-            <button onClick={runReconciliationNow}>Run Reconciliation</button>
+            <button type="button" onClick={runReconciliationNow}>Run Reconciliation</button>
           </div>
           <WorkflowGraph workflowId={workflowId} authToken={token} />
         </article>
@@ -4898,7 +4900,7 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
             <div className="field-row">
               <button type="button" onClick={saveUserSettings}>Save Profile Settings</button>
               <button type="button" onClick={saveNotificationPreferences}>Save Notification Rules</button>
-              <button className="danger" onClick={onLogout}>
+              <button type="button" className="danger" onClick={onLogout}>
                 Logout
               </button>
             </div>
