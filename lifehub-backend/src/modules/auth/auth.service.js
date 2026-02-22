@@ -8,6 +8,16 @@ import {
 } from "../../common/authUtils.js";
 import { buildPhoneCandidates } from "./otp.service.js";
 
+async function alignIdentitySequence(tableName, columnName = "id") {
+  await prisma.$executeRawUnsafe(`
+    SELECT setval(
+      pg_get_serial_sequence('${tableName}', '${columnName}'),
+      COALESCE((SELECT MAX(${columnName}) FROM ${tableName}), 0),
+      true
+    )
+  `);
+}
+
 export const signupUser = async (data) => {
   const normalizedPhone = String(data.phone || "").trim();
   const normalizedEmail = data.email ? String(data.email).trim().toLowerCase() : null;
@@ -36,10 +46,20 @@ export const signupUser = async (data) => {
   if (!role) {
     throw new Error(`Invalid role: ${data.role || "CUSTOMER"}`);
   }
+  const shouldCreateShopProfile = ["shopkeeper", "business"].includes(normalizedRole);
+  const shouldCreateProviderProfile = normalizedRole === "provider";
+  const displayName = String(data.name || "New User").trim() || "New User";
+
+  if (shouldCreateShopProfile) {
+    await alignIdentitySequence("shop_profiles", "id").catch(() => {});
+  }
+  if (shouldCreateProviderProfile) {
+    await alignIdentitySequence("provider_profiles", "id").catch(() => {});
+  }
 
   const user = await prisma.users.create({
     data: {
-      name: data.name,
+      name: displayName,
       phone: normalizedPhone,
       email: normalizedEmail,
       password_hash: await hashPassword(data.password),
@@ -48,7 +68,30 @@ export const signupUser = async (data) => {
         create: {
           role_id: role.id
         }
-      }
+      },
+      ...(shouldCreateShopProfile
+        ? {
+            shop_profiles: {
+              create: {
+                shop_name: `${displayName} Grocery`,
+                address: "Please update shop address",
+                verified: false,
+                rating: 0
+              }
+            }
+          }
+        : {}),
+      ...(shouldCreateProviderProfile
+        ? {
+            provider_profiles: {
+              create: {
+                experience_years: 0,
+                verified: false,
+                rating: 0
+              }
+            }
+          }
+        : {})
     }
   });
 

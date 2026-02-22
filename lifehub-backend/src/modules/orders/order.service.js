@@ -56,7 +56,7 @@ async function hasShopFeedbackTable() {
   }
 
   try {
-    const rows = await prisma.$queryRawUnsafe("SELECT to_regclass('public.shop_feedbacks') AS table_name");
+    const rows = await prisma.$queryRawUnsafe("SELECT to_regclass('public.shop_feedbacks')::text AS table_name");
     const available = Boolean(rows?.[0]?.table_name);
     shopFeedbackTableAvailability = {
       checkedAt: now,
@@ -72,7 +72,74 @@ async function hasShopFeedbackTable() {
   }
 }
 
-export async function createOrder({ userId, shopId, total, items = [], idempotencyKey }) {
+function sanitizeText(value, { field, required = false, max = 300 } = {}) {
+  if (value === undefined || value === null) {
+    if (required) throw new Error(`${field} is required`);
+    return null;
+  }
+  const text = String(value).trim();
+  if (!text) {
+    if (required) throw new Error(`${field} is required`);
+    return null;
+  }
+  if (text.length > max) {
+    throw new Error(`${field} must be ${max} characters or less`);
+  }
+  return text;
+}
+
+function normalizeDeliveryDetails(input = {}, fallbackUser = {}) {
+  const details = input || {};
+  const fallback = fallbackUser || {};
+
+  const recipientName = sanitizeText(
+    details.recipientName ?? details.fullName ?? fallback.name,
+    { field: "recipientName", required: true, max: 120 }
+  );
+  const recipientPhone = sanitizeText(
+    details.recipientPhone ?? details.phone ?? fallback.phone,
+    { field: "recipientPhone", required: true, max: 20 }
+  );
+
+  const addressLine1 = sanitizeText(
+    details.addressLine1 ?? details.address ?? details.deliveryAddress,
+    { field: "addressLine1", required: true, max: 400 }
+  );
+  const nearbyLocation = sanitizeText(details.nearbyLocation ?? details.area, {
+    field: "nearbyLocation",
+    max: 200
+  });
+  const city = sanitizeText(details.city, { field: "city", max: 120 });
+  const postalCode = sanitizeText(details.postalCode ?? details.pincode, {
+    field: "postalCode",
+    max: 20
+  });
+  const landmark = sanitizeText(details.landmark, { field: "landmark", max: 200 });
+  const deliveryNote = sanitizeText(
+    details.deliveryNote ?? details.notes ?? details.instructions,
+    { field: "deliveryNote", max: 500 }
+  );
+
+  return {
+    recipientName,
+    recipientPhone,
+    addressLine1,
+    nearbyLocation,
+    city,
+    postalCode,
+    landmark,
+    deliveryNote
+  };
+}
+
+export async function createOrder({
+  userId,
+  shopId,
+  total,
+  items = [],
+  deliveryDetails = {},
+  idempotencyKey
+}) {
   const scope = `orders:create:${userId}`;
 
   if (idempotencyKey) {
@@ -91,6 +158,14 @@ export async function createOrder({ userId, shopId, total, items = [], idempoten
   if (!shopId) {
     throw new Error("shopId is required");
   }
+  const customer = await prisma.users.findUnique({
+    where: { id: toBigInt(userId) },
+    select: { id: true, name: true, phone: true }
+  });
+  if (!customer) {
+    throw new Error("User not found");
+  }
+  const normalizedDeliveryDetails = normalizeDeliveryDetails(deliveryDetails, customer);
 
   const normalizedItems = items.map(item => {
     if (!item?.productId) {
@@ -173,7 +248,22 @@ export async function createOrder({ userId, shopId, total, items = [], idempoten
         user_id: toBigInt(userId),
         shop_id: parsedShopId,
         total: finalTotal,
-        status: "CREATED"
+        status: "CREATED",
+        order_delivery_details: {
+          create: {
+            recipient_name: normalizedDeliveryDetails.recipientName,
+            recipient_phone: normalizedDeliveryDetails.recipientPhone,
+            address_line1: normalizedDeliveryDetails.addressLine1,
+            nearby_location: normalizedDeliveryDetails.nearbyLocation,
+            city: normalizedDeliveryDetails.city,
+            postal_code: normalizedDeliveryDetails.postalCode,
+            landmark: normalizedDeliveryDetails.landmark,
+            delivery_note: normalizedDeliveryDetails.deliveryNote
+          }
+        }
+      },
+      include: {
+        order_delivery_details: true
       }
     });
 
@@ -235,6 +325,9 @@ export async function listOrders({ userId, roles = [], limit = 20, status }) {
 
   return prisma.orders.findMany({
     where,
+    include: {
+      order_delivery_details: true
+    },
     orderBy: { created_at: "desc" },
     take: Math.min(Math.max(Number(limit) || 20, 1), 100)
   });
@@ -243,7 +336,15 @@ export async function listOrders({ userId, roles = [], limit = 20, status }) {
 export async function getOrderById({ orderId, userId, roles = [] }) {
   const order = await prisma.orders.findUnique({
     where: { id: toBigInt(orderId) },
-    include: { shop_profiles: true }
+    include: {
+      shop_profiles: true,
+      order_delivery_details: true,
+      order_items: {
+        include: {
+          products: true
+        }
+      }
+    }
   });
 
   if (!order) {
@@ -266,7 +367,10 @@ export async function getOrderById({ orderId, userId, roles = [] }) {
 async function getOrderByActor({ orderId, userId, roles = [] }) {
   const order = await prisma.orders.findUnique({
     where: { id: toBigInt(orderId) },
-    include: { shop_profiles: true }
+    include: {
+      shop_profiles: true,
+      order_delivery_details: true
+    }
   });
   if (!order) throw new Error("Order not found");
 

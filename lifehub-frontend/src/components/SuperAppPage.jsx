@@ -128,6 +128,34 @@ function messagePreview(value, max = 54) {
   return text.length > max ? `${text.slice(0, max)}...` : text;
 }
 
+function ratingStars(value) {
+  const normalized = Math.max(0, Math.min(5, Math.round(Number(value || 0))));
+  return `${"★".repeat(normalized)}${"☆".repeat(5 - normalized)}`;
+}
+
+function providerAvatarUrl(name) {
+  const seed = encodeURIComponent(String(name || "Service Pro"));
+  return `https://ui-avatars.com/api/?name=${seed}&background=0f4f84&color=ffffff&size=160&rounded=true&bold=true`;
+}
+
+function normalizeMarketplaceProduct(item, fallbackShop = null) {
+  if (!item) return null;
+  const productId = item.productId ?? item.id;
+  if (!productId) return null;
+
+  return {
+    productId,
+    name: item.productName ?? item.name ?? "Product",
+    company: item.company || null,
+    description: item.description || "",
+    imageUrl: item.imageUrl || null,
+    category: item.category || "general",
+    price: Number(item.price || 0),
+    availableQuantity: Number(item.availableQuantity || 0),
+    shop: item.shop || fallbackShop || null
+  };
+}
+
 function UiIcon({ name, size = 18 }) {
   const style = {
     fill: "none",
@@ -385,7 +413,19 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
   const [shops, setShops] = useState([]);
   const [selectedShopId, setSelectedShopId] = useState("");
   const [shopProducts, setShopProducts] = useState([]);
+  const [selectedMarketplaceProduct, setSelectedMarketplaceProduct] = useState(null);
   const [cart, setCart] = useState([]);
+  const [deliveryDetails, setDeliveryDetails] = useState({
+    recipientName: user.name || "",
+    recipientPhone: user.phone || "",
+    addressLine1: "",
+    nearbyLocation: "",
+    city: "",
+    postalCode: "",
+    landmark: "",
+    deliveryNote: ""
+  });
+  const [checkoutValidationError, setCheckoutValidationError] = useState("");
 
   const [providerSkill, setProviderSkill] = useState("plumber");
   const [serviceFilters, setServiceFilters] = useState({
@@ -394,6 +434,10 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
     radiusKm: "8"
   });
   const [providers, setProviders] = useState([]);
+  const [selectedProviderId, setSelectedProviderId] = useState("");
+  const [selectedProviderProfile, setSelectedProviderProfile] = useState(null);
+  const [loadingProviderProfile, setLoadingProviderProfile] = useState(false);
+  const [providerProfileError, setProviderProfileError] = useState("");
   const [myProviderProfileId, setMyProviderProfileId] = useState("");
   const [providerLocationForm, setProviderLocationForm] = useState({
     lat: "28.6139",
@@ -419,7 +463,7 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
   const [deliveryFeedback, setDeliveryFeedback] = useState("");
 
   const [sellerForm, setSellerForm] = useState({
-    shopId: "1",
+    shopId: "",
     name: "",
     company: "",
     description: "",
@@ -466,6 +510,10 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
     () => shops.find(shop => String(shop.id) === String(selectedShopId)) || null,
     [shops, selectedShopId]
   );
+  const selectedMarketplaceDetail = useMemo(
+    () => normalizeMarketplaceProduct(selectedMarketplaceProduct, selectedShop),
+    [selectedMarketplaceProduct, selectedShop]
+  );
   const marketplaceCategories = useMemo(() => {
     const set = new Set();
     for (const product of shopProducts) {
@@ -491,6 +539,32 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
     if (marketCategory === "all") return recommendedProducts;
     return recommendedProducts.filter(item => categoryKey(item?.category) === marketCategory);
   }, [recommendedProducts, marketCategory]);
+  const relatedMarketplaceProducts = useMemo(() => {
+    if (!selectedMarketplaceDetail?.productId) return [];
+    const seen = new Set([String(selectedMarketplaceDetail.productId)]);
+    const related = [];
+    const pushIfRelated = candidate => {
+      const normalized = normalizeMarketplaceProduct(candidate, selectedShop);
+      if (!normalized) return;
+      const key = String(normalized.productId);
+      if (seen.has(key)) return;
+      if (categoryKey(normalized.category) !== categoryKey(selectedMarketplaceDetail.category)) return;
+      seen.add(key);
+      related.push(normalized);
+    };
+
+    for (const product of shopProducts) pushIfRelated(product);
+    for (const product of recommendedProducts) pushIfRelated(product);
+    for (const product of productResults) pushIfRelated(product);
+
+    return related.slice(0, 10);
+  }, [
+    selectedMarketplaceDetail,
+    selectedShop,
+    shopProducts,
+    recommendedProducts,
+    productResults
+  ]);
   const serviceSkillOptions = useMemo(() => {
     const seed = [
       "plumber",
@@ -509,6 +583,21 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
     }
     return Array.from(set).slice(0, 10);
   }, [providers]);
+  const topServiceProviders = useMemo(() => {
+    return [...providers]
+      .sort((a, b) => {
+        const ratingDiff = Number(b.rating || 0) - Number(a.rating || 0);
+        if (ratingDiff !== 0) return ratingDiff;
+        const da = a.distanceKm === null || a.distanceKm === undefined ? 9999 : Number(a.distanceKm);
+        const db = b.distanceKm === null || b.distanceKm === undefined ? 9999 : Number(b.distanceKm);
+        return da - db;
+      })
+      .slice(0, 30);
+  }, [providers]);
+  const selectedProviderCard = useMemo(
+    () => topServiceProviders.find(provider => String(provider.id) === String(selectedProviderId)) || null,
+    [topServiceProviders, selectedProviderId]
+  );
 
   const selectedThread = useMemo(
     () => conversations.find(conv => String(conv.id) === String(selectedConversationId)) || null,
@@ -549,6 +638,69 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
         })),
     [tabs, totalUnreadChats, notifications.length]
   );
+  const activeTabMeta = useMemo(() => {
+    if (activeTab === "chat") {
+      return {
+        title: "LifeHub Messenger",
+        eyebrow: "Communication",
+        description: "Dedicated realtime messaging, media sharing, and voice/video conversations."
+      };
+    }
+    if (activeTab === "marketplace") {
+      return {
+        title: "LifeHub Grocery Marketplace",
+        eyebrow: "Commerce",
+        description: "Discover nearby stores with reliability-aware pricing and dynamic product ranking."
+      };
+    }
+    if (activeTab === "services") {
+      return {
+        title: "LifeHub Service Booking",
+        eyebrow: "On-demand Services",
+        description: "Find experts nearby, compare quality, and manage service lifecycle in one flow."
+      };
+    }
+    if (activeTab === "orders") {
+      return {
+        title: "Order and Delivery Ops",
+        eyebrow: "Fulfilment",
+        description: "Track order status, OTP verification, payouts, and customer feedback loops."
+      };
+    }
+    if (activeTab === "seller") {
+      return {
+        title: "Seller Inventory Studio",
+        eyebrow: "Merchant Tools",
+        description: "Upload products, maintain stock, and keep shop catalog accurate in realtime."
+      };
+    }
+    if (activeTab === "wallet") {
+      return {
+        title: "Wallet and Payments",
+        eyebrow: "Finance",
+        description: "Monitor balance, transaction health, and gateway settlement state securely."
+      };
+    }
+    if (activeTab === "profile") {
+      return {
+        title: "Profile and Preferences",
+        eyebrow: "Account",
+        description: "Control privacy, notifications, chat behavior, and overall account settings."
+      };
+    }
+    if (activeTab === "ops") {
+      return {
+        title: "Workflow Operations",
+        eyebrow: "Admin",
+        description: "Observe domain workflows and trigger reconciliation operations when needed."
+      };
+    }
+    return {
+      title: "LifeHub Command Center",
+      eyebrow: "Workspace",
+      description: "One control surface for commerce, services, chat, notifications, and operations."
+    };
+  }, [activeTab]);
   const visibleConversations = useMemo(() => {
     if (chatListMode === "unread") {
       return filteredConversations.filter(conv => Number(conv.unreadCount || 0) > 0);
@@ -804,6 +956,20 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
     setPendingAttachments(prev => prev.filter(item => String(item.fileId) !== String(fileId)));
   }
 
+  function resolveApiBaseUrl() {
+    const raw = String(API_URL || "").trim();
+    if (!raw) {
+      return typeof window !== "undefined" ? window.location.origin : "";
+    }
+    if (/^https?:\/\//i.test(raw)) {
+      return raw.replace(/\/api\/?$/i, "").replace(/\/+$/, "");
+    }
+    if (raw.startsWith("/") && typeof window !== "undefined") {
+      return `${window.location.origin}${raw}`.replace(/\/api\/?$/i, "").replace(/\/+$/, "");
+    }
+    return typeof window !== "undefined" ? window.location.origin : "";
+  }
+
   async function uploadChatAttachment(file, options = {}) {
     const isPrivate = options.isPrivate !== undefined ? Boolean(options.isPrivate) : true;
     const init = await api("/media/upload/init", {
@@ -816,15 +982,60 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
       })
     });
 
-    const uploadRes = await fetch(init.uploadUrl, {
-      method: "PUT",
-      headers: {
-        "Content-Type": file.type || "application/octet-stream"
-      },
-      body: file
-    });
-    if (!uploadRes.ok) {
-      throw new Error(`Attachment upload failed: ${uploadRes.status}`);
+    const uploadTargets = [];
+    const primaryUploadUrl = String(init.uploadUrl || "").trim();
+    if (primaryUploadUrl) {
+      uploadTargets.push(primaryUploadUrl);
+      if (
+        typeof window !== "undefined"
+        && window.location.protocol === "https:"
+        && primaryUploadUrl.startsWith("http://")
+      ) {
+        uploadTargets.push(primaryUploadUrl.replace(/^http:\/\//i, "https://"));
+      }
+    }
+
+    if (String(init.provider || "").toLowerCase() === "local" && init.storagePath) {
+      const fallbackRoot = resolveApiBaseUrl();
+      if (fallbackRoot) {
+        uploadTargets.push(`${fallbackRoot}/upload/${String(init.storagePath).replace(/^\/+/, "")}`);
+      }
+    }
+
+    const targets = [...new Set(uploadTargets)];
+    if (!targets.length) {
+      throw new Error("Attachment upload failed: missing upload endpoint");
+    }
+
+    let uploadSucceeded = false;
+    let lastError = null;
+    for (const targetUrl of targets) {
+      try {
+        const uploadRes = await fetch(targetUrl, {
+          method: "PUT",
+          headers: {
+            "Content-Type": file.type || "application/octet-stream"
+          },
+          body: file
+        });
+
+        if (!uploadRes.ok) {
+          lastError = new Error(`Attachment upload failed: ${uploadRes.status}`);
+          continue;
+        }
+        uploadSucceeded = true;
+        break;
+      } catch (err) {
+        lastError = err;
+      }
+    }
+
+    if (!uploadSucceeded) {
+      const message = String(lastError?.message || "");
+      if (message.toLowerCase().includes("failed to fetch")) {
+        throw new Error("Attachment upload failed: network/CORS issue. Check backend MEDIA_PUBLIC_BASE_URL and CORS_ORIGINS.");
+      }
+      throw new Error(lastError?.message || "Attachment upload failed");
     }
 
     await api(`/media/upload/${init.fileId}/complete`, {
@@ -1177,23 +1388,44 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
       lat: source.lat,
       lng: source.lng,
       radiusKm: source.radiusKm,
+      availableOnly: canAccess.seller ? "false" : "true",
       sortBy: "fair",
       limit: "30"
     });
     const data = await api(`/marketplace/shops/search?${query}`);
-    setShops(data.shops || []);
+    const shopRows = data.shops || [];
+    setShops(shopRows);
+    if (canAccess.seller) {
+      const ownedShop = shopRows.find(shop => String(shop.ownerUserId || "") === String(user.id || ""));
+      if (ownedShop && String(sellerForm.shopId || "") !== String(ownedShop.id)) {
+        setSellerForm(prev => ({ ...prev, shopId: String(ownedShop.id) }));
+      }
+      const lat = ownedShop?.location?.lat;
+      const lng = ownedShop?.location?.lng;
+      if (lat !== null && lat !== undefined && lng !== null && lng !== undefined) {
+        setShopLocationForm({
+          lat: String(lat),
+          lng: String(lng)
+        });
+      }
+    }
     await loadRecommendedProducts({
       lat: source.lat,
       lng: source.lng,
-      radiusKm: source.radiusKm
+      radiusKm: source.radiusKm,
+      query: productQuery.trim()
     });
   }
 
-  async function loadShopProducts(shopId) {
+  async function loadShopProducts(shopId, options = {}) {
     if (!shopId) return;
+    const { keepSelectedProduct = false } = options;
     const data = await api(`/marketplace/shops/${shopId}/products?limit=100`);
     setSelectedShopId(String(shopId));
     setShopProducts(data.products || []);
+    if (!keepSelectedProduct) {
+      setSelectedMarketplaceProduct(null);
+    }
   }
 
   function addToCart(product) {
@@ -1233,9 +1465,38 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
     );
   }
 
+  function openMarketplaceProduct(item, fallbackShop = null) {
+    const normalized = normalizeMarketplaceProduct(item, fallbackShop || selectedShop);
+    if (!normalized) return;
+    setSelectedMarketplaceProduct(normalized);
+  }
+
+  function validateDeliveryDetails() {
+    if (!String(deliveryDetails.recipientName || "").trim()) {
+      return "Recipient name is required.";
+    }
+    if (!String(deliveryDetails.recipientPhone || "").trim()) {
+      return "Recipient phone is required.";
+    }
+    if (!String(deliveryDetails.addressLine1 || "").trim()) {
+      return "Delivery address is required.";
+    }
+    if (!String(deliveryDetails.nearbyLocation || "").trim()) {
+      return "Nearby location or area is required.";
+    }
+    return "";
+  }
+
   async function placeOrder() {
     if (!selectedShopId || !cart.length) return;
+    const deliveryError = validateDeliveryDetails();
+    if (deliveryError) {
+      setCheckoutValidationError(deliveryError);
+      setError(deliveryError);
+      return;
+    }
     try {
+      setCheckoutValidationError("");
       await api("/orders", {
         method: "POST",
         headers: { "x-idempotency-key": `order_${Date.now()}` },
@@ -1245,10 +1506,12 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
           items: cart.map(item => ({
             productId: item.productId,
             quantity: item.quantity
-          }))
+          })),
+          deliveryDetails
         })
       });
       setCart([]);
+      setSelectedMarketplaceProduct(null);
       await Promise.all([loadHome(), loadOrders()]);
     } catch (err) {
       setError(`${err.message || "Order failed"}. You can top up wallet and retry.`);
@@ -1258,6 +1521,13 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
 
   async function proceedCheckout() {
     try {
+      const deliveryError = validateDeliveryDetails();
+      if (deliveryError) {
+        setCheckoutValidationError(deliveryError);
+        setError(deliveryError);
+        return;
+      }
+      setCheckoutValidationError("");
       const method = String(checkoutMode || "RAZORPAY").toUpperCase();
       if (method === "WALLET") {
         await placeOrder();
@@ -1305,9 +1575,44 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
     const data = await api(`/marketplace/providers/search?${query}`);
     const rows = data.providers || [];
     setProviders(rows);
+    if (!rows.length) {
+      setSelectedProviderId("");
+      setSelectedProviderProfile(null);
+      return;
+    }
+    const stillVisible = rows.some(item => String(item.id) === String(selectedProviderId));
+    if (!stillVisible) {
+      const defaultId = String(rows[0].id);
+      setSelectedProviderId(defaultId);
+      openProviderProfile(defaultId).catch(() => {});
+    }
     const mine = rows.find(item => String(item.userId) === String(user.id));
     if (mine?.id) {
       setMyProviderProfileId(String(mine.id));
+    }
+  }
+
+  async function openProviderProfile(providerId) {
+    const resolvedId = String(providerId || "").trim();
+    if (!resolvedId) return;
+
+    setSelectedProviderId(resolvedId);
+    setLoadingProviderProfile(true);
+    setProviderProfileError("");
+    try {
+      const profile = await api(`/marketplace/providers/${resolvedId}`);
+      setSelectedProviderProfile(profile || null);
+      const firstSkill = profile?.provider_skills?.[0]?.skill_name;
+      setServiceForm(prev => ({
+        ...prev,
+        preferredProviderId: resolvedId,
+        ...(firstSkill ? { serviceType: firstSkill } : {})
+      }));
+    } catch (err) {
+      setSelectedProviderProfile(null);
+      setProviderProfileError(err.message || "Unable to load provider profile.");
+    } finally {
+      setLoadingProviderProfile(false);
     }
   }
 
@@ -1683,7 +1988,16 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
   }
 
   async function createSellerProduct() {
-    await api(`/marketplace/shops/${sellerForm.shopId}/products`, {
+    if (!sellerForm.name.trim()) {
+      setError("Product name is required.");
+      return;
+    }
+    if (!Number.isFinite(Number(sellerForm.price)) || Number(sellerForm.price) <= 0) {
+      setError("Enter a valid product price.");
+      return;
+    }
+
+    const created = await api(`/marketplace/shops/${sellerForm.shopId || "0"}/products`, {
       method: "POST",
       body: JSON.stringify({
         name: sellerForm.name,
@@ -1695,8 +2009,10 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
         quantity: Number(sellerForm.quantity || 0)
       })
     });
+    const resolvedShopId = created?.shopId ? String(created.shopId) : String(sellerForm.shopId || "");
     setSellerForm(prev => ({
       ...prev,
+      shopId: resolvedShopId || prev.shopId,
       name: "",
       company: "",
       description: "",
@@ -1705,7 +2021,9 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
       price: "",
       quantity: ""
     }));
-    await loadSellerProducts();
+    await loadSellerProducts(resolvedShopId || sellerForm.shopId);
+    setToast("Product added to your inventory.");
+    setTimeout(() => setToast(""), 2200);
   }
 
   async function handleSellerImageSelection(event) {
@@ -2045,7 +2363,9 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
   useEffect(() => {
     if (!canAccess.marketplace) return;
     const handle = setTimeout(() => {
-      loadRecommendedProducts().catch(() => {});
+      loadRecommendedProducts({
+        query: productQuery.trim()
+      }).catch(() => {});
     }, 450);
     return () => clearTimeout(handle);
   }, [
@@ -2055,8 +2375,17 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
     shopFilters.radiusKm,
     productSearchFilters.maxPrice,
     productSearchFilters.minShopRating,
-    cart
+    cart,
+    productQuery
   ]);
+
+  useEffect(() => {
+    if (!checkoutValidationError) return;
+    const nextError = validateDeliveryDetails();
+    if (!nextError) {
+      setCheckoutValidationError("");
+    }
+  }, [deliveryDetails, checkoutValidationError]);
 
   useEffect(() => {
     if (!paymentIntent?.intentId) return;
@@ -2092,27 +2421,22 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
     return (
       <section className="workspace-grid home-grid">
         <article className="panel-card home-hero-card">
-          <h2>Control Center</h2>
-          <p className="info-line">
-            One workspace for grocery operations, customer support, service requests, and wallet reconciliation.
+          <span className="home-eyebrow">Welcome back</span>
+          <h2>{user.name}, your operations are live.</h2>
+          <p className="home-hero-text">
+            Role: {roleLabel(userRoles)}. Track demand, route users to the right module quickly, and keep chats,
+            orders, and reliability signals in one organized command surface.
           </p>
-          <div className="module-launch-grid">
-            {moduleCards.map(module => (
-              <div key={module.id} className="module-launch-card">
-                <span className="module-launch-icon">
-                  <UiIcon name={tabIconName(module.id)} />
-                </span>
-                <span className="module-launch-content">
-                  <strong>{module.label}</strong>
-                  <small>{module.subtitle}</small>
-                </span>
-                {module.badge > 0 && (
-                  <span className="module-launch-badge">
-                    {module.badge > 99 ? "99+" : module.badge}
-                  </span>
-                )}
-              </div>
-            ))}
+          <div className="home-command-row">
+            <button type="button" onClick={() => setActiveTab("marketplace")}>
+              Open Marketplace
+            </button>
+            <button type="button" className="ghost-btn" onClick={() => setActiveTab("services")}>
+              Open Services
+            </button>
+            <button type="button" className="ghost-btn" onClick={() => setActiveTab("chat")}>
+              Open Messenger
+            </button>
           </div>
           <div className="signal-strip">
             <div className="signal-chip">
@@ -2134,32 +2458,64 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
           <h2>Live Snapshot</h2>
           <div className="metric-grid compact">
             <div className="metric-card">
-              <h3>Active Orders</h3>
-              <strong>{activeOrdersCount}</strong>
-            </div>
-            <div className="metric-card">
               <h3>Unread Chats</h3>
               <strong>{totalUnreadChats}</strong>
+            </div>
+            <div className="metric-card">
+              <h3>System Alerts</h3>
+              <strong>{notifications.length}</strong>
             </div>
             <div className="metric-card">
               <h3>Nearby Shops</h3>
               <strong>{shops.length}</strong>
             </div>
             <div className="metric-card">
-              <h3>System Alerts</h3>
-              <strong>{notifications.length}</strong>
+              <h3>Top Picks</h3>
+              <strong>{recommendedProducts.length}</strong>
             </div>
           </div>
-
           <div className="home-status-ribbon">
-            <span className="status-pill">Geo-aware Search</span>
-            <span className="status-pill">Workflow Automation</span>
-            <span className="status-pill">Role-aware Access</span>
+            <span className="status-pill">Geo-aware ranking</span>
+            <span className="status-pill">Realtime reliability</span>
+            <span className="status-pill">Role-based controls</span>
+          </div>
+        </article>
+
+        <article className="panel-card home-modules-card">
+          <div className="market-panel-head">
+            <h3>Workspace Modules</h3>
+            <small>Single-click entry points for each product surface</small>
+          </div>
+          <div className="module-launch-grid">
+            {moduleCards.map(module => (
+              <button
+                key={module.id}
+                type="button"
+                className="module-launch-card interactive"
+                onClick={() => setActiveTab(module.id)}
+              >
+                <span className="module-launch-icon">
+                  <UiIcon name={tabIconName(module.id)} />
+                </span>
+                <span className="module-launch-content">
+                  <strong>{module.label}</strong>
+                  <small>{module.subtitle}</small>
+                </span>
+                {module.badge > 0 && (
+                  <span className="module-launch-badge">
+                    {module.badge > 99 ? "99+" : module.badge}
+                  </span>
+                )}
+              </button>
+            ))}
           </div>
         </article>
 
         <article className="panel-card home-activity-card">
-          <h2>System Activity</h2>
+          <div className="market-panel-head">
+            <h3>System Activity</h3>
+            <small>Latest platform events and alerts</small>
+          </div>
           <div className="stack-list compact">
             {(notifications || []).slice(0, 8).map(item => (
               <div key={item.id} className="item-card compact">
@@ -2192,6 +2548,14 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
     setProfilePhoto("");
   }, [profilePhotoStorageKey]);
 
+  useEffect(() => {
+    setDeliveryDetails(prev => ({
+      ...prev,
+      recipientName: prev.recipientName || user.name || "",
+      recipientPhone: prev.recipientPhone || user.phone || ""
+    }));
+  }, [user.name, user.phone]);
+
   function renderChatTab() {
     const activePeer = selectedThread?.peers?.[0] || null;
     const activePeerName = activePeer?.name || `Conversation ${selectedConversationId || "-"}`;
@@ -2203,12 +2567,12 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
     );
 
     return (
-      <section className="chat-shell">
-        <header className="chat-platform-bar">
+      <section className="chat-shell messenger-shell">
+        <header className="chat-platform-bar messenger-bar">
           <div className="chat-platform-meta">
             <h2>LifeHub Messenger</h2>
             <p>
-              Dedicated communication workspace with realtime delivery state, contact sync, and voice/video calling.
+              Dedicated chat platform with realtime delivery state, presence, media sharing, and voice/video calling.
             </p>
           </div>
           <div className="chat-platform-actions">
@@ -2217,8 +2581,8 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
             <span className="status-pill">Live users {Object.keys(onlineUsers).length}</span>
           </div>
         </header>
-        <div className="chat-layout full-width-chat">
-          <aside className="chat-sidebar">
+        <div className="chat-layout full-width-chat messenger-layout">
+          <aside className="chat-sidebar messenger-sidebar">
             <div className="chat-sidebar-head">
               <h2>Chats</h2>
               <div className="thread-actions">
@@ -2249,7 +2613,7 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
               <input
                 value={chatSearch}
                 onChange={event => setChatSearch(event.target.value)}
-                placeholder="Search or start a new chat"
+                placeholder="Search chats or start a new conversation"
               />
             </label>
 
@@ -2393,7 +2757,7 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
             </div>
           </aside>
 
-          <article className="chat-thread">
+          <article className="chat-thread messenger-thread">
             <div className="chat-thread-head">
               <div className="thread-peer">
                 <div className="chat-avatar large">
@@ -2454,7 +2818,7 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
               </div>
             ) : (
               <>
-                <div className="messages-panel">
+                <div className="messages-panel whatsapp-feed">
                   {filteredMessages.map(message => (
                     <div
                       key={message.id}
@@ -2521,7 +2885,7 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
                   </div>
                 )}
 
-                <div className="composer">
+                <div className="composer whatsapp-composer">
                   <button
                     className="icon-btn"
                     type="button"
@@ -2647,38 +3011,87 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
   }
 
   function renderMarketplaceTab() {
+    const featuredRecommendation = visibleRecommendedProducts[0] || null;
+    const dealProducts = visibleRecommendedProducts.slice(0, 10);
+
     return (
-      <section className="market-shell">
-        <header className="panel-card market-hero">
-          <div>
-            <h2>LifeHub Grocery</h2>
-            <p>
-              Discover nearby stores, compare price and reliability, and shop by category with a modern retail workflow.
-              Search always prioritizes nearby top-rated groceries with fair pricing.
-            </p>
+      <section className="market-shell ecommerce-market-shell">
+        <header className="panel-card market-hero ecommerce-market-hero">
+          <div className="market-storefront-top">
+            <div>
+              <span className="market-eyebrow">Grocery and Essentials</span>
+              <h2>Shop like a real ecommerce app</h2>
+              <p>
+                Search products, compare nearby store ratings, and buy from the best fair-price shop around your live
+                location.
+              </p>
+            </div>
+            <div className="market-chip-row">
+              <span className="status-pill">Shops {shops.length}</span>
+              <span className="status-pill">Top picks {visibleRecommendedProducts.length}</span>
+              <span className="status-pill">Cart {cart.length}</span>
+            </div>
           </div>
-          <div className="market-search-wrap">
+          <div className="market-search-wrap commerce-search">
             <UiIcon name="search" />
             <input
               value={productQuery}
               onChange={event => setProductQuery(event.target.value)}
-              placeholder="Search products, brands, and categories"
+              placeholder="Search grocery items, brands, categories..."
             />
             <button type="button" onClick={() => searchProductsNearby(productQuery)}>
               Search
             </button>
           </div>
-          <div className="market-chip-row">
-            <span className="status-pill">Nearby shops {shops.length}</span>
-            <span className="status-pill">Catalog items {shopProducts.length}</span>
-            <span className="status-pill">Cart items {cart.length}</span>
+          <div className="category-nav-row storefront-categories">
+            {marketplaceCategories.map(category => (
+              <button
+                key={category}
+                type="button"
+                className={`category-chip ${marketCategory === category ? "active" : ""}`}
+                onClick={() => setMarketCategory(category)}
+              >
+                {category === "all" ? "All Categories" : titleCase(category)}
+              </button>
+            ))}
+          </div>
+          <div className="market-deal-carousel">
+            {dealProducts.map(item => (
+              <button
+                key={`deal_${item.productId}_${item?.shop?.id || "shop"}`}
+                type="button"
+                className="market-deal-card"
+                onClick={async () => {
+                  openMarketplaceProduct(item, item?.shop || null);
+                  if (item?.shop?.id && String(item.shop.id) !== String(selectedShopId)) {
+                    await loadShopProducts(item.shop.id, { keepSelectedProduct: true });
+                  }
+                }}
+              >
+                {!!item.imageUrl ? (
+                  <img src={item.imageUrl} alt={item.productName} className="market-result-thumb" />
+                ) : (
+                  <div className="market-result-thumb market-thumb-placeholder">
+                    <span>{initials(item.productName)}</span>
+                  </div>
+                )}
+                <div>
+                  <strong>{item.productName}</strong>
+                  <small>{item?.shop?.shopName || "Nearby shop"}</small>
+                  <small className="market-deal-price">{toCurrency(item.price)}</small>
+                </div>
+              </button>
+            ))}
+            {!dealProducts.length && (
+              <div className="empty-line">Top deals will appear after nearby recommendation indexing.</div>
+            )}
           </div>
         </header>
 
-        <div className="market-grid">
-          <aside className="panel-card market-shop-panel">
+        <div className="market-grid market-grid-commerce">
+          <aside className="panel-card market-shop-panel market-filter-rail">
             <div className="market-panel-head">
-              <h3>Nearby Shops</h3>
+              <h3>Nearby Grocery Filters</h3>
               <button type="button" className="ghost-btn" onClick={searchShops}>
                 Refresh
               </button>
@@ -2702,7 +3115,7 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
                 onChange={event =>
                   setShopFilters(prev => ({ ...prev, radiusKm: event.target.value }))
                 }
-                placeholder="Radius KM"
+                placeholder="Radius (km)"
               />
             </div>
             <div className="market-filter-grid">
@@ -2718,7 +3131,7 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
                 onChange={event =>
                   setProductSearchFilters(prev => ({ ...prev, minShopRating: event.target.value }))
                 }
-                placeholder="Min rating"
+                placeholder="Min shop rating"
               />
               <select
                 value={productSearchFilters.sortBy}
@@ -2741,13 +3154,13 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
                   type="button"
                 >
                   <strong>{shop.shopName}</strong>
-                  <small>{shop.address}</small>
+                  <small>{shop.address || "Address unavailable"}</small>
                   <small>
                     {shop.distanceKm !== null && shop.distanceKm !== undefined
                       ? `${shop.distanceKm.toFixed(1)} km`
-                      : "distance n/a"} | Rating {Number(shop.rating || 0).toFixed(1)} | Reliability{" "}
-                    {Number(shop.reliabilityScore || 0).toFixed(1)}
+                      : "distance n/a"} | Rating {Number(shop.rating || 0).toFixed(1)}
                   </small>
+                  <small>Reliability {Number(shop.reliabilityScore || 0).toFixed(1)}</small>
                   <span className="status-pill">{shop.openNow ? "Open now" : "Closed now"}</span>
                 </button>
               ))}
@@ -2755,13 +3168,11 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
             </div>
           </aside>
 
-          <div className="market-main">
-            <article className="panel-card market-recommend-panel">
+          <div className="market-main market-main-commerce">
+            <article className="panel-card market-recommend-panel commerce-section">
               <div className="market-panel-head">
-                <h3>Top Picks Near You</h3>
-                <small>
-                  Dynamic ranking using nearby demand, shop reliability, pricing, and basket co-occurrence.
-                </small>
+                <h3>Recommended For You</h3>
+                <small>Association-rule ranking + nearby pricing + reliability score</small>
               </div>
               {loadingRecommendations && <div className="empty-line">Building recommendations...</div>}
               {!loadingRecommendations && !!recommendationError && (
@@ -2770,49 +3181,57 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
               {!loadingRecommendations && !recommendationError && !visibleRecommendedProducts.length && (
                 <div className="empty-line">No top picks available yet for this area.</div>
               )}
-              <div className="market-recommend-grid">
+              <div className="market-top-grid">
                 {!loadingRecommendations &&
                   visibleRecommendedProducts.map(item => (
-                    <button
-                      key={`rec_${item.productId}_${item?.shop?.id || "shop"}`}
-                      type="button"
-                      className="market-recommend-card"
-                      onClick={async () => {
-                        if (!item?.shop?.id) return;
-                        setSelectedShopId(String(item.shop.id));
-                        await loadShopProducts(item.shop.id);
-                      }}
-                    >
+                    <article key={`rec_${item.productId}_${item?.shop?.id || "shop"}`} className="market-top-card">
                       {!!item.imageUrl ? (
-                        <img src={item.imageUrl} alt={item.productName} className="market-result-thumb" />
+                        <img src={item.imageUrl} alt={item.productName} className="market-product-thumb" />
                       ) : (
-                        <div className="market-result-thumb market-thumb-placeholder">
+                        <div className="market-product-thumb market-thumb-placeholder">
                           <span>{initials(item.productName)}</span>
                         </div>
                       )}
-                      <div>
+                      <div className="market-product-body">
                         <strong>{item.productName}</strong>
-                        <small>
-                          {item?.shop?.shopName || "Nearby shop"} | {toCurrency(item.price)} | Qty {item.availableQuantity}
-                        </small>
-                        <small>
-                          Score {Number(item.recommendationScore || 0).toFixed(2)} | Rating{" "}
-                          {Number(item?.shop?.rating || 0).toFixed(1)} | Reliability{" "}
-                          {Number(item?.shop?.reliabilityScore || 0).toFixed(1)}
-                        </small>
+                        <small>{item?.shop?.shopName || "Nearby shop"}</small>
                         <small>{item.recommendationReason}</small>
                       </div>
-                    </button>
+                      <div className="market-product-foot">
+                        <span className="status-pill">Score {Number(item.recommendationScore || 0).toFixed(2)}</span>
+                        <span className="status-pill">
+                          {ratingStars(item?.shop?.rating)} {Number(item?.shop?.rating || 0).toFixed(1)}
+                        </span>
+                      </div>
+                      <div className="market-product-actions">
+                        <strong className="market-price">{toCurrency(item.price)}</strong>
+                        <div className="market-action-pair">
+                          <button type="button" className="ghost-btn" onClick={() => openMarketplaceProduct(item, item?.shop || null)}>
+                            View Details
+                          </button>
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              if (!item?.shop?.id) return;
+                              setSelectedShopId(String(item.shop.id));
+                              await loadShopProducts(item.shop.id);
+                            }}
+                          >
+                            Open Shop
+                          </button>
+                        </div>
+                      </div>
+                    </article>
                   ))}
               </div>
             </article>
 
             {!!productQuery.trim() && (
-              <article className="panel-card market-search-results">
+              <article className="panel-card market-search-results commerce-section">
                 <div className="market-panel-head">
-                  <h3>Live Search Results</h3>
+                  <h3>Search Results</h3>
                   <small>
-                    {!searchingProducts ? `${visibleProductResults.length} product matches` : "Searching..."}
+                    {!searchingProducts ? `${visibleProductResults.length} matching products` : "Searching..."}
                   </small>
                 </div>
                 {searchingProducts && <div className="empty-line">Searching nearby inventory...</div>}
@@ -2827,17 +3246,22 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
                     visibleProductResults.map(item => (
                       <button
                         key={`${item?.shop?.id || "shop"}-${item.productId}`}
-                        className="market-result-card"
+                        className="market-result-card commerce-result-card"
                         onClick={async () => {
-                          if (!item?.shop?.id) return;
-                          setSelectedShopId(String(item.shop.id));
-                          await loadShopProducts(item.shop.id);
+                          openMarketplaceProduct(item, item?.shop || null);
+                          if (item?.shop?.id && String(item.shop.id) !== String(selectedShopId)) {
+                            await loadShopProducts(item.shop.id, { keepSelectedProduct: true });
+                          }
                         }}
                         type="button"
                         disabled={!item?.shop?.id}
                       >
-                        {!!item.imageUrl && (
+                        {!!item.imageUrl ? (
                           <img src={item.imageUrl} alt={item.productName} className="market-result-thumb" />
+                        ) : (
+                          <div className="market-result-thumb market-thumb-placeholder">
+                            <span>{initials(item.productName)}</span>
+                          </div>
                         )}
                         <div>
                           <strong>{item.productName}</strong>
@@ -2858,62 +3282,172 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
               </article>
             )}
 
-            <article className="panel-card market-catalog-panel">
-              <div className="market-panel-head">
-                <h3>{selectedShop ? `${selectedShop.shopName} Catalog` : "Product Catalog"}</h3>
-                <small>
-                  {selectedShop ? "Browse category, compare details, add to cart." : "Select a shop to load inventory."}
-                </small>
-              </div>
-              <div className="category-nav-row">
-                {marketplaceCategories.map(category => (
-                  <button
-                    key={category}
-                    type="button"
-                    className={`category-chip ${marketCategory === category ? "active" : ""}`}
-                    onClick={() => setMarketCategory(category)}
-                  >
-                    {category === "all" ? "All" : titleCase(category)}
+            {selectedMarketplaceDetail ? (
+              <article className="panel-card market-product-detail-page commerce-section">
+                <div className="market-panel-head">
+                  <h3>Product Details</h3>
+                  <button type="button" className="ghost-btn" onClick={() => setSelectedMarketplaceProduct(null)}>
+                    Back to Products
                   </button>
-                ))}
-              </div>
-              <div className="market-product-grid">
-                {visibleShopProducts.map(product => (
-                  <div key={product.id} className="market-product-card">
-                    {!!product.imageUrl ? (
-                      <img src={product.imageUrl} alt={product.name} className="market-product-thumb" />
+                </div>
+                <div className="product-detail-layout">
+                  <div className="product-detail-image-wrap">
+                    {!!selectedMarketplaceDetail.imageUrl ? (
+                      <img
+                        src={selectedMarketplaceDetail.imageUrl}
+                        alt={selectedMarketplaceDetail.name}
+                        className="product-detail-image"
+                      />
                     ) : (
-                      <div className="market-product-thumb market-thumb-placeholder">
-                        <span>{initials(product.name)}</span>
+                      <div className="product-detail-image market-thumb-placeholder">
+                        <span>{initials(selectedMarketplaceDetail.name)}</span>
                       </div>
                     )}
-                    <div className="market-product-body">
-                      <strong>{product.name}</strong>
-                      <small>{product.company ? `Brand ${product.company}` : "Local inventory"}</small>
-                      <small>{product.description || "Fresh stock available from nearby store."}</small>
+                  </div>
+                  <div className="product-detail-content">
+                    <h3>{selectedMarketplaceDetail.name}</h3>
+                    <small>{selectedMarketplaceDetail.company ? `Brand ${selectedMarketplaceDetail.company}` : "Local product"}</small>
+                    <p>{selectedMarketplaceDetail.description || "No detailed description available for this product yet."}</p>
+                    <div className="product-detail-meta">
+                      <span className="status-pill">{titleCase(selectedMarketplaceDetail.category || "general")}</span>
+                      <span className="status-pill">Qty {selectedMarketplaceDetail.availableQuantity}</span>
+                      {!!selectedMarketplaceDetail.shop?.shopName && (
+                        <span className="status-pill">{selectedMarketplaceDetail.shop.shopName}</span>
+                      )}
                     </div>
-                    <div className="market-product-foot">
-                      <span className="status-pill">Qty {product.availableQuantity}</span>
-                      <span className="status-pill">{titleCase(product.category || "general")}</span>
-                    </div>
-                    <div className="market-product-actions">
-                      <strong>{toCurrency(product.price)}</strong>
-                      <button type="button" onClick={() => addToCart(product)}>
+                    <div className="product-detail-price-row">
+                      <strong className="market-price">{toCurrency(selectedMarketplaceDetail.price)}</strong>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          addToCart({
+                            id: selectedMarketplaceDetail.productId,
+                            name: selectedMarketplaceDetail.name,
+                            price: selectedMarketplaceDetail.price
+                          })
+                        }
+                      >
                         Add to cart
                       </button>
                     </div>
                   </div>
-                ))}
-                {!visibleShopProducts.length && (
-                  <div className="empty-line">Select a shop and category to view products.</div>
+                </div>
+                <div className="divider" />
+                <div className="market-panel-head">
+                  <h3>Related Products</h3>
+                  <small>Similar category items from nearby stores</small>
+                </div>
+                <div className="market-product-grid commerce-products">
+                  {relatedMarketplaceProducts.map(product => (
+                    <article
+                      key={`related_${product.productId}`}
+                      className="market-product-card commerce-product-card clickable"
+                      onClick={() => openMarketplaceProduct(product, product.shop || selectedShop)}
+                    >
+                      {!!product.imageUrl ? (
+                        <img src={product.imageUrl} alt={product.name} className="market-product-thumb" />
+                      ) : (
+                        <div className="market-product-thumb market-thumb-placeholder">
+                          <span>{initials(product.name)}</span>
+                        </div>
+                      )}
+                      <div className="market-product-body">
+                        <strong>{product.name}</strong>
+                        <small>{product.company ? `Brand ${product.company}` : "Local inventory"}</small>
+                      </div>
+                      <div className="market-product-actions">
+                        <strong className="market-price">{toCurrency(product.price)}</strong>
+                        <button
+                          type="button"
+                          onClick={event => {
+                            event.stopPropagation();
+                            addToCart({ id: product.productId, name: product.name, price: product.price });
+                          }}
+                        >
+                          Add to cart
+                        </button>
+                      </div>
+                    </article>
+                  ))}
+                  {!relatedMarketplaceProducts.length && (
+                    <div className="empty-line">No related products available right now.</div>
+                  )}
+                </div>
+              </article>
+            ) : (
+              <article className="panel-card market-catalog-panel commerce-section">
+                <div className="market-panel-head">
+                  <h3>{selectedShop ? `${selectedShop.shopName} Storefront` : "Storefront Catalog"}</h3>
+                  <small>
+                    {selectedShop
+                      ? "Browse and add products from this selected grocery."
+                      : "Select a nearby shop to load products."}
+                  </small>
+                </div>
+                {selectedShop && (
+                  <div className="market-selected-shop-banner">
+                    <strong>{selectedShop.shopName}</strong>
+                    <small>
+                      {selectedShop.address || "Address unavailable"} |{" "}
+                      {ratingStars(selectedShop.rating)} {Number(selectedShop.rating || 0).toFixed(1)} | Reliability{" "}
+                      {Number(selectedShop.reliabilityScore || 0).toFixed(1)}
+                    </small>
+                  </div>
                 )}
-              </div>
-            </article>
+                <div className="market-product-grid commerce-products">
+                  {visibleShopProducts.map(product => (
+                    <article
+                      key={product.id}
+                      className="market-product-card commerce-product-card clickable"
+                      onClick={() => openMarketplaceProduct(product, selectedShop)}
+                    >
+                      {!!product.imageUrl ? (
+                        <img src={product.imageUrl} alt={product.name} className="market-product-thumb" />
+                      ) : (
+                        <div className="market-product-thumb market-thumb-placeholder">
+                          <span>{initials(product.name)}</span>
+                        </div>
+                      )}
+                      <div className="market-product-body">
+                        <strong>{product.name}</strong>
+                        <small>{product.company ? `Brand ${product.company}` : "Local inventory"}</small>
+                        <small>{product.description || "Fresh stock available from nearby store."}</small>
+                        <small className="market-rating-line">
+                          {ratingStars(selectedShop?.rating || 4)} {Number(selectedShop?.rating || 4).toFixed(1)}
+                        </small>
+                        <small>
+                          M.R.P <s>{toCurrency(Number(product.price || 0) * 1.12)}</s>
+                        </small>
+                      </div>
+                      <div className="market-product-foot">
+                        <span className="status-pill">Qty {product.availableQuantity}</span>
+                        <span className="status-pill">{titleCase(product.category || "general")}</span>
+                      </div>
+                      <div className="market-product-actions">
+                        <strong className="market-price">{toCurrency(product.price)}</strong>
+                        <button
+                          type="button"
+                          onClick={event => {
+                            event.stopPropagation();
+                            addToCart(product);
+                          }}
+                        >
+                          Add to cart
+                        </button>
+                      </div>
+                    </article>
+                  ))}
+                  {!visibleShopProducts.length && (
+                    <div className="empty-line">Select a shop and category to view products.</div>
+                  )}
+                </div>
+              </article>
+            )}
           </div>
 
-          <aside className="panel-card market-cart-panel">
+          <aside className="panel-card market-cart-panel sticky-checkout">
             <div className="market-panel-head">
-              <h3>Smart Cart</h3>
+              <h3>Checkout</h3>
               <small>{selectedShop ? selectedShop.shopName : "No shop selected"}</small>
             </div>
             <div className="market-cart-list">
@@ -2931,6 +3465,68 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
                 </div>
               ))}
               {!cart.length && <div className="empty-line">Your cart is empty.</div>}
+            </div>
+            <div className="market-delivery-form">
+              <h4>Delivery Details</h4>
+              <div className="market-delivery-grid">
+                <input
+                  value={deliveryDetails.recipientName}
+                  onChange={event =>
+                    setDeliveryDetails(prev => ({ ...prev, recipientName: event.target.value }))
+                  }
+                  placeholder="Full name"
+                />
+                <input
+                  value={deliveryDetails.recipientPhone}
+                  onChange={event =>
+                    setDeliveryDetails(prev => ({ ...prev, recipientPhone: event.target.value }))
+                  }
+                  placeholder="Phone number"
+                />
+                <input
+                  value={deliveryDetails.addressLine1}
+                  onChange={event =>
+                    setDeliveryDetails(prev => ({ ...prev, addressLine1: event.target.value }))
+                  }
+                  placeholder="House / flat / street address"
+                />
+                <input
+                  value={deliveryDetails.nearbyLocation}
+                  onChange={event =>
+                    setDeliveryDetails(prev => ({ ...prev, nearbyLocation: event.target.value }))
+                  }
+                  placeholder="Nearby location / area"
+                />
+                <input
+                  value={deliveryDetails.city}
+                  onChange={event =>
+                    setDeliveryDetails(prev => ({ ...prev, city: event.target.value }))
+                  }
+                  placeholder="City"
+                />
+                <input
+                  value={deliveryDetails.postalCode}
+                  onChange={event =>
+                    setDeliveryDetails(prev => ({ ...prev, postalCode: event.target.value }))
+                  }
+                  placeholder="Postal / PIN code"
+                />
+                <input
+                  value={deliveryDetails.landmark}
+                  onChange={event =>
+                    setDeliveryDetails(prev => ({ ...prev, landmark: event.target.value }))
+                  }
+                  placeholder="Landmark"
+                />
+                <input
+                  value={deliveryDetails.deliveryNote}
+                  onChange={event =>
+                    setDeliveryDetails(prev => ({ ...prev, deliveryNote: event.target.value }))
+                  }
+                  placeholder="Delivery notes (optional)"
+                />
+              </div>
+              {!!checkoutValidationError && <div className="empty-line">{checkoutValidationError}</div>}
             </div>
             <div className="market-cart-footer">
               <div className="market-total-row">
@@ -2952,14 +3548,44 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
   }
 
   function renderServicesTab() {
+    const availableProviders = providers.filter(provider => provider.available).length;
+    const activeProfile = selectedProviderProfile || null;
+    const profileName = activeProfile?.users?.name || selectedProviderCard?.name || "";
+    const profileRating = Number(activeProfile?.rating ?? selectedProviderCard?.rating ?? 0);
+    const profileExperience = Number(
+      activeProfile?.experience_years ?? selectedProviderCard?.experienceYears ?? 0
+    );
+    const profileSkills = activeProfile?.provider_skills?.length
+      ? activeProfile.provider_skills.map(item => item.skill_name)
+      : selectedProviderCard?.skills || [];
+    const profileLocation = activeProfile?.provider_locations
+      ? {
+          lat: Number(activeProfile.provider_locations.lat || 0),
+          lng: Number(activeProfile.provider_locations.lng || 0),
+          available: Boolean(activeProfile.provider_locations.available)
+        }
+      : {
+          lat: Number(selectedProviderCard?.location?.lat || 0),
+          lng: Number(selectedProviderCard?.location?.lng || 0),
+          available: Boolean(selectedProviderCard?.available)
+        };
+
     return (
-      <section className="service-shell">
+      <section className="service-shell service-app-shell">
         <header className="panel-card service-hero">
-          <div>
-            <h2>Service Booking Hub</h2>
-            <p>
-              Discover skilled professionals nearby, compare ratings and availability, and book work orders with one flow.
-            </p>
+          <div className="service-hero-head">
+            <div>
+              <h2>Find and Hire Top Workers Nearby</h2>
+              <p>
+                Discover top-rated nearby professionals with profile-first cards, then open full details and hire in one
+                flow.
+              </p>
+            </div>
+            <div className="service-hero-metrics">
+              <span className="status-pill">Providers {providers.length}</span>
+              <span className="status-pill">Available {availableProviders}</span>
+              <span className="status-pill">Requests {serviceRequests.length}</span>
+            </div>
           </div>
           <div className="service-skill-row">
             {serviceSkillOptions.map(skill => (
@@ -3044,50 +3670,102 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
           )}
         </header>
 
-        <div className="service-layout">
+        <div className="service-layout service-layout-modern">
           <article className="panel-card service-provider-panel">
             <div className="market-panel-head">
-              <h3>Available Experts</h3>
-              <small>{providers.length} providers nearby</small>
+              <h3>Top Service Professionals</h3>
+              <small>{topServiceProviders.length} workers nearby</small>
             </div>
-            <div className="service-provider-grid">
-              {providers.map(provider => (
-                <button
+            <div className="service-provider-grid service-provider-grid-modern">
+              {topServiceProviders.map(provider => (
+                <article
                   key={provider.id}
-                  className="service-provider-card"
-                  type="button"
-                  onClick={() =>
-                    setServiceForm(prev => ({
-                      ...prev,
-                      serviceType: provider.skills?.[0] || providerSkill,
-                      preferredProviderId: String(provider.id)
-                    }))
-                  }
+                  className={`service-provider-card modern ${String(provider.id) === String(selectedProviderId) ? "active" : ""}`}
                 >
-                  <div className="service-provider-top">
-                    <strong>{provider.name}</strong>
-                    <span className="status-pill">{provider.available ? "Available" : "Unavailable"}</span>
+                  <div className="service-provider-profile">
+                    <img
+                      src={providerAvatarUrl(provider.name)}
+                      alt={provider.name}
+                      className="service-provider-avatar"
+                    />
+                    <div>
+                      <strong>{provider.name}</strong>
+                      <small>{(provider.skills || []).slice(0, 3).join(", ") || "General service"}</small>
+                      <small className="service-rating-line">
+                        {ratingStars(provider.rating)} {Number(provider.rating || 0).toFixed(1)}
+                      </small>
+                    </div>
                   </div>
-                  <small>Skills: {(provider.skills || []).join(", ") || "General service"}</small>
-                  <small>
-                    Rating {Number(provider.rating || 0).toFixed(1)} |{" "}
-                    {provider.distanceKm !== null && provider.distanceKm !== undefined
-                      ? `${provider.distanceKm.toFixed(1)} km away`
-                      : "distance n/a"}
-                  </small>
-                  <small>
-                    {provider.location?.lat && provider.location?.lng
-                      ? `${provider.location.lat}, ${provider.location.lng}`
-                      : "Location unavailable"}
-                  </small>
-                </button>
+                  <div className="service-provider-top">
+                    <span className="status-pill">{provider.available ? "Available" : "Unavailable"}</span>
+                    <span className="status-pill">
+                      {provider.distanceKm !== null && provider.distanceKm !== undefined
+                        ? `${provider.distanceKm.toFixed(1)} km away`
+                        : "distance n/a"}
+                    </span>
+                  </div>
+                  <div className="service-provider-actions">
+                    <button type="button" className="ghost-btn" onClick={() => openProviderProfile(provider.id)}>
+                      View Profile
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setServiceForm(prev => ({
+                          ...prev,
+                          serviceType: provider.skills?.[0] || providerSkill,
+                          preferredProviderId: String(provider.id)
+                        }));
+                        openProviderProfile(provider.id).catch(() => {});
+                      }}
+                    >
+                      Hire Now
+                    </button>
+                  </div>
+                </article>
               ))}
-              {!providers.length && <div className="empty-line">No providers loaded yet.</div>}
+              {!topServiceProviders.length && <div className="empty-line">No providers loaded yet.</div>}
             </div>
           </article>
 
-          <aside className="panel-card service-book-panel">
-            <h3>Book Service Request</h3>
+          <aside className="panel-card service-book-panel service-profile-panel">
+            <h3>Worker Profile and Hire</h3>
+            {loadingProviderProfile && <div className="info-line">Loading provider profile...</div>}
+            {!!providerProfileError && <div className="empty-line">{providerProfileError}</div>}
+            {!loadingProviderProfile && !providerProfileError && !!profileName && (
+              <article className="service-profile-card">
+                <div className="service-provider-profile">
+                  <img
+                    src={providerAvatarUrl(profileName)}
+                    alt={profileName}
+                    className="service-provider-avatar large"
+                  />
+                  <div>
+                    <strong>{profileName}</strong>
+                    <small>{ratingStars(profileRating)} {profileRating.toFixed(1)}</small>
+                    <small>{profileExperience} years experience</small>
+                  </div>
+                </div>
+                <div className="service-profile-chips">
+                  {profileSkills.map(skill => (
+                    <span key={`${profileName}_${skill}`} className="service-skill-chip">
+                      {titleCase(skill)}
+                    </span>
+                  ))}
+                  {!profileSkills.length && <span className="service-skill-chip">General service</span>}
+                </div>
+                <small>
+                  {profileLocation.available ? "Available now" : "Currently unavailable"} |{" "}
+                  {profileLocation.lat && profileLocation.lng
+                    ? `${profileLocation.lat.toFixed(4)}, ${profileLocation.lng.toFixed(4)}`
+                    : "Location unavailable"}
+                </small>
+              </article>
+            )}
+            {!loadingProviderProfile && !providerProfileError && !profileName && (
+              <div className="info-line">Select a worker card to view profile details and hire.</div>
+            )}
+
             {canCreateServiceRequest ? (
               <div className="service-book-form">
                 <input
@@ -3109,11 +3787,11 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
                   onChange={event =>
                     setServiceForm(prev => ({ ...prev, description: event.target.value }))
                   }
-                  placeholder="Describe your issue, preferred timing, and address details"
+                  placeholder="Describe your issue, timing, address, and requirements"
                   rows={4}
                 />
                 <button type="button" onClick={createServiceRequest}>
-                  Book Service
+                  Hire for Work
                 </button>
               </div>
             ) : (
@@ -3176,6 +3854,12 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
                   <span className="status-pill">{order.status}</span>
                 </div>
                 <small>Total: {toCurrency(order.total)} | Shop {order.shop_id}</small>
+                {!!order?.order_delivery_details && (
+                  <small>
+                    Deliver to {order.order_delivery_details.recipient_name} |{" "}
+                    {order.order_delivery_details.address_line1}
+                  </small>
+                )}
                 {String(order.status).toUpperCase() === "CANCELLED" ? (
                   <div className="status-cancelled">This order is cancelled.</div>
                 ) : (
@@ -3856,35 +4540,39 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
   }
 
   return (
-    <div className="superapp-shell superapp-shell-full">
+    <div className={`superapp-shell superapp-shell-full shell-${activeTab}`}>
       <main className="main-stage main-stage-full">
-        <header className="topbar topbar-full">
-          <div className="topbar-main">
-            <h3>Hi, {user.name}</h3>
-            <p>
-              Persistent chats, fair wallet transactions, nearby marketplace, and role-aware workflows.
-            </p>
-          </div>
-          <div className="topbar-meta">
-            <div className="topbar-avatar">
-              {profilePhoto ? (
-                <img src={profilePhoto} alt="Profile" className="profile-avatar" />
-              ) : (
-                <div className="profile-avatar">{String(user.name || "U").slice(0, 1)}</div>
-              )}
+        <header className={`topbar topbar-full topbar-${activeTab}`}>
+          <div className="topbar-row">
+            <div className="topbar-main">
+              <span className="topbar-eyebrow">{activeTabMeta.eyebrow}</span>
+              <h3>{activeTabMeta.title}</h3>
+              <p>{activeTabMeta.description}</p>
             </div>
-            <div className="chip-row">
-              <button type="button" className="chip chip-button" onClick={() => setActiveTab("home")}>
-                System Alerts: {notifications.length}
-              </button>
-              <button type="button" className="chip chip-button" onClick={() => setActiveTab("chat")}>
-                Chat Alerts: {totalUnreadChats}
-              </button>
-              <span className="chip">Role: {roleLabel(userRoles)}</span>
-              <span className="chip">Chat Events: {chatNotifications.length}</span>
-              <span className="chip chip-live">
-                {loading ? "Loading data..." : "Live session"}
-              </span>
+            <div className="topbar-meta topbar-meta-card">
+              <div className="topbar-avatar">
+                {profilePhoto ? (
+                  <img src={profilePhoto} alt="Profile" className="profile-avatar" />
+                ) : (
+                  <div className="profile-avatar">{String(user.name || "U").slice(0, 1)}</div>
+                )}
+              </div>
+              <div className="topbar-user-copy">
+                <strong>{user.name}</strong>
+                <small>{roleLabel(userRoles)}</small>
+              </div>
+              <div className="chip-row">
+                <button type="button" className="chip chip-button" onClick={() => setActiveTab("home")}>
+                  System Alerts: {notifications.length}
+                </button>
+                <button type="button" className="chip chip-button" onClick={() => setActiveTab("chat")}>
+                  Chat Alerts: {totalUnreadChats}
+                </button>
+                <span className="chip">Chat Events: {chatNotifications.length}</span>
+                <span className="chip chip-live">
+                  {loading ? "Loading data..." : "Live session"}
+                </span>
+              </div>
             </div>
           </div>
           <nav className="module-nav-grid">
@@ -3910,6 +4598,10 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
           </nav>
         </header>
         <div className="command-deck">
+          <div className="command-deck-meta">
+            <strong>Workspace Controls</strong>
+            <small>{tabSubtitle(activeTab)}</small>
+          </div>
           <button type="button" className="ghost-btn" onClick={bootstrap}>
             Sync Workspace
           </button>

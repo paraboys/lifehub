@@ -9,6 +9,7 @@ export async function createOrder(req, res) {
       shopId: req.body.shopId,
       total: req.body.total,
       items: req.body.items || [],
+      deliveryDetails: req.body.deliveryDetails || {},
       idempotencyKey
     });
     res.status(201).json(jsonSafe(payload));

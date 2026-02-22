@@ -44,7 +44,7 @@ async function hasShopFeedbackTable() {
   }
 
   try {
-    const rows = await prisma.$queryRawUnsafe("SELECT to_regclass('public.shop_feedbacks') AS table_name");
+    const rows = await prisma.$queryRawUnsafe("SELECT to_regclass('public.shop_feedbacks')::text AS table_name");
     const available = Boolean(rows?.[0]?.table_name);
     shopFeedbackTableAvailability = {
       checkedAt: now,
@@ -240,6 +240,17 @@ function computeOpenNow() {
   return hour >= openHour || hour < closeHour;
 }
 
+async function alignIdentitySequence(tableName, columnName = "id") {
+  // Sequence drift can happen on seeded/manual inserts; align before inserts.
+  await prisma.$executeRawUnsafe(`
+    SELECT setval(
+      pg_get_serial_sequence('${tableName}', '${columnName}'),
+      COALESCE((SELECT MAX(${columnName}) FROM ${tableName}), 0),
+      true
+    )
+  `);
+}
+
 function normalizeRoles(actorRoles = []) {
   return actorRoles.map(role => String(role).toUpperCase());
 }
@@ -340,15 +351,55 @@ async function ensureShopEditable({
   shopId
 }) {
   const isAdmin = isAdminOrBusiness(actorRoles);
-  const shop = await prisma.shop_profiles.findUnique({
-    where: { id: toBigInt(shopId, "shopId") }
-  });
+  const normalizedActorUserId = toBigInt(actorUserId, "actorUserId");
+  const normalizedRoles = normalizeRoles(actorRoles);
+  const isShopkeeper = normalizedRoles.includes("SHOPKEEPER");
+  const requestedShopId = hasValue(shopId) ? toBigInt(shopId, "shopId") : null;
 
-  if (!shop) throw new Error("Shop not found");
-  if (!isAdmin && String(shop.user_id) !== String(actorUserId)) {
+  if (isAdmin) {
+    if (!requestedShopId) throw new Error("shopId is required");
+    const shop = await prisma.shop_profiles.findUnique({
+      where: { id: requestedShopId }
+    });
+    if (!shop) throw new Error("Shop not found");
+    return shop;
+  }
+
+  if (requestedShopId) {
+    const requestedShop = await prisma.shop_profiles.findUnique({
+      where: { id: requestedShopId }
+    });
+    if (requestedShop && String(requestedShop.user_id) === String(normalizedActorUserId)) {
+      return requestedShop;
+    }
+  }
+
+  const ownedShop = await prisma.shop_profiles.findFirst({
+    where: { user_id: normalizedActorUserId },
+    orderBy: { id: "asc" }
+  });
+  if (ownedShop) return ownedShop;
+
+  if (!isShopkeeper) {
     throw new Error("Only shop owner can manage this inventory");
   }
-  return shop;
+
+  const user = await prisma.users.findUnique({
+    where: { id: normalizedActorUserId },
+    select: { name: true }
+  });
+  const fallbackName = String(user?.name || "My").trim() || "My";
+
+  await alignIdentitySequence("shop_profiles", "id");
+  return prisma.shop_profiles.create({
+    data: {
+      user_id: normalizedActorUserId,
+      shop_name: `${fallbackName} Grocery`,
+      address: "Please update shop address",
+      verified: false,
+      rating: 0
+    }
+  });
 }
 
 async function upsertInventory(productId, quantity) {

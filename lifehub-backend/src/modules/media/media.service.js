@@ -7,8 +7,19 @@ function buildStoragePath(ownerId, fileName) {
   return `uploads/${String(ownerId)}/${Date.now()}_${safeName}`;
 }
 
-function toCdnUrl(storagePath) {
-  const base = process.env.MEDIA_CDN_BASE_URL || "http://localhost:4000/cdn";
+function normalizeBaseUrl(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  return raw.replace(/\/+$/, "");
+}
+
+function toCdnUrl(storagePath, { publicBaseUrl } = {}) {
+  const base = normalizeBaseUrl(
+    process.env.MEDIA_CDN_BASE_URL
+      || process.env.MEDIA_PUBLIC_BASE_URL
+      || (publicBaseUrl ? `${normalizeBaseUrl(publicBaseUrl)}/cdn` : "")
+      || "http://localhost:4000/cdn"
+  );
   return `${base}/${storagePath}`;
 }
 
@@ -17,7 +28,8 @@ export async function initUpload({
   fileName,
   fileType,
   fileSize,
-  isPrivate = true
+  isPrivate = true,
+  publicBaseUrl
 }) {
   const storagePath = buildStoragePath(ownerId, fileName);
   const file = await prisma.files.create({
@@ -33,19 +45,20 @@ export async function initUpload({
 
   const storage = await generateUploadUrl({
     key: storagePath,
-    contentType: fileType
+    contentType: fileType,
+    publicBaseUrl
   });
 
   return {
     fileId: file.id,
     uploadUrl: storage.uploadUrl,
-    cdnUrl: storage.cdnUrl || toCdnUrl(storagePath),
+    cdnUrl: storage.cdnUrl || toCdnUrl(storagePath, { publicBaseUrl }),
     storagePath,
     provider: storage.provider
   };
 }
 
-export async function completeUpload({ fileId }) {
+export async function completeUpload({ fileId, publicBaseUrl }) {
   const file = await prisma.files.findUnique({
     where: { id: BigInt(fileId) }
   });
@@ -56,17 +69,17 @@ export async function completeUpload({ fileId }) {
   return {
     fileId: file.id,
     status: "PROCESSING",
-    cdnUrl: toCdnUrl(file.storage_path)
+    cdnUrl: toCdnUrl(file.storage_path, { publicBaseUrl })
   };
 }
 
-export async function getFile(fileId) {
+export async function getFile(fileId, { publicBaseUrl } = {}) {
   const file = await prisma.files.findUnique({
     where: { id: BigInt(fileId) }
   });
   if (!file) throw new Error("File not found");
   return {
     ...file,
-    cdnUrl: toCdnUrl(file.storage_path)
+    cdnUrl: toCdnUrl(file.storage_path, { publicBaseUrl })
   };
 }

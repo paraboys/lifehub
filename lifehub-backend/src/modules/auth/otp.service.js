@@ -151,7 +151,16 @@ async function sendViaTwilio({ to, message }) {
 
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-    throw new Error(`Twilio OTP send failed (${res.status}): ${text}`);
+    let providerMessage = text;
+    try {
+      const parsed = JSON.parse(text || "{}");
+      providerMessage = parsed?.message
+        ? `${parsed.message}${parsed?.code ? ` (code ${parsed.code})` : ""}`
+        : text;
+    } catch {
+      // keep raw text
+    }
+    throw new Error(`Twilio OTP send failed (${res.status}): ${providerMessage}`);
   }
 }
 
@@ -190,7 +199,17 @@ async function dispatchOtpSms(phone, otp) {
 
   if (provider === "TWILIO") {
     const to = normalizeSmsDestination(phone, { requireE164: true });
-    await sendViaTwilio({ to, message });
+    try {
+      await sendViaTwilio({ to, message });
+    } catch (error) {
+      if (process.env.SMS_GATEWAY_URL) {
+        await sendViaGenericGateway({ to, message });
+        return;
+      }
+      throw new Error(
+        `${error.message}. Check TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM_NUMBER and E.164 phone format.`
+      );
+    }
     return;
   }
 

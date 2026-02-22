@@ -18,8 +18,17 @@ function resolveProvider() {
   return (process.env.MEDIA_STORAGE_PROVIDER || "local").toLowerCase();
 }
 
-export async function generateUploadUrl({ key, contentType }) {
+function normalizeBaseUrl(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  return raw.replace(/\/+$/, "");
+}
+
+export async function generateUploadUrl({ key, contentType, publicBaseUrl }) {
   const provider = resolveProvider();
+  const resolvedPublicBase = normalizeBaseUrl(
+    process.env.MEDIA_PUBLIC_BASE_URL || publicBaseUrl || ""
+  );
 
   if (provider === "s3" || provider === "r2") {
     const bucket = process.env.S3_BUCKET;
@@ -35,7 +44,9 @@ export async function generateUploadUrl({ key, contentType }) {
       expiresIn: Number(process.env.S3_SIGNED_URL_EXPIRY_SECONDS || 900)
     });
 
-    const cdnBase = process.env.MEDIA_CDN_BASE_URL || "";
+    const cdnBase = normalizeBaseUrl(
+      process.env.MEDIA_CDN_BASE_URL || resolvedPublicBase || ""
+    );
     const cdnUrl = cdnBase
       ? `${cdnBase.replace(/\/$/, "")}/${key}`
       : signedUrl.split("?")[0];
@@ -47,8 +58,12 @@ export async function generateUploadUrl({ key, contentType }) {
     };
   }
 
-  const uploadBase = process.env.MEDIA_UPLOAD_BASE_URL || "http://localhost:4000/upload";
-  const cdnBase = process.env.MEDIA_CDN_BASE_URL || "http://localhost:4000/cdn";
+  const uploadBase = normalizeBaseUrl(
+    process.env.MEDIA_UPLOAD_BASE_URL || (resolvedPublicBase ? `${resolvedPublicBase}/upload` : "")
+  ) || "http://localhost:4000/upload";
+  const cdnBase = normalizeBaseUrl(
+    process.env.MEDIA_CDN_BASE_URL || (resolvedPublicBase ? `${resolvedPublicBase}/cdn` : "")
+  ) || "http://localhost:4000/cdn";
   return {
     provider: "local",
     uploadUrl: `${uploadBase}/${key}`,

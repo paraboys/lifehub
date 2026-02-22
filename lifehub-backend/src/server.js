@@ -47,6 +47,9 @@ const app = express();
 const server = http.createServer(app);
 const localMediaRoot = path.resolve(process.cwd(), "storage");
 
+// Respect forwarded protocol/host headers in hosted deployments.
+app.set("trust proxy", true);
+
 function resolveLocalMediaPath(rawKey = "") {
   const key = String(rawKey || "")
     .replace(/\\/g, "/")
