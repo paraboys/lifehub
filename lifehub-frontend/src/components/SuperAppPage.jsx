@@ -414,6 +414,11 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
   const [selectedShopId, setSelectedShopId] = useState("");
   const [shopProducts, setShopProducts] = useState([]);
   const [selectedMarketplaceProduct, setSelectedMarketplaceProduct] = useState(null);
+  const [marketplaceView, setMarketplaceView] = useState("catalog");
+  const [shopFeedbackSummary, setShopFeedbackSummary] = useState(null);
+  const [shopFeedbackRows, setShopFeedbackRows] = useState([]);
+  const [loadingShopFeedback, setLoadingShopFeedback] = useState(false);
+  const [shopFeedbackError, setShopFeedbackError] = useState("");
   const [cart, setCart] = useState([]);
   const [deliveryDetails, setDeliveryDetails] = useState({
     recipientName: user.name || "",
@@ -1448,6 +1453,32 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
     }
   }
 
+  async function loadShopFeedback(shopId) {
+    if (!shopId) {
+      setShopFeedbackSummary(null);
+      setShopFeedbackRows([]);
+      setShopFeedbackError("");
+      return;
+    }
+
+    setLoadingShopFeedback(true);
+    setShopFeedbackError("");
+    try {
+      const data = await api(`/marketplace/shops/${shopId}/feedback?limit=12`);
+      setShopFeedbackSummary(data.summary || null);
+      setShopFeedbackRows(data.feedback || []);
+      if (!(data.feedback || []).length) {
+        setShopFeedbackError("No customer feedback yet for this shop.");
+      }
+    } catch (err) {
+      setShopFeedbackSummary(null);
+      setShopFeedbackRows([]);
+      setShopFeedbackError(err.message || "Unable to load shop feedback.");
+    } finally {
+      setLoadingShopFeedback(false);
+    }
+  }
+
   function addToCart(product) {
     setCart(prev => {
       const existing = prev.find(item => String(item.productId) === String(product.id));
@@ -1485,10 +1516,71 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
     );
   }
 
-  function openMarketplaceProduct(item, fallbackShop = null) {
+  async function openMarketplaceProduct(item, fallbackShop = null) {
     const normalized = normalizeMarketplaceProduct(item, fallbackShop || selectedShop);
     if (!normalized) return;
-    setSelectedMarketplaceProduct(normalized);
+    try {
+      setSelectedMarketplaceProduct(normalized);
+      setMarketplaceView("detail");
+
+      const shopId = normalized?.shop?.id || selectedShopId;
+      if (shopId && String(shopId) !== String(selectedShopId)) {
+        await loadShopProducts(shopId, { keepSelectedProduct: true });
+      }
+      await loadShopFeedback(shopId);
+
+      if (typeof window !== "undefined") {
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      }
+    } catch (err) {
+      setError(err.message || "Unable to open product details right now.");
+    }
+  }
+
+  function goToMarketplaceCheckout() {
+    if (!cart.length) {
+      setError("Add at least one product to cart before checkout.");
+      return;
+    }
+    if (!selectedShopId) {
+      setError("Select a shop before checkout.");
+      return;
+    }
+    setMarketplaceView("checkout");
+    setCheckoutValidationError("");
+    if (typeof window !== "undefined") {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+  }
+
+  async function buyNowMarketplaceProduct(item, fallbackShop = null) {
+    const normalized = normalizeMarketplaceProduct(item, fallbackShop || selectedShop);
+    if (!normalized) return;
+    try {
+      const shopId = normalized?.shop?.id || selectedShopId;
+      if (shopId && String(shopId) !== String(selectedShopId)) {
+        await loadShopProducts(shopId, { keepSelectedProduct: true });
+      }
+
+      setCart([
+        {
+          productId: normalized.productId,
+          name: normalized.name,
+          price: Number(normalized.price || 0),
+          quantity: 1
+        }
+      ]);
+      setSelectedMarketplaceProduct(normalized);
+      await loadShopFeedback(shopId);
+      setMarketplaceView("checkout");
+      setCheckoutValidationError("");
+
+      if (typeof window !== "undefined") {
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      }
+    } catch (err) {
+      setError(err.message || "Unable to start buy now flow.");
+    }
   }
 
   function validateDeliveryDetails() {
@@ -1532,6 +1624,7 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
       });
       setCart([]);
       setSelectedMarketplaceProduct(null);
+      setMarketplaceView("catalog");
       await Promise.all([loadHome(), loadOrders()]);
     } catch (err) {
       setError(`${err.message || "Order failed"}. You can top up wallet and retry.`);
@@ -3082,8 +3175,10 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
   }
 
   function renderMarketplaceTab() {
-    const featuredRecommendation = visibleRecommendedProducts[0] || null;
     const dealProducts = visibleRecommendedProducts.slice(0, 10);
+    const showingDetailPage = marketplaceView === "detail" && !!selectedMarketplaceDetail;
+    const showingCheckoutPage = marketplaceView === "checkout";
+    const showingCatalog = !showingDetailPage && !showingCheckoutPage;
 
     return (
       <section className="market-shell ecommerce-market-shell">
@@ -3103,6 +3198,35 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
               <span className="status-pill">Cart {cart.length}</span>
             </div>
           </div>
+          <div className="market-nav-row">
+            <button
+              type="button"
+              className={showingCatalog ? "active" : ""}
+              onClick={() => setMarketplaceView("catalog")}
+            >
+              Browse Feed
+            </button>
+            <button
+              type="button"
+              className={showingDetailPage ? "active" : ""}
+              onClick={() => {
+                if (selectedMarketplaceDetail) {
+                  setMarketplaceView("detail");
+                  return;
+                }
+                setError("Open a product first to view full details.");
+              }}
+            >
+              Product Page
+            </button>
+            <button
+              type="button"
+              className={showingCheckoutPage ? "active" : ""}
+              onClick={goToMarketplaceCheckout}
+            >
+              Checkout Page
+            </button>
+          </div>
           <div className="market-search-wrap commerce-search">
             <UiIcon name="search" />
             <input
@@ -3110,7 +3234,13 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
               onChange={event => setProductQuery(event.target.value)}
               placeholder="Search grocery items, brands, categories..."
             />
-            <button type="button" onClick={() => searchProductsNearby(productQuery)}>
+            <button
+              type="button"
+              onClick={() => {
+                setMarketplaceView("catalog");
+                searchProductsNearby(productQuery);
+              }}
+            >
               Search
             </button>
           </div>
@@ -3120,7 +3250,10 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
                 key={category}
                 type="button"
                 className={`category-chip ${marketCategory === category ? "active" : ""}`}
-                onClick={() => setMarketCategory(category)}
+                onClick={() => {
+                  setMarketplaceView("catalog");
+                  setMarketCategory(category);
+                }}
               >
                 {category === "all" ? "All Categories" : titleCase(category)}
               </button>
@@ -3133,10 +3266,7 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
                 type="button"
                 className="market-deal-card"
                 onClick={async () => {
-                  openMarketplaceProduct(item, item?.shop || null);
-                  if (item?.shop?.id && String(item.shop.id) !== String(selectedShopId)) {
-                    await loadShopProducts(item.shop.id, { keepSelectedProduct: true });
-                  }
+                  await openMarketplaceProduct(item, item?.shop || null);
                 }}
               >
                 {!!item.imageUrl ? (
@@ -3159,6 +3289,262 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
           </div>
         </header>
 
+        {showingDetailPage && (
+          <article className="panel-card marketplace-page market-product-detail-page commerce-section">
+            <div className="market-panel-head">
+              <h3>Product Details</h3>
+              <div className="market-action-pair">
+                <button type="button" className="ghost-btn" onClick={() => setMarketplaceView("catalog")}>
+                  Back to Products
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    addToCart({
+                      id: selectedMarketplaceDetail.productId,
+                      name: selectedMarketplaceDetail.name,
+                      price: selectedMarketplaceDetail.price
+                    })
+                  }
+                >
+                  Add to cart
+                </button>
+                <button
+                  type="button"
+                  onClick={() => buyNowMarketplaceProduct(selectedMarketplaceDetail, selectedMarketplaceDetail.shop || selectedShop)}
+                >
+                  Buy now
+                </button>
+              </div>
+            </div>
+            <div className="product-detail-layout">
+              <div className="product-detail-image-wrap">
+                {!!selectedMarketplaceDetail.imageUrl ? (
+                  <img
+                    src={selectedMarketplaceDetail.imageUrl}
+                    alt={selectedMarketplaceDetail.name}
+                    className="product-detail-image"
+                  />
+                ) : (
+                  <div className="product-detail-image market-thumb-placeholder">
+                    <span>{initials(selectedMarketplaceDetail.name)}</span>
+                  </div>
+                )}
+              </div>
+              <div className="product-detail-content">
+                <h3>{selectedMarketplaceDetail.name}</h3>
+                <small>
+                  {selectedMarketplaceDetail.company
+                    ? `Brand ${selectedMarketplaceDetail.company}`
+                    : "Local product"}
+                </small>
+                <p>{selectedMarketplaceDetail.description || "No detailed description available for this product yet."}</p>
+                <div className="product-detail-meta">
+                  <span className="status-pill">{titleCase(selectedMarketplaceDetail.category || "general")}</span>
+                  <span className="status-pill">Qty {selectedMarketplaceDetail.availableQuantity}</span>
+                  {!!selectedMarketplaceDetail.shop?.shopName && (
+                    <span className="status-pill">{selectedMarketplaceDetail.shop.shopName}</span>
+                  )}
+                </div>
+                <div className="product-detail-price-row">
+                  <strong className="market-price">{toCurrency(selectedMarketplaceDetail.price)}</strong>
+                  <small>
+                    Shop rating {Number(selectedMarketplaceDetail.shop?.rating || 0).toFixed(1)} | Reliability{" "}
+                    {Number(selectedMarketplaceDetail.shop?.reliabilityScore || 0).toFixed(1)}
+                  </small>
+                </div>
+              </div>
+            </div>
+            <div className="divider" />
+            <div className="market-panel-head">
+              <h3>Customer Feedback</h3>
+              {!!shopFeedbackSummary && (
+                <small>
+                  Average {Number(shopFeedbackSummary.avgRating || 0).toFixed(1)} from{" "}
+                  {Number(shopFeedbackSummary.feedbackCount || 0)} ratings
+                </small>
+              )}
+            </div>
+            {loadingShopFeedback && <div className="empty-line">Loading feedback...</div>}
+            {!loadingShopFeedback && !!shopFeedbackError && <div className="empty-line">{shopFeedbackError}</div>}
+            {!loadingShopFeedback && !shopFeedbackError && (
+              <div className="feedback-list">
+                {shopFeedbackRows.slice(0, 6).map(row => (
+                  <article key={row.id} className="feedback-card">
+                    <div className="feedback-head">
+                      <strong>{row?.customer?.name || "Customer"}</strong>
+                      <span className="status-pill">
+                        {ratingStars(row.rating)} {Number(row.rating || 0).toFixed(1)}
+                      </span>
+                    </div>
+                    <small>{row.comment || "No written comment provided."}</small>
+                  </article>
+                ))}
+                {!shopFeedbackRows.length && <div className="empty-line">No customer feedback yet for this shop.</div>}
+              </div>
+            )}
+            <div className="divider" />
+            <div className="market-panel-head">
+              <h3>Related Products</h3>
+              <small>Similar category items from nearby stores</small>
+            </div>
+            <div className="market-product-grid commerce-products">
+              {relatedMarketplaceProducts.map(product => (
+                <article
+                  key={`related_${product.productId}`}
+                  className="market-product-card commerce-product-card clickable"
+                  onClick={() => openMarketplaceProduct(product, product.shop || selectedShop)}
+                >
+                  {!!product.imageUrl ? (
+                    <img src={product.imageUrl} alt={product.name} className="market-product-thumb" />
+                  ) : (
+                    <div className="market-product-thumb market-thumb-placeholder">
+                      <span>{initials(product.name)}</span>
+                    </div>
+                  )}
+                  <div className="market-product-body">
+                    <strong>{product.name}</strong>
+                    <small>{product.company ? `Brand ${product.company}` : "Local inventory"}</small>
+                  </div>
+                  <div className="market-product-actions">
+                    <strong className="market-price">{toCurrency(product.price)}</strong>
+                    <button
+                      type="button"
+                      onClick={event => {
+                        event.stopPropagation();
+                        addToCart({ id: product.productId, name: product.name, price: product.price });
+                      }}
+                    >
+                      Add to cart
+                    </button>
+                  </div>
+                </article>
+              ))}
+              {!relatedMarketplaceProducts.length && (
+                <div className="empty-line">No related products available right now.</div>
+              )}
+            </div>
+          </article>
+        )}
+
+        {showingCheckoutPage && (
+          <article className="panel-card marketplace-page market-checkout-page commerce-section">
+            <div className="market-panel-head">
+              <h3>Secure Checkout</h3>
+              <div className="market-action-pair">
+                <button type="button" className="ghost-btn" onClick={() => setMarketplaceView("catalog")}>
+                  Continue Shopping
+                </button>
+                {!!selectedMarketplaceDetail && (
+                  <button type="button" className="ghost-btn" onClick={() => setMarketplaceView("detail")}>
+                    Back to Product
+                  </button>
+                )}
+              </div>
+            </div>
+            <div className="market-checkout-layout">
+              <section className="market-checkout-items">
+                <div className="market-panel-head">
+                  <h4>Order Items</h4>
+                  <small>{selectedShop ? selectedShop.shopName : "No shop selected"}</small>
+                </div>
+                <div className="market-cart-list">
+                  {cart.map(item => (
+                    <div key={item.productId} className="market-cart-item">
+                      <div>
+                        <strong>{item.name}</strong>
+                        <small>Unit {toCurrency(item.price)}</small>
+                      </div>
+                      <input
+                        value={item.quantity}
+                        onChange={event => updateCartQuantity(item.productId, event.target.value)}
+                        placeholder="Qty"
+                      />
+                    </div>
+                  ))}
+                  {!cart.length && <div className="empty-line">Your cart is empty.</div>}
+                </div>
+                <div className="market-cart-footer">
+                  <div className="market-total-row">
+                    <span>Total</span>
+                    <strong>{toCurrency(cartTotal)}</strong>
+                  </div>
+                  <select value={checkoutMode} onChange={event => setCheckoutMode(event.target.value)}>
+                    <option value="RAZORPAY">Razorpay Checkout</option>
+                    <option value="WALLET">Wallet Balance</option>
+                  </select>
+                  <button type="button" onClick={proceedCheckout} disabled={!cart.length || !selectedShopId}>
+                    Proceed Payment
+                  </button>
+                </div>
+              </section>
+              <section className="market-delivery-form checkout-form-block">
+                <h4>Delivery Information</h4>
+                <div className="market-delivery-grid two-col">
+                  <input
+                    value={deliveryDetails.recipientName}
+                    onChange={event =>
+                      setDeliveryDetails(prev => ({ ...prev, recipientName: event.target.value }))
+                    }
+                    placeholder="Full name"
+                  />
+                  <input
+                    value={deliveryDetails.recipientPhone}
+                    onChange={event =>
+                      setDeliveryDetails(prev => ({ ...prev, recipientPhone: event.target.value }))
+                    }
+                    placeholder="Phone number"
+                  />
+                  <input
+                    value={deliveryDetails.addressLine1}
+                    onChange={event =>
+                      setDeliveryDetails(prev => ({ ...prev, addressLine1: event.target.value }))
+                    }
+                    placeholder="House / flat / street address"
+                  />
+                  <input
+                    value={deliveryDetails.nearbyLocation}
+                    onChange={event =>
+                      setDeliveryDetails(prev => ({ ...prev, nearbyLocation: event.target.value }))
+                    }
+                    placeholder="Nearby location / area"
+                  />
+                  <input
+                    value={deliveryDetails.city}
+                    onChange={event =>
+                      setDeliveryDetails(prev => ({ ...prev, city: event.target.value }))
+                    }
+                    placeholder="City"
+                  />
+                  <input
+                    value={deliveryDetails.postalCode}
+                    onChange={event =>
+                      setDeliveryDetails(prev => ({ ...prev, postalCode: event.target.value }))
+                    }
+                    placeholder="Postal / PIN code"
+                  />
+                  <input
+                    value={deliveryDetails.landmark}
+                    onChange={event =>
+                      setDeliveryDetails(prev => ({ ...prev, landmark: event.target.value }))
+                    }
+                    placeholder="Landmark"
+                  />
+                  <input
+                    value={deliveryDetails.deliveryNote}
+                    onChange={event =>
+                      setDeliveryDetails(prev => ({ ...prev, deliveryNote: event.target.value }))
+                    }
+                    placeholder="Delivery notes (optional)"
+                  />
+                </div>
+                {!!checkoutValidationError && <div className="empty-line">{checkoutValidationError}</div>}
+              </section>
+            </div>
+          </article>
+        )}
+
+        {showingCatalog && (
         <div className="market-grid market-grid-commerce">
           <aside className="panel-card market-shop-panel market-filter-rail">
             <div className="market-panel-head">
@@ -3221,7 +3607,10 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
                 <button
                   key={shop.id}
                   className={`market-shop-card ${String(shop.id) === String(selectedShopId) ? "active" : ""}`}
-                  onClick={() => loadShopProducts(shop.id)}
+                  onClick={() => {
+                    setMarketplaceView("catalog");
+                    loadShopProducts(shop.id);
+                  }}
                   type="button"
                 >
                   <strong>{shop.shopName}</strong>
@@ -3284,6 +3673,7 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
                             type="button"
                             onClick={async () => {
                               if (!item?.shop?.id) return;
+                              setMarketplaceView("catalog");
                               setSelectedShopId(String(item.shop.id));
                               await loadShopProducts(item.shop.id);
                             }}
@@ -3319,10 +3709,7 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
                         key={`${item?.shop?.id || "shop"}-${item.productId}`}
                         className="market-result-card commerce-result-card"
                         onClick={async () => {
-                          openMarketplaceProduct(item, item?.shop || null);
-                          if (item?.shop?.id && String(item.shop.id) !== String(selectedShopId)) {
-                            await loadShopProducts(item.shop.id, { keepSelectedProduct: true });
-                          }
+                          await openMarketplaceProduct(item, item?.shop || null);
                         }}
                         type="button"
                         disabled={!item?.shop?.id}
@@ -3353,149 +3740,67 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
               </article>
             )}
 
-            {selectedMarketplaceDetail ? (
-              <article className="panel-card market-product-detail-page commerce-section">
-                <div className="market-panel-head">
-                  <h3>Product Details</h3>
-                  <button type="button" className="ghost-btn" onClick={() => setSelectedMarketplaceProduct(null)}>
-                    Back to Products
-                  </button>
-                </div>
-                <div className="product-detail-layout">
-                  <div className="product-detail-image-wrap">
-                    {!!selectedMarketplaceDetail.imageUrl ? (
-                      <img
-                        src={selectedMarketplaceDetail.imageUrl}
-                        alt={selectedMarketplaceDetail.name}
-                        className="product-detail-image"
-                      />
-                    ) : (
-                      <div className="product-detail-image market-thumb-placeholder">
-                        <span>{initials(selectedMarketplaceDetail.name)}</span>
-                      </div>
-                    )}
-                  </div>
-                  <div className="product-detail-content">
-                    <h3>{selectedMarketplaceDetail.name}</h3>
-                    <small>{selectedMarketplaceDetail.company ? `Brand ${selectedMarketplaceDetail.company}` : "Local product"}</small>
-                    <p>{selectedMarketplaceDetail.description || "No detailed description available for this product yet."}</p>
-                    <div className="product-detail-meta">
-                      <span className="status-pill">{titleCase(selectedMarketplaceDetail.category || "general")}</span>
-                      <span className="status-pill">Qty {selectedMarketplaceDetail.availableQuantity}</span>
-                      {!!selectedMarketplaceDetail.shop?.shopName && (
-                        <span className="status-pill">{selectedMarketplaceDetail.shop.shopName}</span>
-                      )}
-                    </div>
-                    <div className="product-detail-price-row">
-                      <strong className="market-price">{toCurrency(selectedMarketplaceDetail.price)}</strong>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          addToCart({
-                            id: selectedMarketplaceDetail.productId,
-                            name: selectedMarketplaceDetail.name,
-                            price: selectedMarketplaceDetail.price
-                          })
-                        }
-                      >
-                        Add to cart
-                      </button>
-                    </div>
-                  </div>
-                </div>
-                <div className="divider" />
-                <div className="market-panel-head">
-                  <h3>Related Products</h3>
-                  <small>Similar category items from nearby stores</small>
-                </div>
-                <div className="market-product-grid commerce-products">
-                  {relatedMarketplaceProducts.map(product => (
-                    <article
-                      key={`related_${product.productId}`}
-                      className="market-product-card commerce-product-card clickable"
-                      onClick={() => openMarketplaceProduct(product, product.shop || selectedShop)}
-                    >
-                      {!!product.imageUrl ? (
-                        <img src={product.imageUrl} alt={product.name} className="market-product-thumb" />
-                      ) : (
-                        <div className="market-product-thumb market-thumb-placeholder">
-                          <span>{initials(product.name)}</span>
-                        </div>
-                      )}
-                      <div className="market-product-body">
-                        <strong>{product.name}</strong>
-                        <small>{product.company ? `Brand ${product.company}` : "Local inventory"}</small>
-                      </div>
-                      <div className="market-product-actions">
-                        <strong className="market-price">{toCurrency(product.price)}</strong>
-                        <button
-                          type="button"
-                          onClick={event => {
-                            event.stopPropagation();
-                            addToCart({ id: product.productId, name: product.name, price: product.price });
-                          }}
-                        >
-                          Add to cart
-                        </button>
-                      </div>
-                    </article>
-                  ))}
-                  {!relatedMarketplaceProducts.length && (
-                    <div className="empty-line">No related products available right now.</div>
-                  )}
-                </div>
-              </article>
-            ) : (
-              <article className="panel-card market-catalog-panel commerce-section">
-                <div className="market-panel-head">
-                  <h3>{selectedShop ? `${selectedShop.shopName} Storefront` : "Storefront Catalog"}</h3>
+            <article className="panel-card market-catalog-panel commerce-section">
+              <div className="market-panel-head">
+                <h3>{selectedShop ? `${selectedShop.shopName} Storefront` : "Storefront Catalog"}</h3>
+                <small>
+                  {selectedShop
+                    ? "Browse and add products from this selected grocery."
+                    : "Select a nearby shop to load products."}
+                </small>
+              </div>
+              {selectedShop && (
+                <div className="market-selected-shop-banner">
+                  <strong>{selectedShop.shopName}</strong>
                   <small>
-                    {selectedShop
-                      ? "Browse and add products from this selected grocery."
-                      : "Select a nearby shop to load products."}
+                    {selectedShop.address || "Address unavailable"} |{" "}
+                    {ratingStars(selectedShop.rating)} {Number(selectedShop.rating || 0).toFixed(1)} | Reliability{" "}
+                    {Number(selectedShop.reliabilityScore || 0).toFixed(1)}
                   </small>
                 </div>
-                {selectedShop && (
-                  <div className="market-selected-shop-banner">
-                    <strong>{selectedShop.shopName}</strong>
-                    <small>
-                      {selectedShop.address || "Address unavailable"} |{" "}
-                      {ratingStars(selectedShop.rating)} {Number(selectedShop.rating || 0).toFixed(1)} | Reliability{" "}
-                      {Number(selectedShop.reliabilityScore || 0).toFixed(1)}
-                    </small>
-                  </div>
-                )}
-                <div className="market-product-grid commerce-products">
-                  {visibleShopProducts.map(product => (
-                    <article
-                      key={product.id}
-                      className="market-product-card commerce-product-card clickable"
-                      onClick={() => openMarketplaceProduct(product, selectedShop)}
-                    >
-                      {!!product.imageUrl ? (
-                        <img src={product.imageUrl} alt={product.name} className="market-product-thumb" />
-                      ) : (
-                        <div className="market-product-thumb market-thumb-placeholder">
-                          <span>{initials(product.name)}</span>
-                        </div>
-                      )}
-                      <div className="market-product-body">
-                        <strong>{product.name}</strong>
-                        <small>{product.company ? `Brand ${product.company}` : "Local inventory"}</small>
-                        <small>{product.description || "Fresh stock available from nearby store."}</small>
-                        <small className="market-rating-line">
-                          {ratingStars(selectedShop?.rating || 4)} {Number(selectedShop?.rating || 4).toFixed(1)}
-                        </small>
-                        <small>
-                          M.R.P <s>{toCurrency(Number(product.price || 0) * 1.12)}</s>
-                        </small>
+              )}
+              <div className="market-product-grid commerce-products">
+                {visibleShopProducts.map(product => (
+                  <article
+                    key={product.id}
+                    className="market-product-card commerce-product-card clickable"
+                    onClick={() => openMarketplaceProduct(product, selectedShop)}
+                  >
+                    {!!product.imageUrl ? (
+                      <img src={product.imageUrl} alt={product.name} className="market-product-thumb" />
+                    ) : (
+                      <div className="market-product-thumb market-thumb-placeholder">
+                        <span>{initials(product.name)}</span>
                       </div>
-                      <div className="market-product-foot">
-                        <span className="status-pill">Qty {product.availableQuantity}</span>
-                        <span className="status-pill">{titleCase(product.category || "general")}</span>
-                      </div>
-                      <div className="market-product-actions">
-                        <strong className="market-price">{toCurrency(product.price)}</strong>
+                    )}
+                    <div className="market-product-body">
+                      <strong>{product.name}</strong>
+                      <small>{product.company ? `Brand ${product.company}` : "Local inventory"}</small>
+                      <small>{product.description || "Fresh stock available from nearby store."}</small>
+                      <small className="market-rating-line">
+                        {ratingStars(selectedShop?.rating || 4)} {Number(selectedShop?.rating || 4).toFixed(1)}
+                      </small>
+                      <small>
+                        M.R.P <s>{toCurrency(Number(product.price || 0) * 1.12)}</s>
+                      </small>
+                    </div>
+                    <div className="market-product-foot">
+                      <span className="status-pill">Qty {product.availableQuantity}</span>
+                      <span className="status-pill">{titleCase(product.category || "general")}</span>
+                    </div>
+                    <div className="market-product-actions">
+                      <strong className="market-price">{toCurrency(product.price)}</strong>
+                      <div className="market-action-pair">
+                        <button
+                          type="button"
+                          className="ghost-btn"
+                          onClick={event => {
+                            event.stopPropagation();
+                            openMarketplaceProduct(product, selectedShop);
+                          }}
+                        >
+                          View details
+                        </button>
                         <button
                           type="button"
                           onClick={event => {
@@ -3506,19 +3811,19 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
                           Add to cart
                         </button>
                       </div>
-                    </article>
-                  ))}
-                  {!visibleShopProducts.length && (
-                    <div className="empty-line">Select a shop and category to view products.</div>
-                  )}
-                </div>
-              </article>
-            )}
+                    </div>
+                  </article>
+                ))}
+                {!visibleShopProducts.length && (
+                  <div className="empty-line">Select a shop and category to view products.</div>
+                )}
+              </div>
+            </article>
           </div>
 
           <aside className="panel-card market-cart-panel sticky-checkout">
             <div className="market-panel-head">
-              <h3>Checkout</h3>
+              <h3>Cart Summary</h3>
               <small>{selectedShop ? selectedShop.shopName : "No shop selected"}</small>
             </div>
             <div className="market-cart-list">
@@ -3537,83 +3842,18 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
               ))}
               {!cart.length && <div className="empty-line">Your cart is empty.</div>}
             </div>
-            <div className="market-delivery-form">
-              <h4>Delivery Details</h4>
-              <div className="market-delivery-grid">
-                <input
-                  value={deliveryDetails.recipientName}
-                  onChange={event =>
-                    setDeliveryDetails(prev => ({ ...prev, recipientName: event.target.value }))
-                  }
-                  placeholder="Full name"
-                />
-                <input
-                  value={deliveryDetails.recipientPhone}
-                  onChange={event =>
-                    setDeliveryDetails(prev => ({ ...prev, recipientPhone: event.target.value }))
-                  }
-                  placeholder="Phone number"
-                />
-                <input
-                  value={deliveryDetails.addressLine1}
-                  onChange={event =>
-                    setDeliveryDetails(prev => ({ ...prev, addressLine1: event.target.value }))
-                  }
-                  placeholder="House / flat / street address"
-                />
-                <input
-                  value={deliveryDetails.nearbyLocation}
-                  onChange={event =>
-                    setDeliveryDetails(prev => ({ ...prev, nearbyLocation: event.target.value }))
-                  }
-                  placeholder="Nearby location / area"
-                />
-                <input
-                  value={deliveryDetails.city}
-                  onChange={event =>
-                    setDeliveryDetails(prev => ({ ...prev, city: event.target.value }))
-                  }
-                  placeholder="City"
-                />
-                <input
-                  value={deliveryDetails.postalCode}
-                  onChange={event =>
-                    setDeliveryDetails(prev => ({ ...prev, postalCode: event.target.value }))
-                  }
-                  placeholder="Postal / PIN code"
-                />
-                <input
-                  value={deliveryDetails.landmark}
-                  onChange={event =>
-                    setDeliveryDetails(prev => ({ ...prev, landmark: event.target.value }))
-                  }
-                  placeholder="Landmark"
-                />
-                <input
-                  value={deliveryDetails.deliveryNote}
-                  onChange={event =>
-                    setDeliveryDetails(prev => ({ ...prev, deliveryNote: event.target.value }))
-                  }
-                  placeholder="Delivery notes (optional)"
-                />
-              </div>
-              {!!checkoutValidationError && <div className="empty-line">{checkoutValidationError}</div>}
-            </div>
             <div className="market-cart-footer">
               <div className="market-total-row">
                 <span>Total</span>
                 <strong>{toCurrency(cartTotal)}</strong>
               </div>
-              <select value={checkoutMode} onChange={event => setCheckoutMode(event.target.value)}>
-                <option value="RAZORPAY">Razorpay Checkout</option>
-                <option value="WALLET">Wallet Balance</option>
-              </select>
-              <button type="button" onClick={proceedCheckout} disabled={!cart.length || !selectedShopId}>
-                Proceed Payment
+              <button type="button" onClick={goToMarketplaceCheckout} disabled={!cart.length || !selectedShopId}>
+                Go to checkout page
               </button>
             </div>
           </aside>
         </div>
+        )}
       </section>
     );
   }

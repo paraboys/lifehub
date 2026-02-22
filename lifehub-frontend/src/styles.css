@@ -2433,6 +2433,15 @@ button:hover {
     display: none;
   }
 
+  .market-nav-row {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .market-nav-row button {
+    width: 100%;
+  }
+
   .market-product-grid,
   .service-provider-grid {
     grid-template-columns: 1fr;
@@ -2831,6 +2840,26 @@ textarea {
   flex-wrap: wrap;
 }
 
+.market-nav-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.market-nav-row button {
+  min-width: 130px;
+  border: 1px solid rgba(122, 162, 196, 0.28);
+  background: rgba(14, 24, 38, 0.84);
+  color: #d6e9ff;
+  box-shadow: none;
+}
+
+.market-nav-row button.active {
+  background: linear-gradient(112deg, #2da9ff, #0f5f9f);
+  color: #ffffff;
+  border-color: transparent;
+}
+
 .market-eyebrow {
   display: inline-flex;
   margin-bottom: 6px;
@@ -2904,6 +2933,12 @@ textarea {
 
 .market-grid-commerce {
   grid-template-columns: minmax(250px, 300px) minmax(0, 1fr) minmax(280px, 330px);
+}
+
+.marketplace-page {
+  border-radius: 18px;
+  display: grid;
+  gap: 12px;
 }
 
 .market-filter-rail {
@@ -3045,6 +3080,51 @@ textarea {
   display: grid;
   grid-template-columns: 1fr;
   gap: 7px;
+}
+
+.market-delivery-grid.two-col {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.market-checkout-layout {
+  display: grid;
+  grid-template-columns: minmax(300px, 380px) minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.market-checkout-items {
+  border: 1px solid rgba(132, 169, 201, 0.22);
+  border-radius: 12px;
+  background: rgba(14, 24, 38, 0.8);
+  padding: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.checkout-form-block {
+  min-height: 100%;
+}
+
+.feedback-list {
+  display: grid;
+  gap: 8px;
+}
+
+.feedback-card {
+  border: 1px solid rgba(132, 169, 201, 0.22);
+  border-radius: 12px;
+  background: rgba(14, 24, 38, 0.8);
+  padding: 10px;
+  display: grid;
+  gap: 6px;
+}
+
+.feedback-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
 
 .market-rating-line {
@@ -3205,6 +3285,10 @@ textarea {
     max-height: none;
     grid-column: span 2;
   }
+
+  .market-checkout-layout {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 1080px) {
@@ -3225,6 +3309,10 @@ textarea {
   }
 
   .product-detail-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .market-delivery-grid.two-col {
     grid-template-columns: 1fr;
   }
 }
@@ -3269,6 +3357,7 @@ textarea {
   border: 1px solid rgba(120, 158, 194, 0.3);
   box-shadow: none;
   min-height: 44px;
+  font-weight: 700;
 }
 
 .auth-tabs-modern button.active {
@@ -3283,6 +3372,7 @@ textarea {
   color: #cddcf1;
   border: 1px solid rgba(120, 158, 194, 0.3);
   box-shadow: none;
+  font-weight: 700;
 }
 
 .auth-methods-modern button.active {
@@ -3317,6 +3407,14 @@ textarea {
 .auth-form-modern button {
   min-height: 44px;
   font-size: 14px;
+  color: #f8fcff;
+  background: linear-gradient(112deg, #2da9ff, #0f5f9f);
+  border: 1px solid rgba(96, 161, 211, 0.35);
+  text-shadow: 0 1px 0 rgba(10, 26, 42, 0.35);
+}
+
+.auth-form-modern button:disabled {
+  color: #d5e5f5;
 }
 
 .auth-inline-input {
@@ -3331,6 +3429,7 @@ textarea {
   color: #dff0ff;
   border: 1px solid rgba(120, 158, 194, 0.34);
   box-shadow: none;
+  font-weight: 700;
 }
 
 .auth-secondary-btn:hover {
