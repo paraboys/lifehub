@@ -21,7 +21,9 @@ async function alignIdentitySequence(tableName, columnName = "id") {
 export const signupUser = async (data) => {
   const normalizedPhone = String(data.phone || "").trim();
   const normalizedEmail = data.email ? String(data.email).trim().toLowerCase() : null;
+  const password = String(data.password || "");
   if (!normalizedPhone) throw new Error("phone is required");
+  if (password.length < 6) throw new Error("Password must be at least 6 characters");
 
   const exists = await prisma.users.findFirst({
     where: {
@@ -62,7 +64,7 @@ export const signupUser = async (data) => {
       name: displayName,
       phone: normalizedPhone,
       email: normalizedEmail,
-      password_hash: await hashPassword(data.password),
+      password_hash: await hashPassword(password),
       wallets: { create: { balance: 0 } },
       user_roles: {
         create: {
@@ -137,6 +139,55 @@ export const loginUser = async (data, meta) => {
 
   return { accessToken, refreshToken, user };
 };
+
+export async function findUserWithRolesByPhone(rawPhone) {
+  const phoneCandidates = buildPhoneCandidates(rawPhone);
+  if (!phoneCandidates.length) {
+    throw new Error("Phone is required");
+  }
+
+  return prisma.users.findFirst({
+    where: {
+      phone: {
+        in: phoneCandidates
+      }
+    },
+    include: {
+      user_roles: {
+        include: { roles: true }
+      }
+    }
+  });
+}
+
+export async function resetPasswordByPhone({ phone, newPassword }) {
+  const password = String(newPassword || "");
+  if (password.length < 6) {
+    throw new Error("New password must be at least 6 characters");
+  }
+
+  const user = await findUserWithRolesByPhone(phone);
+  if (!user) {
+    throw new Error("No account found for this phone number");
+  }
+
+  await prisma.users.update({
+    where: { id: user.id },
+    data: {
+      password_hash: await hashPassword(password)
+    }
+  });
+
+  await prisma.user_sessions.deleteMany({
+    where: { user_id: user.id }
+  });
+
+  return {
+    userId: user.id,
+    phone: user.phone
+  };
+}
+
 export const rotateRefreshToken = async (oldToken) => {
   const session = await prisma.user_sessions.findUnique({
     where: { refresh_token: oldToken }

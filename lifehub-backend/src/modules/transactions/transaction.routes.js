@@ -7,6 +7,8 @@ import {
   topup,
   walletSummary,
   paymentOptions,
+  walletReceiveProfile,
+  transfer,
   orderRefund,
   orderPayout,
   reconcile
@@ -16,7 +18,9 @@ const router = Router();
 
 router.get("/wallet", authenticate, authorize("CUSTOMER", "PROVIDER", "SHOPKEEPER", "DELIVERY", "BUSINESS", "ADMIN"), abuseGuard("transactions"), walletSummary);
 router.get("/wallet/payment-options", authenticate, authorize("CUSTOMER", "PROVIDER", "SHOPKEEPER", "DELIVERY", "BUSINESS", "ADMIN"), abuseGuard("transactions"), paymentOptions);
+router.get("/wallet/receive", authenticate, authorize("CUSTOMER", "PROVIDER", "SHOPKEEPER", "DELIVERY", "BUSINESS", "ADMIN"), abuseGuard("transactions"), walletReceiveProfile);
 router.post("/wallet/topup", authenticate, authorize("CUSTOMER", "PROVIDER", "SHOPKEEPER", "DELIVERY", "BUSINESS", "ADMIN"), abuseGuard("transactions"), topup);
+router.post("/transfer", authenticate, authorize("CUSTOMER", "PROVIDER", "SHOPKEEPER", "DELIVERY", "BUSINESS", "ADMIN"), abuseGuard("transactions"), transfer);
 router.get("/", authenticate, authorize("CUSTOMER", "PROVIDER", "SHOPKEEPER", "DELIVERY", "BUSINESS", "ADMIN"), abuseGuard("transactions"), list);
 router.post("/orders/:orderId/refund", authenticate, authorize("CUSTOMER", "SHOPKEEPER", "BUSINESS", "ADMIN"), abuseGuard("transactions"), orderRefund);
 router.post("/orders/:orderId/payout", authenticate, authorize("SHOPKEEPER", "BUSINESS", "ADMIN"), abuseGuard("transactions"), orderPayout);

@@ -14,6 +14,10 @@ function key(userId) {
   return `user:settings:${String(userId)}`;
 }
 
+function upiOwnerKey(upiId) {
+  return `upi:owner:${String(upiId || "").trim().toLowerCase()}`;
+}
+
 export const DEFAULT_USER_SETTINGS = {
   payments: {
     upiId: "",
@@ -89,6 +93,10 @@ function normalize(settings = {}) {
   };
 }
 
+function normalizeUpiId(upiId) {
+  return String(upiId || "").trim().toLowerCase();
+}
+
 export async function getUserSettings(userId) {
   const raw = await getRedis().get(key(userId));
   if (!raw) return DEFAULT_USER_SETTINGS;
@@ -101,6 +109,7 @@ export async function getUserSettings(userId) {
 
 export async function setUserSettings(userId, patch = {}) {
   const current = await getUserSettings(userId);
+  const currentUpiId = normalizeUpiId(current?.payments?.upiId);
   const next = normalize({
     ...current,
     ...patch,
@@ -134,6 +143,22 @@ export async function setUserSettings(userId, patch = {}) {
     }
   });
 
-  await getRedis().set(key(userId), JSON.stringify(next));
+  const nextUpiId = normalizeUpiId(next?.payments?.upiId);
+  const redisClient = getRedis();
+  await redisClient.set(key(userId), JSON.stringify(next));
+  if (currentUpiId && currentUpiId !== nextUpiId) {
+    await redisClient.del(upiOwnerKey(currentUpiId));
+  }
+  if (nextUpiId) {
+    await redisClient.set(upiOwnerKey(nextUpiId), String(userId));
+  }
   return next;
+}
+
+export async function findUserIdByUpiId(upiId) {
+  const normalized = normalizeUpiId(upiId);
+  if (!normalized) return null;
+  const value = await getRedis().get(upiOwnerKey(normalized));
+  if (!value) return null;
+  return String(value);
 }

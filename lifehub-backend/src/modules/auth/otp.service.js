@@ -16,6 +16,17 @@ const OTP_RESEND_COOLDOWN_SECONDS = Math.max(
 );
 const OTP_TTL_MS = OTP_TTL_SECONDS * 1000;
 const OTP_RESEND_COOLDOWN_MS = OTP_RESEND_COOLDOWN_SECONDS * 1000;
+const TABLE_AVAILABILITY_CACHE_TTL_MS = 60 * 1000;
+let otpPurposeColumnAvailability = {
+  checkedAt: 0,
+  available: null
+};
+
+export const OTP_PURPOSE = Object.freeze({
+  LOGIN: "LOGIN",
+  SIGNUP: "SIGNUP",
+  PASSWORD_RESET: "PASSWORD_RESET"
+});
 
 function getOtpHashSecret() {
   const secret = process.env.OTP_HASH_SECRET || process.env.JWT_SECRET;
@@ -87,6 +98,46 @@ function safeStringEqual(left, right) {
 
 function createOtpCode() {
   return crypto.randomInt(0, 1000000).toString().padStart(6, "0");
+}
+
+function normalizeOtpPurpose(rawPurpose, fallback = OTP_PURPOSE.LOGIN) {
+  const key = String(rawPurpose || fallback).trim().toUpperCase();
+  if (Object.values(OTP_PURPOSE).includes(key)) {
+    return key;
+  }
+  throw new Error(`Unsupported OTP purpose: ${rawPurpose}`);
+}
+
+async function hasOtpPurposeColumn() {
+  const now = Date.now();
+  if (
+    otpPurposeColumnAvailability.available !== null
+    && (now - otpPurposeColumnAvailability.checkedAt) < TABLE_AVAILABILITY_CACHE_TTL_MS
+  ) {
+    return otpPurposeColumnAvailability.available;
+  }
+
+  try {
+    const rows = await prisma.$queryRawUnsafe(`
+      SELECT column_name
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'login_otps'
+        AND column_name = 'purpose'
+    `);
+    const available = Boolean(rows?.length);
+    otpPurposeColumnAvailability = {
+      checkedAt: now,
+      available
+    };
+    return available;
+  } catch {
+    otpPurposeColumnAvailability = {
+      checkedAt: now,
+      available: false
+    };
+    return false;
+  }
 }
 
 export function buildPhoneCandidates(rawPhone) {
@@ -217,7 +268,15 @@ async function dispatchOtpSms(phone, otp) {
   await sendViaGenericGateway({ to, message });
 }
 
-export const sendOTP = async (rawPhone) => {
+export const sendOTP = async (rawPhone, options = {}) => {
+  const purpose = normalizeOtpPurpose(options.purpose, OTP_PURPOSE.LOGIN);
+  const requireUser = options.requireUser !== undefined
+    ? Boolean(options.requireUser)
+    : purpose !== OTP_PURPOSE.SIGNUP;
+  const requireMissingUser = options.requireMissingUser !== undefined
+    ? Boolean(options.requireMissingUser)
+    : purpose === OTP_PURPOSE.SIGNUP;
+
   const candidates = buildPhoneCandidates(rawPhone);
   if (!candidates.length) {
     throw new Error("Phone is required");
@@ -232,17 +291,24 @@ export const sendOTP = async (rawPhone) => {
       phone: true
     }
   });
-  if (!user?.phone) {
+  if (requireUser && !user?.phone) {
     throw new Error("No account found for this phone number");
   }
+  if (requireMissingUser && user?.phone) {
+    throw new Error("Phone number is already registered. Please login instead.");
+  }
 
-  const canonicalPhone = String(user.phone);
+  const canonicalPhone = String(
+    user?.phone || normalizeSmsDestination(rawPhone, { requireE164: false })
+  );
   const now = new Date();
   const cooldownStart = new Date(Date.now() - OTP_RESEND_COOLDOWN_MS);
+  const canUsePurpose = await hasOtpPurposeColumn();
 
   const recent = await prisma.login_otps.findFirst({
     where: {
       phone: canonicalPhone,
+      ...(canUsePurpose ? { purpose } : {}),
       created_at: { gte: cooldownStart },
       expires_at: { gt: now }
     },
@@ -258,12 +324,16 @@ export const sendOTP = async (rawPhone) => {
   const otpHash = hashOtp({ phone: canonicalPhone, otp });
 
   await prisma.login_otps.deleteMany({
-    where: { phone: canonicalPhone }
+    where: {
+      phone: canonicalPhone,
+      ...(canUsePurpose ? { purpose } : {})
+    }
   });
 
   await prisma.login_otps.create({
     data: {
       phone: canonicalPhone,
+      ...(canUsePurpose ? { purpose } : {}),
       code: otpHash,
       expires_at: new Date(Date.now() + OTP_TTL_MS),
       created_at: now
@@ -281,7 +351,8 @@ export const sendOTP = async (rawPhone) => {
   return true;
 };
 
-export const verifyOTP = async (rawPhone, code) => {
+export const verifyOTP = async (rawPhone, code, options = {}) => {
+  const purpose = normalizeOtpPurpose(options.purpose, OTP_PURPOSE.LOGIN);
   const normalizedCode = String(code || "").trim();
   if (!/^\d{6}$/.test(normalizedCode)) {
     throw new Error("OTP must be a 6-digit code");
@@ -291,10 +362,12 @@ export const verifyOTP = async (rawPhone, code) => {
   if (!candidates.length) {
     throw new Error("Phone is required");
   }
+  const canUsePurpose = await hasOtpPurposeColumn();
 
   const record = await prisma.login_otps.findFirst({
     where: {
       phone: { in: candidates },
+      ...(canUsePurpose ? { purpose } : {}),
       expires_at: { gt: new Date() }
     },
     orderBy: { created_at: "desc" }
@@ -311,8 +384,13 @@ export const verifyOTP = async (rawPhone, code) => {
   }
 
   await prisma.login_otps.deleteMany({
-    where: { phone: record.phone }
+    where: {
+      phone: record.phone,
+      ...(canUsePurpose ? { purpose } : {})
+    }
   });
 
-  return true;
+  return {
+    phone: String(record.phone)
+  };
 };

@@ -36,6 +36,17 @@ export async function paymentOptions(req, res) {
   }
 }
 
+export async function walletReceiveProfile(req, res) {
+  try {
+    const payload = await transactionService.getWalletReceiveProfile({
+      userId: req.user.id
+    });
+    res.json(jsonSafe(payload));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+}
+
 export async function list(req, res) {
   try {
     const rows = await transactionService.listTransactions({
@@ -45,6 +56,21 @@ export async function list(req, res) {
       status: req.query.status
     });
     res.json(jsonSafe({ transactions: rows }));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+}
+
+export async function transfer(req, res) {
+  try {
+    const payload = await transactionService.transferWalletP2P({
+      fromUserId: req.user.id,
+      toPhone: req.body.toPhone,
+      toUpiId: req.body.toUpiId,
+      amount: req.body.amount,
+      note: req.body.note
+    });
+    res.status(201).json(jsonSafe(payload));
   } catch (err) {
     res.status(400).json({ error: err.message });
   }

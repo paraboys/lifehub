@@ -28,7 +28,12 @@ export default function AuthPage({ onAuthSuccess }) {
   const [loginMethod, setLoginMethod] = useState("password");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [status, setStatus] = useState("");
+
   const [otpRequested, setOtpRequested] = useState(false);
+  const [signupOtpRequested, setSignupOtpRequested] = useState(false);
+  const [forgotOtpRequested, setForgotOtpRequested] = useState(false);
+
   const [loginForm, setLoginForm] = useState({
     phone: "",
     password: ""
@@ -42,21 +47,36 @@ export default function AuthPage({ onAuthSuccess }) {
     phone: "",
     email: "",
     password: "",
-    role: "customer"
+    role: "customer",
+    otpCode: ""
+  });
+  const [forgotForm, setForgotForm] = useState({
+    phone: "",
+    code: "",
+    newPassword: "",
+    confirmPassword: ""
   });
 
-  const title = useMemo(
-    () =>
-      mode === "login"
-        ? "Welcome back to LifeHub"
-        : "Create your LifeHub account",
-    [mode]
-  );
+  const title = useMemo(() => {
+    if (mode === "signup") return "Create your verified LifeHub account";
+    if (mode === "forgot") return "Reset your password securely";
+    return "Welcome back to LifeHub";
+  }, [mode]);
+
+  function resetMessages() {
+    setError("");
+    setStatus("");
+  }
+
+  function switchMode(next) {
+    setMode(next);
+    resetMessages();
+  }
 
   async function handleLogin(event) {
     event.preventDefault();
     setLoading(true);
-    setError("");
+    resetMessages();
     try {
       const data = await request("/auth/login", loginForm);
       onAuthSuccess(data);
@@ -67,31 +87,14 @@ export default function AuthPage({ onAuthSuccess }) {
     }
   }
 
-  async function handleSignup(event) {
+  async function requestLoginOtp(event) {
     event.preventDefault();
     setLoading(true);
-    setError("");
-    try {
-      await request("/auth/signup", signupForm);
-      const data = await request("/auth/login", {
-        phone: signupForm.phone,
-        password: signupForm.password
-      });
-      onAuthSuccess(data);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function requestOtp(event) {
-    event.preventDefault();
-    setLoading(true);
-    setError("");
+    resetMessages();
     try {
       await request("/auth/otp/request", { phone: otpForm.phone });
       setOtpRequested(true);
+      setStatus("OTP sent to your phone.");
     } catch (err) {
       setError(err.message);
     } finally {
@@ -99,10 +102,10 @@ export default function AuthPage({ onAuthSuccess }) {
     }
   }
 
-  async function verifyOtp(event) {
+  async function verifyLoginOtp(event) {
     event.preventDefault();
     setLoading(true);
-    setError("");
+    resetMessages();
     try {
       const data = await request("/auth/otp/verify", {
         phone: otpForm.phone,
@@ -116,76 +119,198 @@ export default function AuthPage({ onAuthSuccess }) {
     }
   }
 
+  async function requestSignupOtp(event) {
+    event.preventDefault();
+    setLoading(true);
+    resetMessages();
+    try {
+      await request("/auth/signup/otp/request", { phone: signupForm.phone });
+      setSignupOtpRequested(true);
+      setStatus("Signup OTP sent. Enter code to complete registration.");
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleSignup(event) {
+    event.preventDefault();
+    setLoading(true);
+    resetMessages();
+    try {
+      if (!signupOtpRequested) {
+        throw new Error("Request OTP first to verify your phone number.");
+      }
+      if (!signupForm.otpCode.trim()) {
+        throw new Error("Enter the OTP sent to your phone.");
+      }
+
+      await request("/auth/signup", {
+        name: signupForm.name,
+        phone: signupForm.phone,
+        email: signupForm.email,
+        password: signupForm.password,
+        role: signupForm.role,
+        otpCode: signupForm.otpCode
+      });
+
+      const data = await request("/auth/login", {
+        phone: signupForm.phone,
+        password: signupForm.password
+      });
+      onAuthSuccess(data);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function requestForgotOtp(event) {
+    event.preventDefault();
+    setLoading(true);
+    resetMessages();
+    try {
+      await request("/auth/password/otp/request", { phone: forgotForm.phone });
+      setForgotOtpRequested(true);
+      setStatus("Password reset OTP sent.");
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleForgotPassword(event) {
+    event.preventDefault();
+    setLoading(true);
+    resetMessages();
+    try {
+      if (!forgotOtpRequested) {
+        throw new Error("Request OTP first.");
+      }
+      if (!forgotForm.code.trim()) {
+        throw new Error("Enter OTP code.");
+      }
+      if (forgotForm.newPassword.length < 6) {
+        throw new Error("Password must be at least 6 characters.");
+      }
+      if (forgotForm.newPassword !== forgotForm.confirmPassword) {
+        throw new Error("Passwords do not match.");
+      }
+
+      await request("/auth/password/reset", {
+        phone: forgotForm.phone,
+        code: forgotForm.code,
+        newPassword: forgotForm.newPassword
+      });
+      setStatus("Password reset successful. Please login.");
+      setMode("login");
+      setLoginMethod("password");
+      setLoginForm(prev => ({
+        ...prev,
+        phone: forgotForm.phone,
+        password: ""
+      }));
+      setForgotOtpRequested(false);
+      setForgotForm({
+        phone: forgotForm.phone,
+        code: "",
+        newPassword: "",
+        confirmPassword: ""
+      });
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
   return (
-    <div className="auth-shell">
-      <div className="auth-hero">
+    <div className="auth-shell auth-shell-modern">
+      <div className="auth-hero auth-hero-modern">
         <h1>LifeHub</h1>
         <p>
-          Unified marketplace + services + chat platform with workflow automation,
-          fair transactions, and multi-role operations.
+          Marketplace, services, chat, secure wallet, and realtime operations in one software.
         </p>
         <div className="auth-pill-row">
-          <span className="auth-pill">Realtime Messaging</span>
-          <span className="auth-pill">Geo Marketplace</span>
-          <span className="auth-pill">Workflow Engine</span>
+          <span className="auth-pill">Verified Signup OTP</span>
+          <span className="auth-pill">Secure Password Reset</span>
+          <span className="auth-pill">P2P Wallet Transfers</span>
         </div>
         <div className="auth-stat-grid">
           <div className="auth-stat-card">
-            <strong>4</strong>
-            <small>Core Modules</small>
+            <strong>Unified</strong>
+            <small>Shopping + Services + Chat</small>
           </div>
           <div className="auth-stat-card">
-            <strong>6</strong>
-            <small>User Roles</small>
+            <strong>Realtime</strong>
+            <small>Notifications and Presence</small>
           </div>
           <div className="auth-stat-card">
-            <strong>24x7</strong>
-            <small>Live Updates</small>
+            <strong>Mobile First</strong>
+            <small>Designed for easy touch usage</small>
           </div>
         </div>
       </div>
 
-      <div className="auth-card">
-        <div className="auth-tabs">
+      <div className="auth-card auth-card-modern">
+        <div className="auth-tabs auth-tabs-modern">
           <button
             type="button"
             className={mode === "login" ? "active" : ""}
-            onClick={() => setMode("login")}
+            onClick={() => switchMode("login")}
           >
             Login
           </button>
           <button
             type="button"
             className={mode === "signup" ? "active" : ""}
-            onClick={() => setMode("signup")}
+            onClick={() => switchMode("signup")}
           >
             Sign Up
+          </button>
+          <button
+            type="button"
+            className={mode === "forgot" ? "active" : ""}
+            onClick={() => switchMode("forgot")}
+          >
+            Forgot Password
           </button>
         </div>
 
         <h2>{title}</h2>
-        {error && <div className="auth-error">{error}</div>}
+        {!!error && <div className="auth-error">{error}</div>}
+        {!!status && <div className="auth-success">{status}</div>}
 
-        {mode === "login" ? (
+        {mode === "login" && (
           <>
-            <div className="auth-methods">
+            <div className="auth-methods auth-methods-modern">
               <button
                 type="button"
                 className={loginMethod === "password" ? "active" : ""}
-                onClick={() => setLoginMethod("password")}
+                onClick={() => {
+                  setLoginMethod("password");
+                  resetMessages();
+                }}
               >
-                Password
+                Password Login
               </button>
               <button
                 type="button"
                 className={loginMethod === "otp" ? "active" : ""}
-                onClick={() => setLoginMethod("otp")}
+                onClick={() => {
+                  setLoginMethod("otp");
+                  resetMessages();
+                }}
               >
-                OTP
+                OTP Login
               </button>
             </div>
+
             {loginMethod === "password" ? (
-              <form className="auth-form" onSubmit={handleLogin}>
+              <form className="auth-form auth-form-modern" onSubmit={handleLogin}>
                 <label>
                   Phone
                   <input
@@ -193,7 +318,7 @@ export default function AuthPage({ onAuthSuccess }) {
                     onChange={event =>
                       setLoginForm(prev => ({ ...prev, phone: event.target.value }))
                     }
-                    placeholder="9000000001"
+                    placeholder="+919000000001"
                     required
                   />
                 </label>
@@ -205,7 +330,7 @@ export default function AuthPage({ onAuthSuccess }) {
                     onChange={event =>
                       setLoginForm(prev => ({ ...prev, password: event.target.value }))
                     }
-                    placeholder="Your password"
+                    placeholder="Enter your password"
                     required
                   />
                 </label>
@@ -214,7 +339,10 @@ export default function AuthPage({ onAuthSuccess }) {
                 </button>
               </form>
             ) : (
-              <form className="auth-form" onSubmit={otpRequested ? verifyOtp : requestOtp}>
+              <form
+                className="auth-form auth-form-modern"
+                onSubmit={otpRequested ? verifyLoginOtp : requestLoginOtp}
+              >
                 <label>
                   Phone
                   <input
@@ -224,16 +352,13 @@ export default function AuthPage({ onAuthSuccess }) {
                       setOtpForm(prev => ({ ...prev, phone: nextPhone }));
                       if (otpRequested) {
                         setOtpRequested(false);
+                        setOtpForm(prev => ({ ...prev, code: "" }));
                       }
                     }}
-                    inputMode="tel"
                     placeholder="+919000000001"
                     required
                   />
                 </label>
-                <small>
-                  Use an international number format with country code for reliable OTP delivery.
-                </small>
                 {otpRequested && (
                   <label>
                     OTP Code
@@ -251,19 +376,26 @@ export default function AuthPage({ onAuthSuccess }) {
                   {loading
                     ? "Please wait..."
                     : otpRequested
-                      ? "Verify OTP"
-                      : "Send OTP"}
+                      ? "Verify OTP and Login"
+                      : "Send Login OTP"}
                 </button>
                 {otpRequested && (
-                  <button type="button" onClick={requestOtp} disabled={loading}>
+                  <button
+                    type="button"
+                    className="ghost-btn auth-secondary-btn"
+                    onClick={requestLoginOtp}
+                    disabled={loading}
+                  >
                     Resend OTP
                   </button>
                 )}
               </form>
             )}
           </>
-        ) : (
-          <form className="auth-form" onSubmit={handleSignup}>
+        )}
+
+        {mode === "signup" && (
+          <form className="auth-form auth-form-modern" onSubmit={handleSignup}>
             <label>
               Full Name
               <input
@@ -271,21 +403,46 @@ export default function AuthPage({ onAuthSuccess }) {
                 onChange={event =>
                   setSignupForm(prev => ({ ...prev, name: event.target.value }))
                 }
-                placeholder="Your name"
+                placeholder="Your full name"
                 required
               />
             </label>
             <label>
               Phone
-              <input
-                value={signupForm.phone}
-                onChange={event =>
-                  setSignupForm(prev => ({ ...prev, phone: event.target.value }))
-                }
-                placeholder="9000000007"
-                required
-              />
+              <div className="auth-inline-input">
+                <input
+                  value={signupForm.phone}
+                  onChange={event => {
+                    const nextPhone = event.target.value;
+                    setSignupForm(prev => ({ ...prev, phone: nextPhone, otpCode: "" }));
+                    setSignupOtpRequested(false);
+                  }}
+                  placeholder="+919000000001"
+                  required
+                />
+                <button
+                  type="button"
+                  className="ghost-btn auth-secondary-btn"
+                  onClick={requestSignupOtp}
+                  disabled={loading || !signupForm.phone.trim()}
+                >
+                  {signupOtpRequested ? "Resend OTP" : "Send OTP"}
+                </button>
+              </div>
             </label>
+            {signupOtpRequested && (
+              <label>
+                Signup OTP
+                <input
+                  value={signupForm.otpCode}
+                  onChange={event =>
+                    setSignupForm(prev => ({ ...prev, otpCode: event.target.value }))
+                  }
+                  placeholder="Enter OTP"
+                  required
+                />
+              </label>
+            )}
             <label>
               Email
               <input
@@ -305,7 +462,7 @@ export default function AuthPage({ onAuthSuccess }) {
                 onChange={event =>
                   setSignupForm(prev => ({ ...prev, password: event.target.value }))
                 }
-                placeholder="Strong password"
+                placeholder="Minimum 6 characters"
                 required
               />
             </label>
@@ -325,7 +482,90 @@ export default function AuthPage({ onAuthSuccess }) {
               </select>
             </label>
             <button type="submit" disabled={loading}>
-              {loading ? "Creating account..." : "Create Account"}
+              {loading ? "Creating account..." : "Create Verified Account"}
+            </button>
+          </form>
+        )}
+
+        {mode === "forgot" && (
+          <form
+            className="auth-form auth-form-modern"
+            onSubmit={forgotOtpRequested ? handleForgotPassword : requestForgotOtp}
+          >
+            <label>
+              Registered Phone
+              <div className="auth-inline-input">
+                <input
+                  value={forgotForm.phone}
+                  onChange={event => {
+                    const nextPhone = event.target.value;
+                    setForgotForm(prev => ({
+                      ...prev,
+                      phone: nextPhone,
+                      code: "",
+                      newPassword: "",
+                      confirmPassword: ""
+                    }));
+                    setForgotOtpRequested(false);
+                  }}
+                  placeholder="+919000000001"
+                  required
+                />
+                <button
+                  type="button"
+                  className="ghost-btn auth-secondary-btn"
+                  onClick={requestForgotOtp}
+                  disabled={loading || !forgotForm.phone.trim()}
+                >
+                  {forgotOtpRequested ? "Resend OTP" : "Send OTP"}
+                </button>
+              </div>
+            </label>
+            {forgotOtpRequested && (
+              <>
+                <label>
+                  OTP Code
+                  <input
+                    value={forgotForm.code}
+                    onChange={event =>
+                      setForgotForm(prev => ({ ...prev, code: event.target.value }))
+                    }
+                    placeholder="Enter OTP"
+                    required
+                  />
+                </label>
+                <label>
+                  New Password
+                  <input
+                    type="password"
+                    value={forgotForm.newPassword}
+                    onChange={event =>
+                      setForgotForm(prev => ({ ...prev, newPassword: event.target.value }))
+                    }
+                    placeholder="Minimum 6 characters"
+                    required
+                  />
+                </label>
+                <label>
+                  Confirm Password
+                  <input
+                    type="password"
+                    value={forgotForm.confirmPassword}
+                    onChange={event =>
+                      setForgotForm(prev => ({ ...prev, confirmPassword: event.target.value }))
+                    }
+                    placeholder="Re-enter new password"
+                    required
+                  />
+                </label>
+              </>
+            )}
+            <button type="submit" disabled={loading}>
+              {loading
+                ? "Please wait..."
+                : forgotOtpRequested
+                  ? "Reset Password"
+                  : "Request Reset OTP"}
             </button>
           </form>
         )}

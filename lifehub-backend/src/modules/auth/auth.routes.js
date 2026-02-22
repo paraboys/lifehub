@@ -6,6 +6,9 @@ import {
   logout,
   requestOtpLogin,
   loginWithOtp,
+  requestSignupOtp,
+  requestPasswordResetOtp,
+  resetPassword,
   sessions,
   revokeSession
 } from "./auth.controller.js";
@@ -21,6 +24,9 @@ router.post("/refresh", abuseGuard("auth"), refresh);
 router.post("/logout", abuseGuard("auth"), logout);
 router.post("/otp/request", authLimiter, abuseGuard("auth"), requestOtpLogin);
 router.post("/otp/verify", authLimiter, abuseGuard("auth"), loginWithOtp);
+router.post("/signup/otp/request", authLimiter, abuseGuard("auth"), requestSignupOtp);
+router.post("/password/otp/request", authLimiter, abuseGuard("auth"), requestPasswordResetOtp);
+router.post("/password/reset", authLimiter, abuseGuard("auth"), resetPassword);
 router.get("/sessions", authenticate, abuseGuard("auth"), sessions);
 router.delete("/sessions/:sessionId", authenticate, abuseGuard("auth"), revokeSession);
 

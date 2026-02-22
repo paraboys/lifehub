@@ -1,8 +1,9 @@
 import prisma from "../../config/db.js";
 import { eventBus } from "../../common/events/eventBus.js";
-import { getUserSettings } from "../users/user.settings.store.js";
+import { findUserIdByUpiId, getUserSettings } from "../users/user.settings.store.js";
 import { createNotification } from "../notifications/notification.service.js";
 import { createExternalPayout } from "../payments/payment.gateway.js";
+import { buildPhoneCandidates } from "../auth/otp.service.js";
 
 const EPSILON = 0.0001;
 
@@ -20,6 +21,10 @@ function toAmount(value) {
 
 function lockReason(referenceId, prefix = "ORDER_ESCROW") {
   return `${prefix}:${referenceId}`;
+}
+
+function normalizeUpiId(value) {
+  return String(value || "").trim().toLowerCase();
 }
 
 async function ensureWalletTx(tx, userId) {
@@ -151,6 +156,229 @@ export async function getPaymentOptions({ userId, shopId }) {
           ownerPhone: shop.users?.phone || null
         }
       : null
+  };
+}
+
+export async function getWalletReceiveProfile({ userId }) {
+  const uid = toBigInt(userId);
+  const [user, settings] = await Promise.all([
+    prisma.users.findUnique({
+      where: { id: uid },
+      select: { id: true, name: true, phone: true }
+    }),
+    getUserSettings(uid)
+  ]);
+
+  if (!user) {
+    throw new Error("User not found");
+  }
+
+  const upiId = normalizeUpiId(
+    settings?.payments?.upiId
+    || (user.phone ? `${String(user.phone).replace(/\s+/g, "")}@lifehub` : `${String(uid)}@lifehub`)
+  );
+  const upiUri = `upi://pay?pa=${encodeURIComponent(upiId)}&pn=${encodeURIComponent(user.name || "LifeHub User")}&cu=INR`;
+  const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=280x280&data=${encodeURIComponent(upiUri)}`;
+
+  return {
+    receiver: {
+      id: user.id,
+      name: user.name,
+      phone: user.phone
+    },
+    upiId,
+    upiUri,
+    qrCodeUrl
+  };
+}
+
+async function resolveP2PRecipient({ toPhone, toUpiId }) {
+  if (!toPhone && !toUpiId) {
+    throw new Error("Provide recipient phone or UPI ID");
+  }
+
+  if (toPhone) {
+    const candidates = buildPhoneCandidates(toPhone);
+    if (!candidates.length) {
+      throw new Error("Recipient phone is invalid");
+    }
+    const user = await prisma.users.findFirst({
+      where: {
+        phone: { in: candidates }
+      },
+      select: {
+        id: true,
+        name: true,
+        phone: true
+      }
+    });
+    if (!user) {
+      throw new Error("Recipient account not found for this phone number");
+    }
+    return {
+      user,
+      channel: "PHONE"
+    };
+  }
+
+  const normalizedUpiId = normalizeUpiId(toUpiId);
+  if (!normalizedUpiId) {
+    throw new Error("Recipient UPI ID is required");
+  }
+
+  let mappedUserId = await findUserIdByUpiId(normalizedUpiId);
+  if (!mappedUserId) {
+    const localPart = normalizedUpiId.split("@")[0];
+    if (/^\d{10,15}$/.test(localPart)) {
+      const candidates = buildPhoneCandidates(localPart);
+      const byPhone = await prisma.users.findFirst({
+        where: {
+          phone: { in: candidates }
+        },
+        select: { id: true }
+      });
+      mappedUserId = byPhone?.id ? String(byPhone.id) : null;
+    }
+  }
+
+  if (!mappedUserId) {
+    throw new Error("Recipient account not found for this UPI ID");
+  }
+
+  const user = await prisma.users.findUnique({
+    where: { id: toBigInt(mappedUserId) },
+    select: {
+      id: true,
+      name: true,
+      phone: true
+    }
+  });
+  if (!user) {
+    throw new Error("Recipient account not found");
+  }
+
+  return {
+    user,
+    channel: "UPI"
+  };
+}
+
+export async function transferWalletP2P({
+  fromUserId,
+  toPhone,
+  toUpiId,
+  amount,
+  note
+}) {
+  const senderId = toBigInt(fromUserId);
+  const normalizedAmount = toAmount(amount);
+  const transferNote = String(note || "").trim();
+  if (transferNote.length > 240) {
+    throw new Error("Transfer note must be 240 characters or less");
+  }
+
+  const { user: recipient, channel } = await resolveP2PRecipient({
+    toPhone,
+    toUpiId
+  });
+  if (!recipient?.id) {
+    throw new Error("Recipient account not found");
+  }
+  if (String(recipient.id) === String(senderId)) {
+    throw new Error("You cannot transfer money to yourself");
+  }
+
+  const transaction = await prisma.$transaction(async tx => {
+    const senderWallet = await ensureWalletTx(tx, senderId);
+    await ensureWalletTx(tx, recipient.id);
+    const senderBalance = Number(senderWallet.balance || 0);
+    if (senderBalance + EPSILON < normalizedAmount) {
+      throw new Error("Insufficient wallet balance");
+    }
+
+    await tx.wallets.update({
+      where: { user_id: senderId },
+      data: {
+        balance: { decrement: normalizedAmount }
+      }
+    });
+
+    await tx.wallets.update({
+      where: { user_id: recipient.id },
+      data: {
+        balance: { increment: normalizedAmount }
+      }
+    });
+
+    return tx.transactions.create({
+      data: {
+        from_wallet: senderId,
+        to_wallet: recipient.id,
+        amount: normalizedAmount,
+        transaction_type: "P2P_TRANSFER",
+        status: "SUCCESS",
+        reference_id: recipient.id
+      }
+    });
+  });
+
+  eventBus.emit("WALLET.P2P_TRANSFER", {
+    fromUserId: senderId,
+    toUserId: recipient.id,
+    amount: normalizedAmount,
+    transactionId: transaction.id
+  });
+
+  await Promise.all([
+    createNotification({
+      userId: senderId,
+      eventType: "WALLET.P2P_TRANSFER.SENT",
+      priority: "MEDIUM",
+      payload: {
+        toUserId: String(recipient.id),
+        amount: normalizedAmount,
+        transactionId: String(transaction.id),
+        channel
+      },
+      channels: ["IN_APP", "PUSH"]
+    }),
+    createNotification({
+      userId: recipient.id,
+      eventType: "WALLET.P2P_TRANSFER.RECEIVED",
+      priority: "MEDIUM",
+      payload: {
+        fromUserId: String(senderId),
+        amount: normalizedAmount,
+        transactionId: String(transaction.id),
+        channel
+      },
+      channels: ["IN_APP", "PUSH", "SMS"]
+    })
+  ]).catch(() => {});
+
+  await prisma.analytics_events.create({
+    data: {
+      event_type: "WALLET.P2P_TRANSFER",
+      entity_type: "TRANSACTION",
+      entity_id: transaction.id,
+      user_id: senderId,
+      metadata: {
+        toUserId: String(recipient.id),
+        amount: normalizedAmount,
+        note: transferNote || null,
+        channel
+      }
+    }
+  }).catch(() => {});
+
+  return {
+    transaction,
+    recipient: {
+      id: recipient.id,
+      name: recipient.name,
+      phone: recipient.phone
+    },
+    channel
   };
 }
 

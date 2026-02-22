@@ -1,7 +1,7 @@
 import prisma from "../../config/db.js";
 import { generateAccessToken, generateRefreshToken } from "../../common/authUtils.js";
 import * as service from "./auth.service.js";
-import { buildPhoneCandidates, sendOTP, verifyOTP } from "./otp.service.js";
+import { OTP_PURPOSE, sendOTP, verifyOTP } from "./otp.service.js";
 
 const publicUser = (u) => ({
   id: u.id.toString(),
@@ -19,6 +19,17 @@ const publicUser = (u) => ({
 
 export const signup = async (req, res) => {
   try {
+    const otpCode = String(req.body?.otpCode || req.body?.otp || "").trim();
+    if (!req.body?.phone) {
+      throw new Error("phone is required");
+    }
+    if (!otpCode) {
+      throw new Error("OTP code is required for signup");
+    }
+    await verifyOTP(req.body.phone, otpCode, {
+      purpose: OTP_PURPOSE.SIGNUP
+    });
+
     const user = await service.signupUser(req.body);
 
     res.status(201).json({
@@ -70,7 +81,10 @@ export const requestOtpLogin = async (req,res)=>{
     if (!req.body?.phone) {
       throw new Error("phone is required");
     }
-    await sendOTP(req.body.phone);
+    await sendOTP(req.body.phone, {
+      purpose: OTP_PURPOSE.LOGIN,
+      requireUser: true
+    });
     res.json({message:"OTP sent"});
   }catch(e){
     res.status(400).json({error:e.message});
@@ -85,19 +99,11 @@ export const loginWithOtp = async (req,res)=>{
     if (!req.body?.code) {
       throw new Error("code is required");
     }
-    await verifyOTP(req.body.phone, req.body.code);
-
-    const candidates = buildPhoneCandidates(req.body.phone);
-    const user = await prisma.users.findFirst({
-      where: {
-        phone: {
-          in: candidates
-        }
-      },
-      include: {
-        user_roles: { include: { roles: true } }
-      }
+    await verifyOTP(req.body.phone, req.body.code, {
+      purpose: OTP_PURPOSE.LOGIN
     });
+
+    const user = await service.findUserWithRolesByPhone(req.body.phone);
 
     if(!user) throw new Error("User not registered");
 
@@ -133,6 +139,66 @@ export const loginWithOtp = async (req,res)=>{
     });
   }catch(e){
     res.status(401).json({error:e.message});
+  }
+};
+
+export const requestSignupOtp = async (req, res) => {
+  try {
+    if (!req.body?.phone) {
+      throw new Error("phone is required");
+    }
+    await sendOTP(req.body.phone, {
+      purpose: OTP_PURPOSE.SIGNUP,
+      requireUser: false,
+      requireMissingUser: true
+    });
+    res.json({ message: "Signup OTP sent" });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+};
+
+export const requestPasswordResetOtp = async (req, res) => {
+  try {
+    if (!req.body?.phone) {
+      throw new Error("phone is required");
+    }
+    await sendOTP(req.body.phone, {
+      purpose: OTP_PURPOSE.PASSWORD_RESET,
+      requireUser: true
+    });
+    res.json({ message: "Password reset OTP sent" });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+};
+
+export const resetPassword = async (req, res) => {
+  try {
+    const phone = String(req.body?.phone || "").trim();
+    const code = String(req.body?.code || "").trim();
+    const newPassword = String(req.body?.newPassword || "");
+    if (!phone) {
+      throw new Error("phone is required");
+    }
+    if (!code) {
+      throw new Error("code is required");
+    }
+    if (!newPassword) {
+      throw new Error("newPassword is required");
+    }
+
+    await verifyOTP(phone, code, {
+      purpose: OTP_PURPOSE.PASSWORD_RESET
+    });
+    await service.resetPasswordByPhone({
+      phone,
+      newPassword
+    });
+
+    res.json({ message: "Password reset successful. Please login with your new password." });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
   }
 };
 

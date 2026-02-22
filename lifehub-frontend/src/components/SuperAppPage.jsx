@@ -456,6 +456,15 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
   const [transactions, setTransactions] = useState([]);
   const [topupAmount, setTopupAmount] = useState("500");
   const [paymentIntent, setPaymentIntent] = useState(null);
+  const [transferBusy, setTransferBusy] = useState(false);
+  const [transferForm, setTransferForm] = useState({
+    recipientType: "phone",
+    toPhone: "",
+    toUpiId: "",
+    amount: "",
+    note: ""
+  });
+  const [receiveProfile, setReceiveProfile] = useState(null);
   const [checkoutMode, setCheckoutMode] = useState("RAZORPAY");
   const [pendingOrderAfterPayment, setPendingOrderAfterPayment] = useState(false);
   const [deliveryOtpInput, setDeliveryOtpInput] = useState("");
@@ -1774,12 +1783,59 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
   }
 
   async function loadWallet() {
-    const [summary, txRows] = await Promise.all([
+    const [summary, txRows, receive] = await Promise.all([
       api("/transactions/wallet"),
-      api("/transactions?limit=50")
+      api("/transactions?limit=50"),
+      api("/transactions/wallet/receive").catch(() => null)
     ]);
     setWalletSummary(summary);
     setTransactions(txRows.transactions || []);
+    setReceiveProfile(receive);
+  }
+
+  async function transferWalletBalance() {
+    const amount = Number(transferForm.amount || 0);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setError("Enter a valid transfer amount.");
+      return;
+    }
+    if (transferForm.recipientType === "phone" && !transferForm.toPhone.trim()) {
+      setError("Recipient phone is required.");
+      return;
+    }
+    if (transferForm.recipientType === "upi" && !transferForm.toUpiId.trim()) {
+      setError("Recipient UPI ID is required.");
+      return;
+    }
+
+    setTransferBusy(true);
+    setError("");
+    try {
+      const payload = await api("/transactions/transfer", {
+        method: "POST",
+        body: JSON.stringify({
+          toPhone: transferForm.recipientType === "phone" ? transferForm.toPhone : undefined,
+          toUpiId: transferForm.recipientType === "upi" ? transferForm.toUpiId : undefined,
+          amount,
+          note: transferForm.note
+        })
+      });
+
+      setTransferForm(prev => ({
+        ...prev,
+        amount: "",
+        note: "",
+        toPhone: prev.recipientType === "phone" ? prev.toPhone : "",
+        toUpiId: prev.recipientType === "upi" ? prev.toUpiId : ""
+      }));
+      setToast(`Transferred ${toCurrency(amount)} to ${payload?.recipient?.name || "recipient"}.`);
+      setTimeout(() => setToast(""), 3000);
+      await loadWallet();
+    } catch (err) {
+      setError(err.message || "Transfer failed");
+    } finally {
+      setTransferBusy(false);
+    }
   }
 
   async function loadUserSettings() {
@@ -3972,6 +4028,76 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
               </small>
             </div>
           )}
+          <div className="divider" />
+          <h3>Send Money</h3>
+          <div className="field-row">
+            <select
+              value={transferForm.recipientType}
+              onChange={event =>
+                setTransferForm(prev => ({
+                  ...prev,
+                  recipientType: event.target.value
+                }))
+              }
+            >
+              <option value="phone">Transfer to phone</option>
+              <option value="upi">Transfer to UPI ID</option>
+            </select>
+            {transferForm.recipientType === "phone" ? (
+              <input
+                value={transferForm.toPhone}
+                onChange={event =>
+                  setTransferForm(prev => ({ ...prev, toPhone: event.target.value }))
+                }
+                placeholder="Recipient phone"
+              />
+            ) : (
+              <input
+                value={transferForm.toUpiId}
+                onChange={event =>
+                  setTransferForm(prev => ({ ...prev, toUpiId: event.target.value }))
+                }
+                placeholder="Recipient UPI ID (example@bank)"
+              />
+            )}
+          </div>
+          <div className="field-row">
+            <input
+              value={transferForm.amount}
+              onChange={event =>
+                setTransferForm(prev => ({ ...prev, amount: event.target.value }))
+              }
+              placeholder="Amount"
+            />
+            <input
+              value={transferForm.note}
+              onChange={event =>
+                setTransferForm(prev => ({ ...prev, note: event.target.value }))
+              }
+              placeholder="Note (optional)"
+            />
+            <button onClick={transferWalletBalance} disabled={transferBusy}>
+              {transferBusy ? "Transferring..." : "Send"}
+            </button>
+          </div>
+          <div className="divider" />
+          <h3>Receive Money</h3>
+          <div className="item-card wallet-receive-card">
+            <small>Your UPI ID</small>
+            <strong>{receiveProfile?.upiId || userSettings?.payments?.upiId || "Set UPI ID in profile settings"}</strong>
+            {!!receiveProfile?.qrCodeUrl && (
+              <img
+                src={receiveProfile.qrCodeUrl}
+                alt="Receive payment QR"
+                className="wallet-receive-qr"
+              />
+            )}
+            {!!receiveProfile?.upiUri && (
+              <small>
+                UPI URI: <code>{receiveProfile.upiUri}</code>
+              </small>
+            )}
+          </div>
           <div className="metric-grid wide">
             <div className="metric-card">
               <h3>Available</h3>
