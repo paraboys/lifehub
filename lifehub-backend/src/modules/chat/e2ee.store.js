@@ -1,6 +1,6 @@
-import { createRedisClient } from "../../config/redis.js";
+import { getSharedRedisClient } from "../../config/redis.js";
 
-const redis = createRedisClient("chat-e2ee-store");
+const redis = getSharedRedisClient();
 
 function bundleKey(userId, deviceId) {
   return `e2ee:bundle:${String(userId)}:${String(deviceId)}`;

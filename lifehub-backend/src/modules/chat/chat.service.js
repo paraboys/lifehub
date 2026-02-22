@@ -4,9 +4,9 @@ import { eventBus } from "../../common/events/eventBus.js";
 import { normalizeBigInt } from "../../common/utils/bigint.js";
 import { replayOfflineEvents } from "../../common/realtime/offlineEvents.js";
 import { createNotification } from "../notifications/notification.service.js";
-import { createRedisClient } from "../../config/redis.js";
+import { getSharedRedisClient } from "../../config/redis.js";
 
-const redis = createRedisClient("chat-service");
+const redis = getSharedRedisClient();
 const MAX_MESSAGES_PER_MIN = Number(process.env.CHAT_RATE_LIMIT_PER_MIN || 30);
 const BLOCKED_WORDS = (process.env.CHAT_BLOCKED_WORDS || "abuse,scam,fraud")
   .split(",")

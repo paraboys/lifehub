@@ -4,6 +4,7 @@ import { logger } from "../common/observability/logger.js";
 const REDIS_URL = process.env.REDIS_URL || "redis://localhost:6379";
 const REDIS_ERROR_LOG_COOLDOWN_MS = 60 * 1000;
 const lastRedisErrorLogAt = new Map();
+let sharedCommandClient = null;
 
 function shouldLogRedisError(key) {
   const now = Date.now();
@@ -53,6 +54,12 @@ export function createRedisClient(name = "default", options = {}) {
   });
 
   return client;
+}
+
+export function getSharedRedisClient() {
+  if (sharedCommandClient) return sharedCommandClient;
+  sharedCommandClient = createRedisClient("shared-command-client");
+  return sharedCommandClient;
 }
 
 export async function probeRedisConnection() {

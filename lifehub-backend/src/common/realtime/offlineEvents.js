@@ -1,6 +1,6 @@
-import { createRedisClient } from "../../config/redis.js";
+import { getSharedRedisClient } from "../../config/redis.js";
 
-const redis = createRedisClient("realtime-offline-events");
+const redis = getSharedRedisClient();
 
 function streamKey(userId) {
   return `offline:user:${String(userId)}:events`;

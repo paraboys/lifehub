@@ -1,11 +1,11 @@
 import { normalizeBigInt } from "../utils/bigint.js";
-import { createRedisClient } from "../../config/redis.js";
+import { getSharedRedisClient } from "../../config/redis.js";
 
 let client;
 
 function redis() {
   if (client) return client;
-  client = createRedisClient("idempotency-store");
+  client = getSharedRedisClient();
   return client;
 }
 

@@ -1,7 +1,7 @@
 import { logger } from "../observability/logger.js";
-import { createRedisClient } from "../../config/redis.js";
+import { getSharedRedisClient } from "../../config/redis.js";
 
-const redis = createRedisClient("abuse-guard");
+const redis = getSharedRedisClient();
 
 const WINDOW_SECONDS = Number(process.env.ABUSE_WINDOW_SECONDS || 60);
 const LIMIT_IP = Number(process.env.ABUSE_LIMIT_IP || 120);

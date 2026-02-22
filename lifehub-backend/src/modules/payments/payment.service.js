@@ -7,9 +7,9 @@ import {
 } from "./payment.gateway.js";
 import { topupWallet } from "../transactions/transaction.service.js";
 import { eventBus } from "../../common/events/eventBus.js";
-import { createRedisClient } from "../../config/redis.js";
+import { getSharedRedisClient } from "../../config/redis.js";
 
-const redis = createRedisClient("payment-service");
+const redis = getSharedRedisClient();
 
 const INTENT_TTL_SECONDS = Math.max(Number(process.env.PAYMENT_INTENT_TTL_SECONDS || 86400), 600);
 

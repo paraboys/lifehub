@@ -15,7 +15,7 @@ import {
   refundOrderEscrow
 } from "../transactions/transaction.service.js";
 import { createNotification } from "../notifications/notification.service.js";
-import { createRedisClient } from "../../config/redis.js";
+import { getSharedRedisClient } from "../../config/redis.js";
 
 const ORDER_WORKFLOW_ID = BigInt(process.env.ORDER_WORKFLOW_ID || 1);
 const TABLE_AVAILABILITY_CACHE_TTL_MS = 60 * 1000;
@@ -23,7 +23,7 @@ let shopFeedbackTableAvailability = {
   checkedAt: 0,
   available: null
 };
-const redis = createRedisClient("orders-service");
+const redis = getSharedRedisClient();
 
 function toBigInt(id) {
   return BigInt(id);

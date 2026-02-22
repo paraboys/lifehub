@@ -11,6 +11,22 @@ import {
 
 export const WORKFLOW_QUEUE = "workflow";
 export const WORKFLOW_DLQ = "workflow-dlq";
+const AUTOMATION_SCAN_INTERVAL_MS = Math.max(
+  Number(process.env.WORKFLOW_AUTOMATION_SCAN_INTERVAL_MS || 60000),
+  15000
+);
+const SLA_CHECK_INTERVAL_MS = Math.max(
+  Number(process.env.WORKFLOW_SLA_CHECK_INTERVAL_MS || 180000),
+  30000
+);
+const STUCK_DETECTION_INTERVAL_MS = Math.max(
+  Number(process.env.WORKFLOW_STUCK_DETECTION_INTERVAL_MS || 120000),
+  30000
+);
+const NOTIFICATION_DELIVERY_SCAN_INTERVAL_MS = Math.max(
+  Number(process.env.WORKFLOW_NOTIFICATION_DELIVERY_SCAN_INTERVAL_MS || 120000),
+  30000
+);
 
 export function getWorkflowQueue() {
   return getQueue(WORKFLOW_QUEUE);
@@ -27,7 +43,7 @@ export async function ensureWorkflowSchedulers() {
     "automation-scan",
     {},
     {
-      repeat: { every: 15000 },
+      repeat: { every: AUTOMATION_SCAN_INTERVAL_MS },
       jobId: "workflow:automation-scan",
       attempts: 3,
       backoff: { type: "exponential", delay: 500 }
@@ -38,7 +54,7 @@ export async function ensureWorkflowSchedulers() {
     "sla-check",
     {},
     {
-      repeat: { every: 60000 },
+      repeat: { every: SLA_CHECK_INTERVAL_MS },
       jobId: "workflow:sla-check",
       attempts: 3,
       backoff: { type: "exponential", delay: 1000 }
@@ -49,7 +65,7 @@ export async function ensureWorkflowSchedulers() {
     "stuck-detection",
     {},
     {
-      repeat: { every: 45000 },
+      repeat: { every: STUCK_DETECTION_INTERVAL_MS },
       jobId: "workflow:stuck-detection",
       attempts: 3,
       backoff: { type: "exponential", delay: 2000 }
@@ -60,7 +76,7 @@ export async function ensureWorkflowSchedulers() {
     "notification-delivery-scan",
     {},
     {
-      repeat: { every: 30000 },
+      repeat: { every: NOTIFICATION_DELIVERY_SCAN_INTERVAL_MS },
       jobId: "workflow:notification-delivery-scan",
       attempts: 3,
       backoff: { type: "exponential", delay: 1500 }

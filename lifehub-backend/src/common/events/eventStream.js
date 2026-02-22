@@ -7,6 +7,14 @@ const STREAM_KEY = process.env.EVENT_STREAM_KEY || "lifehub:events";
 const INSTANCE_ID = process.env.SERVICE_INSTANCE_ID || `${os.hostname()}-${process.pid}`;
 const GROUP_NOTIFICATION = process.env.EVENT_GROUP_NOTIFICATION || "notification-workers";
 const GROUP_CHAT = process.env.EVENT_GROUP_CHAT || "chat-workers";
+const EVENT_STREAM_BLOCK_MS = Math.max(
+  Number(process.env.EVENT_STREAM_BLOCK_MS || 15000),
+  3000
+);
+const EVENT_STREAM_READ_COUNT = Math.max(
+  Number(process.env.EVENT_STREAM_READ_COUNT || 50),
+  1
+);
 
 let redis;
 let running = false;
@@ -58,9 +66,9 @@ async function consumeGroup(groupName, consumerName, handlers) {
       groupName,
       consumerName,
       "COUNT",
-      50,
+      EVENT_STREAM_READ_COUNT,
       "BLOCK",
-      5000,
+      EVENT_STREAM_BLOCK_MS,
       "STREAMS",
       STREAM_KEY,
       ">"
@@ -111,13 +119,17 @@ export async function startInboxConsumers({ notificationHandlers = {}, chatHandl
   running = true;
   const consumerName = INSTANCE_ID;
 
-  consumeGroup(GROUP_NOTIFICATION, `${consumerName}:notification`, notificationHandlers).catch(error => {
-    logger.error("notification_consumer_failed", { error: error.message });
-  });
+  if (Object.keys(notificationHandlers || {}).length) {
+    consumeGroup(GROUP_NOTIFICATION, `${consumerName}:notification`, notificationHandlers).catch(error => {
+      logger.error("notification_consumer_failed", { error: error.message });
+    });
+  }
 
-  consumeGroup(GROUP_CHAT, `${consumerName}:chat`, chatHandlers).catch(error => {
-    logger.error("chat_consumer_failed", { error: error.message });
-  });
+  if (Object.keys(chatHandlers || {}).length) {
+    consumeGroup(GROUP_CHAT, `${consumerName}:chat`, chatHandlers).catch(error => {
+      logger.error("chat_consumer_failed", { error: error.message });
+    });
+  }
 }
 
 export function stopInboxConsumers() {

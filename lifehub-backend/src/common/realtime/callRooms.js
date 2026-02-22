@@ -1,6 +1,6 @@
-import { createRedisClient } from "../../config/redis.js";
+import { getSharedRedisClient } from "../../config/redis.js";
 
-const redis = createRedisClient("realtime-call-rooms");
+const redis = getSharedRedisClient();
 
 function roomKey(roomId) {
   return `call:room:${roomId}:meta`;

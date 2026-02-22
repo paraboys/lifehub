@@ -1,10 +1,10 @@
-import { createRedisClient } from "../../config/redis.js";
+import { getSharedRedisClient } from "../../config/redis.js";
 
 let redis;
 
 function getRedis() {
   if (redis) return redis;
-  redis = createRedisClient("notification-preferences-store");
+  redis = getSharedRedisClient();
   return redis;
 }
 
