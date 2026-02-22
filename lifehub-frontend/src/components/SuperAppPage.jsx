@@ -398,7 +398,7 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
   const [recommendationError, setRecommendationError] = useState("");
   const [productSearchFilters, setProductSearchFilters] = useState({
     maxPrice: "",
-    minShopRating: "3",
+    minShopRating: "",
     sortBy: "fair"
   });
   const [marketCategory, setMarketCategory] = useState("all");
@@ -470,7 +470,7 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
     imageUrl: "",
     category: "",
     price: "",
-    quantity: ""
+    quantity: "1"
   });
   const [sellerProducts, setSellerProducts] = useState([]);
   const [sellerImageUploading, setSellerImageUploading] = useState(false);
@@ -1388,13 +1388,24 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
       lat: source.lat,
       lng: source.lng,
       radiusKm: source.radiusKm,
-      availableOnly: canAccess.seller ? "false" : "true",
+      availableOnly: "false",
       sortBy: "fair",
       limit: "30"
     });
     const data = await api(`/marketplace/shops/search?${query}`);
     const shopRows = data.shops || [];
     setShops(shopRows);
+    if (!shopRows.length) {
+      setSelectedShopId("");
+      setShopProducts([]);
+    } else {
+      const selectedStillVisible = shopRows.some(
+        shop => String(shop.id) === String(selectedShopId)
+      );
+      if (!selectedStillVisible) {
+        await loadShopProducts(shopRows[0].id);
+      }
+    }
     if (canAccess.seller) {
       const ownedShop = shopRows.find(shop => String(shop.ownerUserId || "") === String(user.id || ""));
       if (ownedShop && String(sellerForm.shopId || "") !== String(ownedShop.id)) {
@@ -1996,6 +2007,10 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
       setError("Enter a valid product price.");
       return;
     }
+    if (!Number.isInteger(Number(sellerForm.quantity)) || Number(sellerForm.quantity) <= 0) {
+      setError("Quantity must be at least 1 so customers can see and buy this item.");
+      return;
+    }
 
     const created = await api(`/marketplace/shops/${sellerForm.shopId || "0"}/products`, {
       method: "POST",
@@ -2006,7 +2021,7 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
         imageUrl: sellerForm.imageUrl,
         category: sellerForm.category,
         price: Number(sellerForm.price || 0),
-        quantity: Number(sellerForm.quantity || 0)
+        quantity: Number(sellerForm.quantity)
       })
     });
     const resolvedShopId = created?.shopId ? String(created.shopId) : String(sellerForm.shopId || "");
@@ -2019,7 +2034,7 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
       imageUrl: "",
       category: "",
       price: "",
-      quantity: ""
+      quantity: "1"
     }));
     await loadSellerProducts(resolvedShopId || sellerForm.shopId);
     setToast("Product added to your inventory.");

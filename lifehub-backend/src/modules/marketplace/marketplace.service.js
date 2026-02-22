@@ -987,7 +987,7 @@ export async function recommendProductsNearby({
   limit = 18
 }) {
   const nearbyShops = await searchShops({
-    availableOnly: true,
+    availableOnly: false,
     minRating: hasValue(minShopRating) ? Number(minShopRating) : undefined,
     lat,
     lng,
