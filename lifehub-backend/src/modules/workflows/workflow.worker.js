@@ -85,5 +85,11 @@ export function startWorkflowWorker() {
     );
   });
 
+  worker.on("error", err => {
+    logger.error("workflow_worker_error", {
+      error: err?.message || "Unknown worker error"
+    });
+  });
+
   return worker;
 }

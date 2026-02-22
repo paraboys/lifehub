@@ -1,8 +1,6 @@
-import IORedis from "ioredis";
+import { createRedisClient } from "../../config/redis.js";
 
-const redis = new IORedis(process.env.REDIS_URL || "redis://localhost:6379", {
-  maxRetriesPerRequest: null
-});
+const redis = createRedisClient("realtime-offline-events");
 
 function streamKey(userId) {
   return `offline:user:${String(userId)}:events`;

@@ -1,5 +1,4 @@
 import crypto from "crypto";
-import IORedis from "ioredis";
 import {
   createGatewayIntent,
   parseWebhookEvent,
@@ -8,10 +7,9 @@ import {
 } from "./payment.gateway.js";
 import { topupWallet } from "../transactions/transaction.service.js";
 import { eventBus } from "../../common/events/eventBus.js";
+import { createRedisClient } from "../../config/redis.js";
 
-const redis = new IORedis(process.env.REDIS_URL || "redis://localhost:6379", {
-  maxRetriesPerRequest: null
-});
+const redis = createRedisClient("payment-service");
 
 const INTENT_TTL_SECONDS = Math.max(Number(process.env.PAYMENT_INTENT_TTL_SECONDS || 86400), 600);
 

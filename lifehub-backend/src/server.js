@@ -33,6 +33,7 @@ import { logger } from "./common/observability/logger.js";
 import { startMediaWorker } from "./modules/media/media.worker.js";
 import { startNotificationWorker } from "./modules/notifications/notification.worker.js";
 import { startFinancialReconciliationJob } from "./modules/transactions/reconciliation.job.js";
+import { isRedisCapacityError, probeRedisConnection } from "./config/redis.js";
 
 
 
@@ -42,6 +43,33 @@ await prisma.$connect();
 logger.info("database_connected");
 initDomainSubscriptions();
 initOutboxBridge();
+
+function logBootstrapFailure(step, error) {
+  if (isRedisCapacityError(error)) {
+    logger.warn("bootstrap_step_degraded", {
+      step,
+      reason: "redis_capacity_limited",
+      error: error?.message || "Unknown Redis error"
+    });
+    return;
+  }
+
+  logger.error("bootstrap_step_failed", {
+    step,
+    error: error?.message || "Unknown startup error"
+  });
+}
+
+async function runOptionalBootstrapStep(step, fn) {
+  try {
+    await fn();
+    logger.info("bootstrap_step_ready", { step });
+    return true;
+  } catch (error) {
+    logBootstrapFailure(step, error);
+    return false;
+  }
+}
 
 const app = express();
 const server = http.createServer(app);
@@ -143,14 +171,48 @@ app.use("/api/payments", paymentRoutes);
 app.get("/metrics", metricsHandler);
 app.get("/", (_, res) => res.send("LifeHub API running"));
 
-await initWorkflowEvents();
-await startWorkflowSchedulers();
-startWorkflowWorker();
-startMediaWorker();
-startNotificationWorker();
-startFinancialReconciliationJob();
-await initInboxConsumers();
-startSloMonitor();
+const redisReady = await probeRedisConnection();
+
+if (!redisReady) {
+  logger.warn("bootstrap_running_in_degraded_mode", {
+    reason: "redis_unavailable_or_capacity_limited"
+  });
+} else {
+  await runOptionalBootstrapStep("workflow_events", async () => {
+    await initWorkflowEvents();
+  });
+
+  const queueReady = await runOptionalBootstrapStep("workflow_schedulers", async () => {
+    await startWorkflowSchedulers();
+  });
+
+  if (queueReady) {
+    await runOptionalBootstrapStep("workflow_worker", async () => {
+      startWorkflowWorker();
+    });
+    await runOptionalBootstrapStep("media_worker", async () => {
+      startMediaWorker();
+    });
+  } else {
+    logger.warn("bootstrap_queue_workers_skipped", {
+      reason: "workflow_schedulers_not_ready"
+    });
+  }
+
+  await runOptionalBootstrapStep("inbox_consumers", async () => {
+    await initInboxConsumers();
+  });
+}
+
+await runOptionalBootstrapStep("notification_worker", async () => {
+  startNotificationWorker();
+});
+await runOptionalBootstrapStep("financial_reconciliation_job", async () => {
+  startFinancialReconciliationJob();
+});
+await runOptionalBootstrapStep("slo_monitor", async () => {
+  startSloMonitor();
+});
 initSocketServer(server);
 
 const PORT = Number(process.env.PORT || 4000);

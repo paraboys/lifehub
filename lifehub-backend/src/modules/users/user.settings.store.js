@@ -1,12 +1,10 @@
-import IORedis from "ioredis";
+import { createRedisClient } from "../../config/redis.js";
 
 let redis;
 
 function getRedis() {
   if (redis) return redis;
-  redis = new IORedis(process.env.REDIS_URL || "redis://localhost:6379", {
-    maxRetriesPerRequest: null
-  });
+  redis = createRedisClient("user-settings-store");
   return redis;
 }
 

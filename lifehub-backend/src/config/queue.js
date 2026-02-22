@@ -1,13 +1,12 @@
 import { Queue } from "bullmq";
-import IORedis from "ioredis";
+import { createRedisClient } from "./redis.js";
 
 const queues = new Map();
 let sharedConnection;
 
 export function  getQueueConnection() {
   if (sharedConnection) return sharedConnection;
-  const url = process.env.REDIS_URL || "redis://localhost:6379";
-  sharedConnection = new IORedis(url, { maxRetriesPerRequest: null });
+  sharedConnection = createRedisClient("bullmq-shared-connection");
   return sharedConnection;
 }
 

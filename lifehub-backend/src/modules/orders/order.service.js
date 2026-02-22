@@ -4,7 +4,6 @@ import {
   applyEvent,
   applyTransition
 } from "../workflows/workflow.service.js";
-import IORedis from "ioredis";
 import {
   getIdempotencyResult,
   reserveIdempotency,
@@ -16,6 +15,7 @@ import {
   refundOrderEscrow
 } from "../transactions/transaction.service.js";
 import { createNotification } from "../notifications/notification.service.js";
+import { createRedisClient } from "../../config/redis.js";
 
 const ORDER_WORKFLOW_ID = BigInt(process.env.ORDER_WORKFLOW_ID || 1);
 const TABLE_AVAILABILITY_CACHE_TTL_MS = 60 * 1000;
@@ -23,9 +23,7 @@ let shopFeedbackTableAvailability = {
   checkedAt: 0,
   available: null
 };
-const redis = new IORedis(process.env.REDIS_URL || "redis://localhost:6379", {
-  maxRetriesPerRequest: null
-});
+const redis = createRedisClient("orders-service");
 
 function toBigInt(id) {
   return BigInt(id);

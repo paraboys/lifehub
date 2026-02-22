@@ -1,6 +1,6 @@
-import IORedis from "ioredis";
 import { normalizeBigInt } from "../utils/bigint.js";
 import os from "os";
+import { createRedisClient } from "../../config/redis.js";
 
 let publisher;
 let subscriber;
@@ -11,8 +11,7 @@ const instanceId =
 
 function getPublisher() {
   if (publisher) return publisher;
-  const url = process.env.REDIS_URL || "redis://localhost:6379";
-  publisher = new IORedis(url, { maxRetriesPerRequest: null });
+  publisher = createRedisClient("redis-pipeline-publisher");
   return publisher;
 }
 
@@ -31,10 +30,9 @@ export async function startRedisEventSubscriber(onEvent) {
   if (subscriber) return;
 
   eventHandler = onEvent;
-  const url = process.env.REDIS_URL || "redis://localhost:6379";
   const channel = process.env.REDIS_EVENT_CHANNEL || "lifehub.events";
 
-  subscriber = new IORedis(url, { maxRetriesPerRequest: null });
+  subscriber = createRedisClient("redis-pipeline-subscriber");
   await subscriber.subscribe(channel);
 
   subscriber.on("message", (_, rawMessage) => {

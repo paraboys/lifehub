@@ -1,7 +1,7 @@
-import IORedis from "ioredis";
 import os from "os";
 import { normalizeBigInt } from "../utils/bigint.js";
 import { logger } from "../observability/logger.js";
+import { createRedisClient } from "../../config/redis.js";
 
 const STREAM_KEY = process.env.EVENT_STREAM_KEY || "lifehub:events";
 const INSTANCE_ID = process.env.SERVICE_INSTANCE_ID || `${os.hostname()}-${process.pid}`;
@@ -13,8 +13,7 @@ let running = false;
 
 function getRedis() {
   if (redis) return redis;
-  const url = process.env.REDIS_URL || "redis://localhost:6379";
-  redis = new IORedis(url, { maxRetriesPerRequest: null });
+  redis = createRedisClient("event-stream");
   return redis;
 }
 

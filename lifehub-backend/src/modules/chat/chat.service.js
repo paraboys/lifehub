@@ -2,13 +2,11 @@ import prisma from "../../config/db.js";
 import { emitToUser } from "../../common/realtime/socketHub.js";
 import { eventBus } from "../../common/events/eventBus.js";
 import { normalizeBigInt } from "../../common/utils/bigint.js";
-import IORedis from "ioredis";
 import { replayOfflineEvents } from "../../common/realtime/offlineEvents.js";
 import { createNotification } from "../notifications/notification.service.js";
+import { createRedisClient } from "../../config/redis.js";
 
-const redis = new IORedis(process.env.REDIS_URL || "redis://localhost:6379", {
-  maxRetriesPerRequest: null
-});
+const redis = createRedisClient("chat-service");
 const MAX_MESSAGES_PER_MIN = Number(process.env.CHAT_RATE_LIMIT_PER_MIN || 30);
 const BLOCKED_WORDS = (process.env.CHAT_BLOCKED_WORDS || "abuse,scam,fraud")
   .split(",")

@@ -48,5 +48,11 @@ export function startMediaWorker() {
     });
   });
 
+  mediaWorker.on("error", err => {
+    logger.error("media_worker_error", {
+      error: err?.message || "Unknown worker error"
+    });
+  });
+
   return mediaWorker;
 }

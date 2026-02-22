@@ -13,6 +13,8 @@ import {
 import { normalizeBigInt } from "../../common/utils/bigint.js";
 import { publishOutboxEvent } from "../../common/events/eventStream.js";
 import { incWorkflowEvent } from "../../common/observability/metrics.js";
+import { logger } from "../../common/observability/logger.js";
+import { isRedisCapacityError } from "../../config/redis.js";
 
 const TOPIC_PREFIX = process.env.KAFKA_WORKFLOW_TOPIC_PREFIX || "workflow";
 
@@ -62,11 +64,23 @@ async function fanOutEvent(eventType, payload) {
 
 export async function initWorkflowEvents() {
   await initKafka();
-  await initRedisPipeline();
-  await startRedisEventSubscriber((eventType, payload) => {
-    if (!EVENT_TOPICS[eventType]) return;
-    eventBus.emit(eventType, payload);
-  });
+  try {
+    await initRedisPipeline();
+    await startRedisEventSubscriber((eventType, payload) => {
+      if (!EVENT_TOPICS[eventType]) return;
+      eventBus.emit(eventType, payload);
+    });
+  } catch (error) {
+    if (isRedisCapacityError(error)) {
+      logger.warn("workflow_events_redis_pipeline_disabled", {
+        error: error.message
+      });
+    } else {
+      logger.error("workflow_events_redis_pipeline_init_failed", {
+        error: error.message
+      });
+    }
+  }
 
   const allEvents = Object.keys(EVENT_TOPICS);
 

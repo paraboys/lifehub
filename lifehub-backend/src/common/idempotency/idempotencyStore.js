@@ -1,12 +1,11 @@
-import IORedis from "ioredis";
 import { normalizeBigInt } from "../utils/bigint.js";
+import { createRedisClient } from "../../config/redis.js";
 
 let client;
 
 function redis() {
   if (client) return client;
-  const url = process.env.REDIS_URL || "redis://localhost:6379";
-  client = new IORedis(url, { maxRetriesPerRequest: null });
+  client = createRedisClient("idempotency-store");
   return client;
 }
 
