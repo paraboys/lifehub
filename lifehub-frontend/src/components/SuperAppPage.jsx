@@ -3180,113 +3180,217 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
     const showingDetailPage = marketplaceView === "detail" && !!selectedMarketplaceDetail;
     const showingCheckoutPage = marketplaceView === "checkout";
     const showingCatalog = !showingDetailPage && !showingCheckoutPage;
+    const locationLat = Number(shopFilters.lat);
+    const locationLng = Number(shopFilters.lng);
+    const hasLocation = Number.isFinite(locationLat) && Number.isFinite(locationLng);
+    const locationLabel = hasLocation
+      ? `${locationLat.toFixed(3)}, ${locationLng.toFixed(3)}`
+      : "Set your delivery point";
+    const heroPool = (
+      dealProducts.length
+        ? dealProducts
+        : visibleShopProducts.map(product => ({
+            ...product,
+            productName: product.name,
+            shop: selectedShop || null
+          }))
+    ).filter(Boolean);
+    const heroShelfCards = [
+      { key: "trending", title: "Trending in your area", items: heroPool.slice(0, 4) },
+      { key: "price", title: "Best value picks", items: heroPool.slice(4, 8) },
+      { key: "fast", title: "Fast moving essentials", items: heroPool.slice(8, 12) },
+      { key: "restock", title: "Weekly restock list", items: heroPool.slice(12, 16) }
+    ];
 
     return (
       <section className="market-shell ecommerce-market-shell">
-        <header className="panel-card market-hero ecommerce-market-hero">
-          <div className="market-storefront-top">
-            <div>
-              <span className="market-eyebrow">Grocery and Essentials</span>
-              <h2>Shop like a real ecommerce app</h2>
-              <p>
-                Search products, compare nearby store ratings, and buy from the best fair-price shop around your live
-                location.
-              </p>
-            </div>
-            <div className="market-chip-row">
-              <span className="status-pill">Shops {shops.length}</span>
-              <span className="status-pill">Top picks {visibleRecommendedProducts.length}</span>
-              <span className="status-pill">Cart {cart.length}</span>
-            </div>
-          </div>
-          <div className="market-nav-row">
-            <button
-              type="button"
-              className={showingCatalog ? "active" : ""}
-              onClick={() => setMarketplaceView("catalog")}
-            >
-              Browse Feed
+        <header className="panel-card market-hero ecommerce-market-hero market-command-hub">
+          <div className="marketplace-masthead">
+            <button type="button" className="market-brand-block" onClick={() => setMarketplaceView("catalog")}>
+              <span className="market-brand-logo">LIFEHUB</span>
+              <span className="market-brand-subtitle">Grocery Marketplace</span>
             </button>
-            <button
-              type="button"
-              className={showingDetailPage ? "active" : ""}
-              onClick={() => {
-                if (selectedMarketplaceDetail) {
-                  setMarketplaceView("detail");
-                  return;
-                }
-                setError("Open a product first to view full details.");
-              }}
-            >
-              Product Page
+            <button type="button" className="market-location-card" onClick={useCurrentLocation}>
+              <small>Delivering to</small>
+              <strong>{locationLabel}</strong>
             </button>
-            <button
-              type="button"
-              className={showingCheckoutPage ? "active" : ""}
-              onClick={goToMarketplaceCheckout}
-            >
-              Checkout Page
-            </button>
-          </div>
-          <div className="market-search-wrap commerce-search">
-            <UiIcon name="search" />
-            <input
-              value={productQuery}
-              onChange={event => setProductQuery(event.target.value)}
-              placeholder="Search grocery items, brands, categories..."
-            />
-            <button
-              type="button"
-              onClick={() => {
-                setMarketplaceView("catalog");
-                searchProductsNearby(productQuery);
-              }}
-            >
-              Search
-            </button>
-          </div>
-          <div className="category-nav-row storefront-categories">
-            {marketplaceCategories.map(category => (
+            <div className="market-search-bar-hero">
+              <select value={marketCategory} onChange={event => setMarketCategory(event.target.value)}>
+                {marketplaceCategories.map(category => (
+                  <option key={category} value={category}>
+                    {category === "all" ? "All" : titleCase(category)}
+                  </option>
+                ))}
+              </select>
+              <div className="market-search-input-wrap">
+                <UiIcon name="search" />
+                <input
+                  value={productQuery}
+                  onChange={event => setProductQuery(event.target.value)}
+                  onKeyDown={event => {
+                    if (event.key !== "Enter") return;
+                    setMarketplaceView("catalog");
+                    searchProductsNearby(productQuery);
+                  }}
+                  placeholder="Search grocery products, brands, and categories"
+                />
+              </div>
               <button
-                key={category}
                 type="button"
-                className={`category-chip ${marketCategory === category ? "active" : ""}`}
                 onClick={() => {
                   setMarketplaceView("catalog");
-                  setMarketCategory(category);
+                  searchProductsNearby(productQuery);
                 }}
               >
-                {category === "all" ? "All Categories" : titleCase(category)}
+                Search
               </button>
-            ))}
-          </div>
-          <div className="market-deal-carousel">
-            {dealProducts.map(item => (
+            </div>
+            <div className="market-head-actions">
+              <button type="button" className={showingCatalog ? "active" : ""} onClick={() => setMarketplaceView("catalog")}>
+                Browse
+              </button>
               <button
-                key={`deal_${item.productId}_${item?.shop?.id || "shop"}`}
                 type="button"
-                className="market-deal-card"
-                onClick={async () => {
-                  await openMarketplaceProduct(item, item?.shop || null);
+                className={showingDetailPage ? "active" : ""}
+                onClick={() => {
+                  if (selectedMarketplaceDetail) {
+                    setMarketplaceView("detail");
+                    return;
+                  }
+                  setError("Open a product first to view full details.");
                 }}
               >
-                {!!item.imageUrl ? (
-                  <img src={item.imageUrl} alt={item.productName} className="market-result-thumb" />
-                ) : (
-                  <div className="market-result-thumb market-thumb-placeholder">
-                    <span>{initials(item.productName)}</span>
-                  </div>
-                )}
-                <div>
-                  <strong>{item.productName}</strong>
-                  <small>{item?.shop?.shopName || "Nearby shop"}</small>
-                  <small className="market-deal-price">{toCurrency(item.price)}</small>
-                </div>
+                Product Page
               </button>
+              <button type="button" className={showingCheckoutPage ? "active" : ""} onClick={goToMarketplaceCheckout}>
+                Cart {cart.length}
+              </button>
+            </div>
+          </div>
+
+          <div className="marketplace-department-row">
+            <button
+              type="button"
+              className={`market-department-chip ${marketCategory === "all" ? "active" : ""}`}
+              onClick={() => {
+                setMarketCategory("all");
+                setMarketplaceView("catalog");
+              }}
+            >
+              All Departments
+            </button>
+            {marketplaceCategories
+              .filter(category => category !== "all")
+              .slice(0, 10)
+              .map(category => (
+                <button
+                  key={category}
+                  type="button"
+                  className={`market-department-chip ${marketCategory === category ? "active" : ""}`}
+                  onClick={() => {
+                    setMarketplaceView("catalog");
+                    setMarketCategory(category);
+                  }}
+                >
+                  {titleCase(category)}
+                </button>
+              ))}
+          </div>
+
+          <div className="market-front-banner-grid">
+            <article className="market-front-banner">
+              <span className="market-eyebrow">Grocery and Essentials</span>
+              <h2>Shop like a modern ecommerce product</h2>
+              <p>
+                Search nearby inventory, compare real shop ratings and pricing, and order from verified stores around your
+                location.
+              </p>
+              <div className="market-chip-row">
+                <span className="status-pill">Nearby Shops {shops.length}</span>
+                <span className="status-pill">Top Picks {visibleRecommendedProducts.length}</span>
+                <span className="status-pill">Cart Items {cart.length}</span>
+              </div>
+              <div className="market-banner-actions">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMarketplaceView("catalog");
+                    searchProductsNearby(productQuery);
+                  }}
+                >
+                  Explore Deals
+                </button>
+                <button type="button" className="ghost-btn" onClick={searchShops}>
+                  Refresh Nearby Shops
+                </button>
+              </div>
+            </article>
+            <div className="market-fast-deals">
+              {dealProducts.slice(0, 3).map(item => (
+                <button
+                  key={`deal_feature_${item.productId}_${item?.shop?.id || "shop"}`}
+                  type="button"
+                  className="market-fast-deal-card"
+                  onClick={async () => {
+                    await openMarketplaceProduct(item, item?.shop || null);
+                  }}
+                >
+                  {!!item.imageUrl ? (
+                    <img src={item.imageUrl} alt={item.productName} className="market-result-thumb" />
+                  ) : (
+                    <div className="market-result-thumb market-thumb-placeholder">
+                      <span>{initials(item.productName)}</span>
+                    </div>
+                  )}
+                  <div>
+                    <strong>{item.productName}</strong>
+                    <small>{item?.shop?.shopName || "Nearby shop"}</small>
+                    <small className="market-deal-price">{toCurrency(item.price)}</small>
+                  </div>
+                </button>
+              ))}
+              {!dealProducts.length && (
+                <div className="empty-line">Top deal cards will appear when recommendation data is available.</div>
+              )}
+            </div>
+          </div>
+
+          <div className="market-hero-shelf-grid">
+            {heroShelfCards.map(section => (
+              <article key={section.key} className="market-shelf-card">
+                <div className="market-panel-head">
+                  <h3>{section.title}</h3>
+                </div>
+                <div className="market-shelf-items">
+                  {section.items.map(item => (
+                    <button
+                      key={`hero_shelf_${section.key}_${item?.productId || item?.id || item?.productName}`}
+                      type="button"
+                      className="market-shelf-item"
+                      onClick={async () => {
+                        await openMarketplaceProduct(item, item?.shop || selectedShop || null);
+                      }}
+                    >
+                      {!!item?.imageUrl ? (
+                        <img
+                          src={item.imageUrl}
+                          alt={item?.productName || item?.name || "Product"}
+                          className="market-shelf-thumb"
+                        />
+                      ) : (
+                        <div className="market-shelf-thumb market-thumb-placeholder">
+                          <span>{initials(item?.productName || item?.name)}</span>
+                        </div>
+                      )}
+                      <small>{item?.productName || item?.name || "Product"}</small>
+                    </button>
+                  ))}
+                  {!section.items.length && (
+                    <div className="empty-line">Products appear here as soon as nearby inventory loads.</div>
+                  )}
+                </div>
+              </article>
             ))}
-            {!dealProducts.length && (
-              <div className="empty-line">Top deals will appear after nearby recommendation indexing.</div>
-            )}
           </div>
         </header>
 
