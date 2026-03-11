@@ -4188,3 +4188,89 @@ textarea {
   --accent: #16c79a;
   --accent-warm: #f1a24a;
 }
+
+/* Compact Layout Pass */
+.superapp-shell {
+  gap: 12px;
+}
+
+.main-stage {
+  gap: 10px;
+}
+
+.topbar {
+  padding: 12px;
+  border-radius: 20px;
+  grid-template-columns: 1fr;
+  grid-auto-rows: auto;
+}
+
+.topbar-row {
+  gap: 10px;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.topbar-main p {
+  max-width: 520px;
+}
+
+.topbar-meta-card {
+  padding: 8px;
+  border-radius: 16px;
+  justify-self: end;
+}
+
+.topbar-meta-card .chip-row {
+  gap: 6px;
+}
+
+.chip,
+.chip-button,
+.chip-live {
+  padding: 4px 8px;
+  font-size: 11px;
+}
+
+.command-deck {
+  padding: 8px 10px;
+  border-radius: 14px;
+}
+
+.panel-card {
+  padding: 12px;
+  border-radius: 18px;
+  gap: 8px;
+}
+
+.workspace-grid,
+.metric-grid,
+.home-action-grid {
+  gap: 10px;
+}
+
+.home-action-tile {
+  padding: 10px;
+  border-radius: 14px;
+}
+
+.item-card {
+  padding: 8px;
+  border-radius: 10px;
+}
+
+.field-row {
+  gap: 6px;
+}
+
+.chat-shell {
+  min-height: 68vh;
+}
+
+.chat-sidebar,
+.chat-thread {
+  padding: 12px;
+}
+
+.chat-list-item {
+  padding: 8px;
+}
