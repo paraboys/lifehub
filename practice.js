@@ -52,17 +52,56 @@
 
 
 
-const getdata =()=>{
-return new Promise((res,rej)=>{
-    setTimeout(() => {
-        console.log("i am a promise");
-        res("success");
-    }, 1000);   
-})}
+// const getdata =()=>{
+// return new Promise((res,rej)=>{
+//     setTimeout(() => {
+//         console.log("i am a promise");
+//         res("success");
+//     }, 1000);   
+// })}
 
-let data = getdata();
-data.then((res)=>{
- console.log(res);
+// let data = getdata();
+// data.then((res)=>{
+//  console.log(res);
+// })
+
+
+const fn =() => new Promise((res,rej)=>{
+   const resu= {
+    "name":"paras",
+    "age":22
+   }
+   const st=200;
+   if(st==200){
+   res(resu);
+   }
+   else rej("error");
+}  )
+
+
+const retry = (fn, retries=3, delay=1000) => {
+ return new Promise ((res, rej)=>{
+    const attempt = () => {
+        fn()
+        .then(res)
+        .catch((err)=>{
+            if(retries === 0){
+                rej(err);
+            }
+            else{
+                retries--;
+                setTimeout(attempt, delay);
+            }
+        })
+    }
+    attempt();
+
+
+ })
+};
+
+retry(fn, 3, 1000).then((res)=>{
+    console.log(res);
+}).catch((err)=>{
+    console.log(err);
 })
-
-

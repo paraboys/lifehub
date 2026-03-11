@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { io } from "socket.io-client";
 import WorkflowGraph from "./WorkflowGraph.jsx";
 
@@ -130,6 +130,9 @@ function messagePreview(value, max = 54) {
 
 function ratingStars(value) {
   const normalized = Math.max(0, Math.min(5, Math.round(Number(value || 0))));
+  const full = "\u2605";
+  const empty = "\u2606";
+  return `${full.repeat(normalized)}${empty.repeat(5 - normalized)}`;
   return `${"★".repeat(normalized)}${"☆".repeat(5 - normalized)}`;
 }
 
@@ -350,6 +353,8 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
   const [loading, setLoading] = useState(false);
 
   const [home, setHome] = useState(null);
+  const [commandOpen, setCommandOpen] = useState(false);
+  const [commandQuery, setCommandQuery] = useState("");
 
   const [conversations, setConversations] = useState([]);
   const [selectedConversationId, setSelectedConversationId] = useState("");
@@ -509,6 +514,7 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
   const localVideoRef = useRef(null);
   const remoteVideoRef = useRef(null);
   const threadSearchInputRef = useRef(null);
+  const commandInputRef = useRef(null);
   const deviceId = useMemo(() => getOrCreateDeviceId(), []);
   const canUseDeviceContacts = typeof navigator !== "undefined" && !!navigator.contacts?.select;
   const seenStoreKey = useMemo(
@@ -617,9 +623,13 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
     () => conversations.find(conv => String(conv.id) === String(selectedConversationId)) || null,
     [conversations, selectedConversationId]
   );
+  const deferredChatSearch = useDeferredValue(chatSearch);
+  const deferredThreadSearch = useDeferredValue(threadSearch);
+  const deferredCommandQuery = useDeferredValue(commandQuery);
+  const deferredProductQuery = useDeferredValue(productQuery);
 
   const filteredConversations = useMemo(() => {
-    if (!chatSearch.trim()) return conversations;
+    if (!deferredChatSearch.trim()) return conversations;
     return conversations.filter(conv =>
       [
         conv.id,
@@ -628,10 +638,10 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
       ]
         .filter(Boolean)
         .some(value =>
-          String(value).toLowerCase().includes(chatSearch.trim().toLowerCase())
+          String(value).toLowerCase().includes(deferredChatSearch.trim().toLowerCase())
         )
     );
-  }, [conversations, chatSearch]);
+  }, [conversations, deferredChatSearch]);
   const totalUnreadChats = useMemo(
     () => conversations.reduce((sum, conv) => sum + Number(conv.unreadCount || 0), 0),
     [conversations]
@@ -652,6 +662,165 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
         })),
     [tabs, totalUnreadChats, notifications.length]
   );
+  const homeActions = useMemo(() => {
+    const actions = [
+      {
+        id: "home-marketplace",
+        label: "Order groceries",
+        description: "Browse nearby shops and add items to cart.",
+        icon: "cart",
+        tone: "primary",
+        run: () => {
+          setMarketplaceView("catalog");
+          setActiveTab("marketplace");
+        }
+      },
+      {
+        id: "home-services",
+        label: "Book a service",
+        description: "Find skilled providers with realtime availability.",
+        icon: "tool",
+        tone: "accent",
+        run: () => setActiveTab("services")
+      },
+      {
+        id: "home-chat",
+        label: "Open messenger",
+        description: "Start a chat or check unread messages.",
+        icon: "chat",
+        tone: "dark",
+        run: () => setActiveTab("chat")
+      },
+      {
+        id: "home-orders",
+        label: "Track orders",
+        description: "Follow delivery status, OTP, and feedback.",
+        icon: "check",
+        tone: "neutral",
+        run: () => setActiveTab("orders")
+      },
+      {
+        id: "home-wallet",
+        label: "Top up wallet",
+        description: "Manage balance, transfers, and settlements.",
+        icon: "dots",
+        tone: "neutral",
+        run: () => setActiveTab("wallet")
+      }
+    ];
+
+    if (canAccess.seller) {
+      actions.push({
+        id: "home-seller",
+        label: "Manage inventory",
+        description: "Upload products and track stock health.",
+        icon: "plus",
+        tone: "primary",
+        run: () => setActiveTab("seller")
+      });
+    }
+    if (canAccess.ops) {
+      actions.push({
+        id: "home-ops",
+        label: "Open ops console",
+        description: "Workflow graphs and reconciliation controls.",
+        icon: "settings",
+        tone: "dark",
+        run: () => setActiveTab("ops")
+      });
+    }
+
+    actions.push({
+      id: "home-profile",
+      label: "Update profile",
+      description: "Privacy, notifications, and security.",
+      icon: "user",
+      tone: "neutral",
+      run: () => setActiveTab("profile")
+    });
+
+    return actions;
+  }, [canAccess.ops, canAccess.seller, setActiveTab, setMarketplaceView]);
+  const commandActions = useMemo(() => {
+    const base = [
+      {
+        id: "cmd-marketplace",
+        label: "Open Marketplace",
+        hint: "Groceries, shops, and product search",
+        run: () => {
+          setMarketplaceView("catalog");
+          setActiveTab("marketplace");
+        }
+      },
+      {
+        id: "cmd-services",
+        label: "Open Services",
+        hint: "Book nearby providers",
+        run: () => setActiveTab("services")
+      },
+      {
+        id: "cmd-chat",
+        label: "Open Messenger",
+        hint: "Chat, calls, and presence",
+        run: () => setActiveTab("chat")
+      },
+      {
+        id: "cmd-orders",
+        label: "Open Orders",
+        hint: "Track delivery and feedback",
+        run: () => setActiveTab("orders")
+      },
+      {
+        id: "cmd-wallet",
+        label: "Open Wallet",
+        hint: "Topups and transfers",
+        run: () => setActiveTab("wallet")
+      },
+      {
+        id: "cmd-profile",
+        label: "Open Profile",
+        hint: "Preferences and security",
+        run: () => setActiveTab("profile")
+      }
+    ];
+
+    if (canAccess.seller) {
+      base.push({
+        id: "cmd-seller",
+        label: "Open Seller Hub",
+        hint: "Inventory and catalog",
+        run: () => setActiveTab("seller")
+      });
+    }
+    if (canAccess.ops) {
+      base.push({
+        id: "cmd-ops",
+        label: "Open Ops Console",
+        hint: "Workflow operations",
+        run: () => setActiveTab("ops")
+      });
+    }
+
+    homeActions.forEach(action => {
+      base.push({
+        id: `cmd-${action.id}`,
+        label: action.label,
+        hint: action.description,
+        run: action.run
+      });
+    });
+
+    return base;
+  }, [canAccess.ops, canAccess.seller, homeActions, setActiveTab, setMarketplaceView]);
+  const commandResults = useMemo(() => {
+    const needle = deferredCommandQuery.trim().toLowerCase();
+    if (!needle) return commandActions;
+    return commandActions.filter(action =>
+      [action.label, action.hint].filter(Boolean).some(value =>
+        String(value).toLowerCase().includes(needle)
+      )
+    );
+  }, [commandActions, deferredCommandQuery]);
   const activeTabMeta = useMemo(() => {
     if (activeTab === "chat") {
       return {
@@ -725,12 +894,12 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
     return filteredConversations;
   }, [filteredConversations, chatListMode]);
   const filteredMessages = useMemo(() => {
-    if (!threadSearch.trim()) return messages;
-    const needle = threadSearch.trim().toLowerCase();
+    if (!deferredThreadSearch.trim()) return messages;
+    const needle = deferredThreadSearch.trim().toLowerCase();
     return messages.filter(message =>
       String(message.content || "").toLowerCase().includes(needle)
     );
-  }, [messages, threadSearch]);
+  }, [messages, deferredThreadSearch]);
   const activeTypingLabel = useMemo(() => {
     if (!selectedConversationId) return "";
     const row = Object.values(typingUsers).find(entry => {
@@ -2475,6 +2644,30 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
   }, [tabs, activeTab]);
 
   useEffect(() => {
+    const handleKeydown = event => {
+      const key = String(event.key || "").toLowerCase();
+      if ((event.ctrlKey || event.metaKey) && key === "k") {
+        event.preventDefault();
+        setCommandOpen(true);
+      }
+      if (key === "escape") {
+        setCommandOpen(false);
+        setCommandQuery("");
+      }
+    };
+    window.addEventListener("keydown", handleKeydown);
+    return () => window.removeEventListener("keydown", handleKeydown);
+  }, []);
+
+  useEffect(() => {
+    if (!commandOpen) return;
+    const frame = window.requestAnimationFrame(() => {
+      commandInputRef.current?.focus();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [commandOpen]);
+
+  useEffect(() => {
     if (!marketplaceCategories.includes(marketCategory)) {
       setMarketCategory("all");
     }
@@ -2511,11 +2704,11 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
 
   useEffect(() => {
     const handle = setTimeout(() => {
-      searchProductsNearby(productQuery).catch(() => {});
+      searchProductsNearby(deferredProductQuery).catch(() => {});
     }, 350);
     return () => clearTimeout(handle);
   }, [
-    productQuery,
+    deferredProductQuery,
     shopFilters.lat,
     shopFilters.lng,
     shopFilters.radiusKm,
@@ -2528,7 +2721,7 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
     if (!canAccess.marketplace) return;
     const handle = setTimeout(() => {
       loadRecommendedProducts({
-        query: productQuery.trim()
+        query: deferredProductQuery.trim()
       }).catch(() => {});
     }, 450);
     return () => clearTimeout(handle);
@@ -2540,7 +2733,7 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
     productSearchFilters.maxPrice,
     productSearchFilters.minShopRating,
     cart,
-    productQuery
+    deferredProductQuery
   ]);
 
   useEffect(() => {
@@ -2615,6 +2808,32 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
               <span>Low Stock Items</span>
               <strong>{hasRole("SHOPKEEPER") || hasRole("ADMIN") || hasRole("BUSINESS") ? lowStockCount : "--"}</strong>
             </div>
+          </div>
+        </article>
+
+        <article className="panel-card home-action-card">
+          <div className="market-panel-head">
+            <h3>Quick Actions</h3>
+            <small>One-tap shortcuts to the most used flows</small>
+          </div>
+          <div className="home-action-grid">
+            {homeActions.map(action => (
+              <button
+                key={action.id}
+                type="button"
+                className={`home-action-tile tone-${action.tone}`}
+                onClick={action.run}
+              >
+                <span className="home-action-icon">
+                  <UiIcon name={action.icon} />
+                </span>
+                <span className="home-action-body">
+                  <strong>{action.label}</strong>
+                  <small>{action.description}</small>
+                </span>
+                <span className="home-action-cta">Start</span>
+              </button>
+            ))}
           </div>
         </article>
 
@@ -5049,6 +5268,9 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
                 <small>{roleLabel(userRoles)}</small>
               </div>
               <div className="chip-row">
+                <button type="button" className="chip chip-button" onClick={() => setCommandOpen(true)}>
+                  Command Center
+                </button>
                 <button type="button" className="chip chip-button" onClick={() => setActiveTab("home")}>
                   System Alerts: {notifications.length}
                 </button>
@@ -5098,6 +5320,56 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
         {toast && <div className="alert info">{toast}</div>}
         {renderTab()}
       </main>
+      {commandOpen && (
+        <div className="command-overlay" onClick={() => setCommandOpen(false)}>
+          <div className="command-modal" onClick={event => event.stopPropagation()}>
+            <div className="command-header">
+              <div>
+                <strong>Command Center</strong>
+                <small>Jump to any module or action instantly.</small>
+              </div>
+              <button type="button" className="ghost-btn" onClick={() => setCommandOpen(false)}>
+                Close
+              </button>
+            </div>
+            <div className="command-search">
+              <UiIcon name="search" />
+              <input
+                ref={commandInputRef}
+                value={commandQuery}
+                onChange={event => setCommandQuery(event.target.value)}
+                placeholder="Search commands, modules, or actions"
+              />
+              <span className="command-hint">Ctrl+K</span>
+            </div>
+            <div className="command-list">
+              {commandResults.map(action => (
+                <button
+                  key={action.id}
+                  type="button"
+                  className="command-item"
+                  onClick={() => {
+                    action.run();
+                    setCommandOpen(false);
+                    setCommandQuery("");
+                  }}
+                >
+                  <span className="command-item-main">
+                    <strong>{action.label}</strong>
+                    <small>{action.hint}</small>
+                  </span>
+                  <span className="command-item-meta">Open</span>
+                </button>
+              ))}
+              {!commandResults.length && (
+                <div className="command-empty">
+                  No matches. Try searching for "chat", "orders", or "wallet".
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
