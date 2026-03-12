@@ -1698,9 +1698,6 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
       }
       await loadShopFeedback(shopId);
 
-      if (typeof window !== "undefined") {
-        window.scrollTo({ top: 0, behavior: "smooth" });
-      }
     } catch (err) {
       setError(err.message || "Unable to open product details right now.");
     }
@@ -1717,9 +1714,6 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
     }
     setMarketplaceView("checkout");
     setCheckoutValidationError("");
-    if (typeof window !== "undefined") {
-      window.scrollTo({ top: 0, behavior: "smooth" });
-    }
   }
 
   async function buyNowMarketplaceProduct(item, fallbackShop = null) {
@@ -1744,9 +1738,6 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
       setMarketplaceView("checkout");
       setCheckoutValidationError("");
 
-      if (typeof window !== "undefined") {
-        window.scrollTo({ top: 0, behavior: "smooth" });
-      }
     } catch (err) {
       setError(err.message || "Unable to start buy now flow.");
     }

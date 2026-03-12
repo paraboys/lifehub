@@ -19,6 +19,7 @@ import callRoutes from "./modules/calls/calls.routes.js";
 import serviceRequestRoutes from "./modules/service-requests/serviceRequest.routes.js";
 import transactionRoutes from "./modules/transactions/transaction.routes.js";
 import paymentRoutes from "./modules/payments/payment.routes.js";
+import eventRoutes from "./modules/events/events.routes.js";
 import { startWorkflowSchedulers } from "./modules/workflows/workflow.scheduler.js";
 import { startWorkflowWorker } from "./modules/workflows/workflow.worker.js";
 import { initWorkflowEvents } from "./modules/workflows/workflow.events.js";
@@ -26,6 +27,8 @@ import { initDomainSubscriptions } from "./bootstrap/domainSubscriptions.js";
 import { initSocketServer } from "./common/realtime/socketHub.js";
 import { initInboxConsumers } from "./bootstrap/inboxConsumers.js";
 import { initOutboxBridge } from "./bootstrap/outboxBridge.js";
+import { startEventStreamMetrics } from "./common/events/eventStream.js";
+import { initKafkaConsumers } from "./bootstrap/kafkaConsumers.js";
 import { tracingMiddleware } from "./common/observability/tracing.js";
 import { httpMetricsMiddleware, metricsHandler } from "./common/observability/metrics.js";
 import { startSloMonitor, sloCaptureMiddleware } from "./common/observability/slo.js";
@@ -168,8 +171,16 @@ app.use("/api/calls", callRoutes);
 app.use("/api/service-requests", serviceRequestRoutes);
 app.use("/api/transactions", transactionRoutes);
 app.use("/api/payments", paymentRoutes);
+app.use("/api/events", eventRoutes);
 app.get("/metrics", metricsHandler);
 app.get("/", (_, res) => res.send("LifeHub API running"));
+
+await runOptionalBootstrapStep("workflow_events", async () => {
+  await initWorkflowEvents();
+});
+await runOptionalBootstrapStep("kafka_consumers", async () => {
+  await initKafkaConsumers();
+});
 
 const redisReady = await probeRedisConnection();
 
@@ -178,10 +189,6 @@ if (!redisReady) {
     reason: "redis_unavailable_or_capacity_limited"
   });
 } else {
-  await runOptionalBootstrapStep("workflow_events", async () => {
-    await initWorkflowEvents();
-  });
-
   const queueReady = await runOptionalBootstrapStep("workflow_schedulers", async () => {
     await startWorkflowSchedulers();
   });
@@ -201,6 +208,10 @@ if (!redisReady) {
 
   await runOptionalBootstrapStep("inbox_consumers", async () => {
     await initInboxConsumers();
+  });
+
+  await runOptionalBootstrapStep("event_stream_metrics", async () => {
+    startEventStreamMetrics();
   });
 }
 

@@ -24,10 +24,14 @@ const DEFAULT_PREF = {
 };
 
 export async function getUserNotificationPreferences(userId) {
-  const raw = await getRedis().get(prefKey(userId));
-  if (!raw) return DEFAULT_PREF;
   try {
-    return { ...DEFAULT_PREF, ...JSON.parse(raw) };
+    const raw = await getRedis().get(prefKey(userId));
+    if (!raw) return DEFAULT_PREF;
+    try {
+      return { ...DEFAULT_PREF, ...JSON.parse(raw) };
+    } catch {
+      return DEFAULT_PREF;
+    }
   } catch {
     return DEFAULT_PREF;
   }
@@ -47,6 +51,10 @@ export async function setUserNotificationPreferences(userId, data) {
     }
   };
 
-  await getRedis().set(prefKey(userId), JSON.stringify(merged));
+  try {
+    await getRedis().set(prefKey(userId), JSON.stringify(merged));
+  } catch {
+    return merged;
+  }
   return merged;
 }

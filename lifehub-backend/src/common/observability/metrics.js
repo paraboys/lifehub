@@ -22,9 +22,43 @@ const dlqEnqueueTotal = new client.Counter({
   labelNames: ["job_name"]
 });
 
+const eventStreamDlqSize = new client.Gauge({
+  name: "event_stream_dlq_size",
+  help: "Current size of event stream DLQ"
+});
+
+const eventStreamGroupLag = new client.Gauge({
+  name: "event_stream_group_lag",
+  help: "Event stream consumer group lag",
+  labelNames: ["group"]
+});
+
+const eventStreamGroupPending = new client.Gauge({
+  name: "event_stream_group_pending",
+  help: "Event stream consumer group pending count",
+  labelNames: ["group"]
+});
+
+const eventStreamReplayTotal = new client.Counter({
+  name: "event_stream_replay_total",
+  help: "Total event stream replay actions",
+  labelNames: ["mode"]
+});
+
+const eventStreamReplayFailed = new client.Counter({
+  name: "event_stream_replay_failed_total",
+  help: "Total failed event stream replay actions",
+  labelNames: ["mode"]
+});
+
 register.registerMetric(httpRequestDurationMs);
 register.registerMetric(workflowEventsTotal);
 register.registerMetric(dlqEnqueueTotal);
+register.registerMetric(eventStreamDlqSize);
+register.registerMetric(eventStreamGroupLag);
+register.registerMetric(eventStreamGroupPending);
+register.registerMetric(eventStreamReplayTotal);
+register.registerMetric(eventStreamReplayFailed);
 
 export function httpMetricsMiddleware(req, res, next) {
   const start = process.hrtime.bigint();
@@ -42,6 +76,25 @@ export function incWorkflowEvent(eventType) {
 
 export function incDlqEnqueue(jobName) {
   dlqEnqueueTotal.labels(String(jobName || "unknown")).inc();
+}
+
+export function setEventStreamStats({ dlqLength = 0, groups = [] } = {}) {
+  eventStreamDlqSize.set(Number(dlqLength || 0));
+  for (const group of groups || []) {
+    const name = String(group?.name || "unknown");
+    const lag = Number(group?.lag || 0);
+    const pending = Number(group?.pending || 0);
+    eventStreamGroupLag.labels(name).set(lag);
+    eventStreamGroupPending.labels(name).set(pending);
+  }
+}
+
+export function incEventStreamReplay(mode = "stream") {
+  eventStreamReplayTotal.labels(String(mode)).inc();
+}
+
+export function incEventStreamReplayFailed(mode = "stream") {
+  eventStreamReplayFailed.labels(String(mode)).inc();
 }
 
 export async function metricsHandler(_, res) {
