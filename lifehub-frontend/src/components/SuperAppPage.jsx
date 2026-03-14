@@ -159,6 +159,34 @@ function normalizeMarketplaceProduct(item, fallbackShop = null) {
   };
 }
 
+function resolveMediaUrl(raw, baseUrl) {
+  const value = String(raw || "").trim();
+  if (!value) return "";
+  const looksLikePath = value.includes("/") || value.includes(".");
+  if (!looksLikePath && !/^https?:\/\//i.test(value)) {
+    return "";
+  }
+  const base = String(baseUrl || "").replace(/\/+$/, "");
+  const isAbsolute = /^https?:\/\//i.test(value);
+
+  if (isAbsolute) {
+    if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?\//i.test(value) && base) {
+      return `${base}${value.replace(/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?/i, "")}`;
+    }
+    return value;
+  }
+
+  if (!base) return value;
+
+  if (value.startsWith("/")) {
+    return `${base}${value}`;
+  }
+  if (value.startsWith("cdn/") || value.startsWith("upload/")) {
+    return `${base}/${value}`;
+  }
+  return `${base}/cdn/${value}`;
+}
+
 function UiIcon({ name, size = 18 }) {
   const style = {
     fill: "none",
@@ -1152,6 +1180,8 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
     }
     return typeof window !== "undefined" ? window.location.origin : "";
   }
+
+  const mediaBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
 
   async function uploadChatAttachment(file, options = {}) {
     const isPrivate = options.isPrivate !== undefined ? Boolean(options.isPrivate) : true;
@@ -3545,13 +3575,16 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
                     await openMarketplaceProduct(item, item?.shop || null);
                   }}
                 >
-                  {!!item.imageUrl ? (
-                    <img src={item.imageUrl} alt={item.productName} className="market-result-thumb" />
-                  ) : (
-                    <div className="market-result-thumb market-thumb-placeholder">
-                      <span>{initials(item.productName)}</span>
-                    </div>
-                  )}
+                  {(() => {
+                    const imageSrc = resolveMediaUrl(item.imageUrl, mediaBaseUrl);
+                    return imageSrc ? (
+                      <img src={imageSrc} alt={item.productName} className="market-result-thumb" />
+                    ) : (
+                      <div className="market-result-thumb market-thumb-placeholder">
+                        <span>{initials(item.productName)}</span>
+                      </div>
+                    );
+                  })()}
                   <div>
                     <strong>{item.productName}</strong>
                     <small>{item?.shop?.shopName || "Nearby shop"}</small>
@@ -3581,17 +3614,20 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
                         await openMarketplaceProduct(item, item?.shop || selectedShop || null);
                       }}
                     >
-                      {!!item?.imageUrl ? (
-                        <img
-                          src={item.imageUrl}
-                          alt={item?.productName || item?.name || "Product"}
-                          className="market-shelf-thumb"
-                        />
-                      ) : (
-                        <div className="market-shelf-thumb market-thumb-placeholder">
-                          <span>{initials(item?.productName || item?.name)}</span>
-                        </div>
-                      )}
+                      {(() => {
+                        const imageSrc = resolveMediaUrl(item?.imageUrl, mediaBaseUrl);
+                        return imageSrc ? (
+                          <img
+                            src={imageSrc}
+                            alt={item?.productName || item?.name || "Product"}
+                            className="market-shelf-thumb"
+                          />
+                        ) : (
+                          <div className="market-shelf-thumb market-thumb-placeholder">
+                            <span>{initials(item?.productName || item?.name)}</span>
+                          </div>
+                        );
+                      })()}
                       <small>{item?.productName || item?.name || "Product"}</small>
                     </button>
                   ))}
@@ -3634,17 +3670,20 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
             </div>
             <div className="product-detail-layout">
               <div className="product-detail-image-wrap">
-                {!!selectedMarketplaceDetail.imageUrl ? (
-                  <img
-                    src={selectedMarketplaceDetail.imageUrl}
-                    alt={selectedMarketplaceDetail.name}
-                    className="product-detail-image"
-                  />
-                ) : (
-                  <div className="product-detail-image market-thumb-placeholder">
-                    <span>{initials(selectedMarketplaceDetail.name)}</span>
-                  </div>
-                )}
+                {(() => {
+                  const imageSrc = resolveMediaUrl(selectedMarketplaceDetail.imageUrl, mediaBaseUrl);
+                  return imageSrc ? (
+                    <img
+                      src={imageSrc}
+                      alt={selectedMarketplaceDetail.name}
+                      className="product-detail-image"
+                    />
+                  ) : (
+                    <div className="product-detail-image market-thumb-placeholder">
+                      <span>{initials(selectedMarketplaceDetail.name)}</span>
+                    </div>
+                  );
+                })()}
               </div>
               <div className="product-detail-content">
                 <h3>{selectedMarketplaceDetail.name}</h3>
@@ -3710,13 +3749,16 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
                   className="market-product-card commerce-product-card clickable"
                   onClick={() => openMarketplaceProduct(product, product.shop || selectedShop)}
                 >
-                  {!!product.imageUrl ? (
-                    <img src={product.imageUrl} alt={product.name} className="market-product-thumb" />
-                  ) : (
-                    <div className="market-product-thumb market-thumb-placeholder">
-                      <span>{initials(product.name)}</span>
-                    </div>
-                  )}
+                  {(() => {
+                    const imageSrc = resolveMediaUrl(product.imageUrl, mediaBaseUrl);
+                    return imageSrc ? (
+                      <img src={imageSrc} alt={product.name} className="market-product-thumb" />
+                    ) : (
+                      <div className="market-product-thumb market-thumb-placeholder">
+                        <span>{initials(product.name)}</span>
+                      </div>
+                    );
+                  })()}
                   <div className="market-product-body">
                     <strong>{product.name}</strong>
                     <small>{product.company ? `Brand ${product.company}` : "Local inventory"}</small>
@@ -3960,13 +4002,16 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
                 {!loadingRecommendations &&
                   visibleRecommendedProducts.map(item => (
                     <article key={`rec_${item.productId}_${item?.shop?.id || "shop"}`} className="market-top-card">
-                      {!!item.imageUrl ? (
-                        <img src={item.imageUrl} alt={item.productName} className="market-product-thumb" />
-                      ) : (
-                        <div className="market-product-thumb market-thumb-placeholder">
-                          <span>{initials(item.productName)}</span>
-                        </div>
-                      )}
+                      {(() => {
+                        const imageSrc = resolveMediaUrl(item.imageUrl, mediaBaseUrl);
+                        return imageSrc ? (
+                          <img src={imageSrc} alt={item.productName} className="market-product-thumb" />
+                        ) : (
+                          <div className="market-product-thumb market-thumb-placeholder">
+                            <span>{initials(item.productName)}</span>
+                          </div>
+                        );
+                      })()}
                       <div className="market-product-body">
                         <strong>{item.productName}</strong>
                         <small>{item?.shop?.shopName || "Nearby shop"}</small>
@@ -4029,13 +4074,16 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
                         type="button"
                         disabled={!item?.shop?.id}
                       >
-                        {!!item.imageUrl ? (
-                          <img src={item.imageUrl} alt={item.productName} className="market-result-thumb" />
-                        ) : (
-                          <div className="market-result-thumb market-thumb-placeholder">
-                            <span>{initials(item.productName)}</span>
-                          </div>
-                        )}
+                        {(() => {
+                          const imageSrc = resolveMediaUrl(item.imageUrl, mediaBaseUrl);
+                          return imageSrc ? (
+                            <img src={imageSrc} alt={item.productName} className="market-result-thumb" />
+                          ) : (
+                            <div className="market-result-thumb market-thumb-placeholder">
+                              <span>{initials(item.productName)}</span>
+                            </div>
+                          );
+                        })()}
                         <div>
                           <strong>{item.productName}</strong>
                           <small>
@@ -4081,13 +4129,16 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
                     className="market-product-card commerce-product-card clickable"
                     onClick={() => openMarketplaceProduct(product, selectedShop)}
                   >
-                    {!!product.imageUrl ? (
-                      <img src={product.imageUrl} alt={product.name} className="market-product-thumb" />
-                    ) : (
-                      <div className="market-product-thumb market-thumb-placeholder">
-                        <span>{initials(product.name)}</span>
-                      </div>
-                    )}
+                    {(() => {
+                      const imageSrc = resolveMediaUrl(product.imageUrl, mediaBaseUrl);
+                      return imageSrc ? (
+                        <img src={imageSrc} alt={product.name} className="market-product-thumb" />
+                      ) : (
+                        <div className="market-product-thumb market-thumb-placeholder">
+                          <span>{initials(product.name)}</span>
+                        </div>
+                      );
+                    })()}
                     <div className="market-product-body">
                       <strong>{product.name}</strong>
                       <small>{product.company ? `Brand ${product.company}` : "Local inventory"}</small>
@@ -4757,15 +4808,18 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
                 : "Upload from device to auto-fill image URL."}
             </small>
           </div>
-          {!!sellerForm.imageUrl && (
-            <div className="field-row">
-              <img
-                src={sellerForm.imageUrl}
-                alt="Product preview"
-                style={{ width: 140, height: 90, objectFit: "cover", borderRadius: 10 }}
-              />
-            </div>
-          )}
+          {(() => {
+            const imageSrc = resolveMediaUrl(sellerForm.imageUrl, mediaBaseUrl);
+            return imageSrc ? (
+              <div className="field-row">
+                <img
+                  src={imageSrc}
+                  alt="Product preview"
+                  style={{ width: 140, height: 90, objectFit: "cover", borderRadius: 10 }}
+                />
+              </div>
+            ) : null;
+          })()}
           <div className="field-row">
             <input
               value={sellerForm.description}
@@ -4793,13 +4847,16 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
           <div className="stack-list">
             {sellerProducts.map(product => (
               <div key={product.id} className="item-card">
-                {!!product.imageUrl && (
-                  <img
-                    src={product.imageUrl}
-                    alt={product.name}
-                    style={{ width: "100%", maxHeight: 140, objectFit: "cover", borderRadius: 10 }}
-                  />
-                )}
+                {(() => {
+                  const imageSrc = resolveMediaUrl(product.imageUrl, mediaBaseUrl);
+                  return imageSrc ? (
+                    <img
+                      src={imageSrc}
+                      alt={product.name}
+                      style={{ width: "100%", maxHeight: 140, objectFit: "cover", borderRadius: 10 }}
+                    />
+                  ) : null;
+                })()}
                 <div className="item-header">
                   <strong>{product.name}</strong>
                   <span className="status-pill">Qty {product.availableQuantity}</span>

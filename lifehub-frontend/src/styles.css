@@ -4550,3 +4550,118 @@ button {
   background: rgba(29, 111, 232, 0.1);
   border-color: rgba(29, 111, 232, 0.35);
 }
+
+/* LifeHub Console Theme (AWS/Stripe style) */
+:root {
+  --brand: #2563eb;
+  --brand-deep: #1d4ed8;
+  --accent: #10b981;
+  --accent-warm: #f59e0b;
+  --bg-base: #f5f7fb;
+  --bg-top: #fbfcfe;
+  --ink: #0b1f36;
+  --ink-dim: #5b6b7b;
+  --surface: #ffffff;
+  --surface-strong: #ffffff;
+  --line: rgba(15, 23, 42, 0.12);
+  --soft-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
+  --hard-shadow: 0 20px 40px rgba(15, 23, 42, 0.12);
+}
+
+body {
+  background:
+    radial-gradient(circle at 10% 10%, rgba(37, 99, 235, 0.06), transparent 40%),
+    radial-gradient(circle at 90% 15%, rgba(16, 185, 129, 0.05), transparent 45%),
+    linear-gradient(180deg, var(--bg-top), var(--bg-base));
+}
+
+.app {
+  max-width: 1320px;
+  padding: 24px;
+}
+
+.main-stage {
+  gap: 22px;
+}
+
+.topbar {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+}
+
+.topbar-row {
+  background: #ffffff;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  padding: 18px;
+  box-shadow: var(--soft-shadow);
+}
+
+.topbar-meta-card {
+  background: #f8fafc;
+  border-color: rgba(15, 23, 42, 0.1);
+}
+
+.module-nav-grid {
+  background: #ffffff;
+  border: 1px solid var(--line);
+  box-shadow: var(--soft-shadow);
+  border-radius: 18px;
+  padding: 12px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px;
+}
+
+.module-nav-item {
+  background: #f8fafc;
+  border-color: rgba(15, 23, 42, 0.12);
+  min-height: 46px;
+}
+
+.module-nav-item.active {
+  background: linear-gradient(120deg, var(--brand), var(--brand-deep));
+  color: #fff;
+  box-shadow: 0 10px 24px rgba(37, 99, 235, 0.25);
+}
+
+.command-deck,
+.panel-card,
+.item-card,
+.metric-card {
+  background: #ffffff;
+  border-color: var(--line);
+  box-shadow: var(--soft-shadow);
+}
+
+.panel-card {
+  padding: 18px;
+}
+
+.workspace-grid {
+  gap: 18px;
+}
+
+.home-action-grid {
+  gap: 16px;
+}
+
+.home-action-tile {
+  border-radius: 14px;
+  background: #ffffff;
+  border-color: var(--line);
+}
+
+.status-pill {
+  background: #f1f5f9;
+  border-color: rgba(15, 23, 42, 0.12);
+  color: var(--ink-dim);
+}
+
+.market-panel-head h3,
+.panel-card h2,
+.panel-card h3 {
+  letter-spacing: -0.02em;
+}
