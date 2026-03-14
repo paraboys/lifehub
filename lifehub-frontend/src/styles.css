@@ -4410,3 +4410,143 @@ button {
   background: #f5f7fb;
   color: var(--ink);
 }
+
+/* Enterprise Layout Refresh */
+.main-stage {
+  gap: 18px;
+}
+
+.topbar {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  padding: 0;
+}
+
+.topbar-row {
+  padding: 18px;
+  border-radius: 22px;
+  border: 1px solid rgba(12, 32, 52, 0.12);
+  background: #ffffff;
+  box-shadow: var(--soft-shadow);
+}
+
+.topbar-main h3 {
+  font-size: clamp(30px, 2.6vw, 44px);
+}
+
+.topbar-main p {
+  max-width: 640px;
+  line-height: 1.6;
+}
+
+.topbar-meta-card {
+  background: #f6f8fc;
+  border-color: rgba(12, 32, 52, 0.1);
+  box-shadow: none;
+}
+
+.module-nav-grid {
+  margin-top: 14px;
+  padding: 12px;
+  border-radius: 18px;
+  background: #ffffff;
+  border: 1px solid rgba(12, 32, 52, 0.12);
+  box-shadow: var(--soft-shadow);
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.module-nav-item {
+  background: #f7f9fc;
+  border-color: rgba(12, 32, 52, 0.12);
+  min-height: 46px;
+}
+
+.module-nav-item span:last-child {
+  font-size: 13px;
+}
+
+.command-deck {
+  background: #ffffff;
+  border-color: rgba(12, 32, 52, 0.12);
+  box-shadow: var(--soft-shadow);
+  padding: 12px 14px;
+}
+
+.panel-card {
+  background: #ffffff;
+  border-color: rgba(12, 32, 52, 0.12);
+  box-shadow: var(--soft-shadow);
+  padding: 16px;
+}
+
+.workspace-grid {
+  gap: 16px;
+}
+
+.home-hero-card,
+.home-signal-card,
+.home-activity-card {
+  background: #ffffff;
+}
+
+.home-action-grid {
+  gap: 14px;
+}
+
+.home-action-tile {
+  background: #ffffff;
+  border-color: rgba(12, 32, 52, 0.12);
+}
+
+.chat-shell {
+  border-color: rgba(12, 32, 52, 0.12);
+  background: #ffffff;
+  box-shadow: var(--soft-shadow);
+}
+
+.chat-sidebar,
+.chat-thread {
+  background: #f8fafc;
+  color: var(--ink);
+  border-color: rgba(12, 32, 52, 0.12);
+}
+
+.chat-sidebar-head h2,
+.chat-thread-head h2 {
+  color: var(--ink);
+}
+
+.chat-search-wrap {
+  background: #ffffff;
+  border-color: rgba(12, 32, 52, 0.14);
+}
+
+.chat-search-wrap input {
+  color: var(--ink);
+}
+
+.chat-filter-chip {
+  background: #f1f4f8;
+  border-color: rgba(12, 32, 52, 0.12);
+  color: var(--ink-dim);
+}
+
+.chat-filter-chip.active {
+  background: rgba(29, 111, 232, 0.12);
+  border-color: rgba(29, 111, 232, 0.4);
+  color: var(--brand-deep);
+}
+
+.chat-list-item {
+  background: #ffffff;
+  border-color: rgba(12, 32, 52, 0.12);
+  color: var(--ink);
+}
+
+.chat-list-item.active {
+  background: rgba(29, 111, 232, 0.1);
+  border-color: rgba(29, 111, 232, 0.35);
+}
