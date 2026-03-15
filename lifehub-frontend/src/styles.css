@@ -5697,6 +5697,10 @@ body {
   color: #9ca3af;
 }
 
+.sidebar-v5 .sidebar-search {
+  display: none;
+}
+
 .sidebar-group-title {
   font-size: 11px;
   letter-spacing: 0.14em;
@@ -6033,6 +6037,59 @@ body {
   background: #ffffff;
 }
 
+.superapp-shell-v5 .market-brand-block,
+.superapp-shell-v5 .market-location-card,
+.superapp-shell-v5 .marketplace-department-row,
+.superapp-shell-v5 .market-front-banner-grid,
+.superapp-shell-v5 .market-hero-shelf-grid {
+  display: none;
+}
+
+.superapp-shell-v5 .market-hero {
+  padding: 18px;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  box-shadow: 0 10px 20px rgba(15, 23, 42, 0.06);
+}
+
+.superapp-shell-v5 .market-search-bar-hero {
+  grid-template-columns: 1fr;
+  gap: 12px;
+}
+
+.superapp-shell-v5 .market-search-bar-hero select,
+.superapp-shell-v5 .market-search-bar-hero > button {
+  display: none;
+}
+
+.superapp-shell-v5 .market-search-input-wrap {
+  border-radius: 999px;
+  padding: 10px 16px;
+  border: 1px solid #e5e7eb;
+  background: #f3f4f6;
+}
+
+.superapp-shell-v5 .market-head-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-start;
+  margin-top: 8px;
+}
+
+.superapp-shell-v5 .market-head-actions button {
+  background: #ffffff;
+  color: #6b7280;
+  border: 1px solid #e5e7eb;
+  border-radius: 999px;
+  padding: 8px 14px;
+  font-weight: 600;
+}
+
+.superapp-shell-v5 .market-head-actions button.active {
+  color: #0ea5e9;
+  border-color: #0ea5e9;
+}
+
 .superapp-shell-v5 button {
   background: #0ea5e9;
   border: 1px solid #0ea5e9;
@@ -6049,11 +6106,35 @@ body {
   color: #111827;
 }
 
+.superapp-shell-v5 .sidebar-link {
+  background: transparent;
+  border: 1px solid transparent;
+  color: #d1d5db;
+}
+
+.superapp-shell-v5 .sidebar-link.active {
+  background: #1f2937;
+  border-color: rgba(148, 163, 184, 0.24);
+  color: #22d3ee;
+}
+
 .superapp-shell-v5 .ghost-btn,
 .superapp-shell-v5 .btn-secondary {
   background: #f3f4f6;
   border: 1px solid #e5e7eb;
   color: #111827;
+}
+
+.superapp-shell-v5 .quick-action-card,
+.superapp-shell-v5 .market-shelf-item,
+.superapp-shell-v5 .market-fast-deal-card,
+.superapp-shell-v5 .market-product-card,
+.superapp-shell-v5 .market-result-card,
+.superapp-shell-v5 .home-action-tile,
+.superapp-shell-v5 .chat-list-item {
+  background: #ffffff;
+  color: #111827;
+  border: 1px solid #e5e7eb;
 }
 
 .superapp-shell-v5 input,
@@ -6107,6 +6188,26 @@ body {
   .page-intro {
     padding: 20px 18px 0;
   }
+}
+
+.topbar-v5 .topbar-search input {
+  color: #111827;
+}
+
+.topbar-v5 .topbar-search input::placeholder {
+  color: #9ca3af;
+}
+
+.superapp-shell-v5 .chat-search-wrap input,
+.superapp-shell-v5 .composer input,
+.superapp-shell-v5 .market-search-input-wrap input {
+  color: #111827;
+}
+
+.superapp-shell-v5 .chat-search-wrap input::placeholder,
+.superapp-shell-v5 .composer input::placeholder,
+.superapp-shell-v5 .market-search-input-wrap input::placeholder {
+  color: #9ca3af;
 }
 
 /* Chat light theme (Lovable style) */

@@ -2797,8 +2797,10 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
   }, [activeTab]);
 
   useEffect(() => {
+    const needle = deferredProductQuery.trim();
+    if (!needle) return;
     const handle = setTimeout(() => {
-      searchProductsNearby(deferredProductQuery).catch(() => {});
+      searchProductsNearby(needle).catch(() => {});
     }, 350);
     return () => clearTimeout(handle);
   }, [
