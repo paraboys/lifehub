@@ -137,6 +137,15 @@ function ratingStars(value) {
   return `${"★".repeat(normalized)}${"☆".repeat(5 - normalized)}`;
 }
 
+function isSameDay(a, b) {
+  if (!a || !b) return false;
+  return (
+    a.getFullYear() === b.getFullYear()
+    && a.getMonth() === b.getMonth()
+    && a.getDate() === b.getDate()
+  );
+}
+
 function providerAvatarUrl(name) {
   const seed = encodeURIComponent(String(name || "Service Pro"));
   return `https://ui-avatars.com/api/?name=${seed}&background=0f4f84&color=ffffff&size=160&rounded=true&bold=true`;
@@ -762,6 +771,40 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
         })),
     [tabs, totalUnreadChats, notifications.length]
   );
+  const activeOrdersCount = useMemo(
+    () =>
+      orders.filter(order =>
+        !["DELIVERED", "COMPLETED", "CANCELLED"].includes(String(order.status || "").toUpperCase())
+      ).length,
+    [orders]
+  );
+  const pendingServiceCount = useMemo(
+    () =>
+      serviceRequests.filter(request =>
+        !["COMPLETED", "CANCELLED"].includes(String(request.status || "").toUpperCase())
+      ).length,
+    [serviceRequests]
+  );
+  const revenueToday = useMemo(() => {
+    const today = new Date();
+    return transactions.reduce((sum, row) => {
+      const amount = Number(row?.amount ?? row?.value ?? 0);
+      if (!Number.isFinite(amount) || amount <= 0) return sum;
+      const rawDate = row?.created_at || row?.createdAt || row?.timestamp;
+      if (!rawDate) return sum;
+      const parsed = new Date(rawDate);
+      if (Number.isNaN(parsed.getTime())) return sum;
+      if (!isSameDay(parsed, today)) return sum;
+      return sum + amount;
+    }, 0);
+  }, [transactions]);
+  const slaBreaches = useMemo(
+    () =>
+      notifications.filter(item =>
+        /sla/i.test(String(item?.event_type || item?.message || ""))
+      ).length,
+    [notifications]
+  );
   const homeActions = useMemo(() => {
     const actions = [
       {
@@ -982,9 +1025,9 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
     return {
       title: `Good morning, ${firstName}.`,
       eyebrow: "Dashboard",
-      description: "You have active deliveries and services scheduled."
+      description: `You have ${activeOrdersCount} active deliveries and ${pendingServiceCount} services scheduled.`
     };
-  }, [activeTab, user.name]);
+  }, [activeTab, user.name, activeOrdersCount, pendingServiceCount]);
   const visibleConversations = useMemo(() => {
     if (chatListMode === "unread") {
       return filteredConversations.filter(conv => Number(conv.unreadCount || 0) > 0);
@@ -2863,17 +2906,6 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
   }, [paymentIntent?.intentId, pendingOrderAfterPayment]);
 
   function renderHomeTab() {
-    const activeOrdersCount = orders.filter(order =>
-      !["DELIVERED", "COMPLETED", "CANCELLED"].includes(String(order.status || "").toUpperCase())
-    ).length;
-    const revenueToday = transactions.reduce((sum, row) => {
-      const amount = Number(row?.amount || row?.value || 0);
-      return amount > 0 ? sum + amount : sum;
-    }, 0);
-    const slaBreaches = notifications.filter(item =>
-      /sla/i.test(String(item?.event_type || item?.message || ""))
-    ).length;
-
     return (
       <section className="home-shell">
         <div className="home-stat-grid">
@@ -2883,15 +2915,13 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
               <strong>{activeOrdersCount}</strong>
               <small>Active Orders</small>
             </div>
-            <span className="stat-trend positive">+12%</span>
           </div>
           <div className="stat-card">
             <div className="stat-icon">💰</div>
             <div>
-              <strong>${toCurrency(revenueToday || 4280)}</strong>
+              <strong>${toCurrency(revenueToday)}</strong>
               <small>Revenue Today</small>
             </div>
-            <span className="stat-trend positive">+8.3%</span>
           </div>
           <div className="stat-card">
             <div className="stat-icon">💬</div>
@@ -2899,7 +2929,6 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
               <strong>{conversations.length}</strong>
               <small>Active Chats</small>
             </div>
-            <span className="stat-trend positive">+3</span>
           </div>
           <div className="stat-card">
             <div className="stat-icon warning">⚠️</div>
@@ -2907,7 +2936,6 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
               <strong>{slaBreaches}</strong>
               <small>SLA Breaches</small>
             </div>
-            <span className="stat-trend warn">Critical</span>
           </div>
         </div>
 
@@ -5337,7 +5365,7 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
     <div className={`superapp-shell superapp-shell-full superapp-shell-v5 shell-${activeTab} ${sidebarOpen ? "sidebar-open" : ""}`}>
       <aside className={`sidebar-v5 ${sidebarOpen ? "open" : ""}`}>
         <div className="sidebar-brand">
-          <div className="brand-mark">⚡</div>
+          <div className="brand-mark">LH</div>
           <strong>LifeHub</strong>
         </div>
         <div className="sidebar-search">
