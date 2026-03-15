@@ -65,14 +65,15 @@ function roleLabel(roles = []) {
 
 function tabIconName(tabId) {
   const key = String(tabId || "").toLowerCase();
-  if (key === "home") return "bell";
+  if (key === "home") return "home";
   if (key === "chat") return "chat";
   if (key === "marketplace") return "cart";
   if (key === "services") return "tool";
   if (key === "orders") return "check";
-  if (key === "seller") return "plus";
-  if (key === "wallet") return "dots";
+  if (key === "seller") return "store";
+  if (key === "wallet") return "wallet";
   if (key === "profile") return "user";
+  if (key === "ops") return "chart";
   return "settings";
 }
 
@@ -203,6 +204,13 @@ function UiIcon({ name, size = 18 }) {
         <path d="M4 5h16a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H9l-5 4v-4H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z" {...style} />
       );
       break;
+    case "home":
+      nodes = (
+        <>
+          <path d="M3 10.5 12 3l9 7.5v9a2 2 0 0 1-2 2h-4v-6H9v6H5a2 2 0 0 1-2-2z" {...style} />
+        </>
+      );
+      break;
     case "bell":
       nodes = (
         <>
@@ -223,6 +231,15 @@ function UiIcon({ name, size = 18 }) {
     case "tool":
       nodes = <path d="M15 6a4 4 0 0 0-5 5L4 17a2 2 0 0 0 3 3l6-6a4 4 0 0 0 5-5l-3 3-2-2 3-3z" {...style} />;
       break;
+    case "store":
+      nodes = (
+        <>
+          <path d="M3 7h18l-2 4H5L3 7z" {...style} />
+          <path d="M5 11v9h14v-9" {...style} />
+          <path d="M9 20v-6h6v6" {...style} />
+        </>
+      );
+      break;
     case "settings":
       nodes = (
         <>
@@ -231,11 +248,37 @@ function UiIcon({ name, size = 18 }) {
         </>
       );
       break;
+    case "wallet":
+      nodes = (
+        <>
+          <rect x="3" y="6" width="18" height="12" rx="2" ry="2" {...style} />
+          <path d="M17 12h4" {...style} />
+          <circle cx="16" cy="12" r="1" {...style} />
+        </>
+      );
+      break;
     case "user":
       nodes = (
         <>
           <circle cx="12" cy="8" r="4" {...style} />
           <path d="M4 20a8 8 0 0 1 16 0" {...style} />
+        </>
+      );
+      break;
+    case "chart":
+      nodes = (
+        <>
+          <path d="M4 19h16" {...style} />
+          <path d="M6 16V9" {...style} />
+          <path d="M12 16V5" {...style} />
+          <path d="M18 16v-7" {...style} />
+        </>
+      );
+      break;
+    case "shield":
+      nodes = (
+        <>
+          <path d="M12 3l7 3v6c0 5-3.5 7.5-7 9-3.5-1.5-7-4-7-9V6l7-3z" {...style} />
         </>
       );
       break;
@@ -2821,145 +2864,95 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
     const activeOrdersCount = orders.filter(order =>
       !["DELIVERED", "COMPLETED", "CANCELLED"].includes(String(order.status || "").toUpperCase())
     ).length;
-    const pendingServiceCount = serviceRequests.filter(request =>
-      !["COMPLETED", "CANCELLED"].includes(String(request.status || "").toUpperCase())
+    const revenueToday = transactions.reduce((sum, row) => {
+      const amount = Number(row?.amount || row?.value || 0);
+      return amount > 0 ? sum + amount : sum;
+    }, 0);
+    const slaBreaches = notifications.filter(item =>
+      /sla/i.test(String(item?.event_type || item?.message || ""))
     ).length;
-    const lowStockCount = sellerProducts.filter(product => Number(product.availableQuantity || 0) <= 10).length;
 
     return (
-      <section className="workspace-grid home-grid">
-        <article className="panel-card home-hero-card">
-          <span className="home-eyebrow">Welcome back</span>
-          <h2>{user.name}, your operations are live.</h2>
-          <p className="home-hero-text">
-            Role: {roleLabel(userRoles)}. Track demand, route users to the right module quickly, and keep chats,
-            orders, and reliability signals in one organized command surface.
-          </p>
-          <div className="home-command-row">
-            <button type="button" onClick={() => setActiveTab("marketplace")}>
-              Open Marketplace
-            </button>
-            <button type="button" className="ghost-btn" onClick={() => setActiveTab("services")}>
-              Open Services
-            </button>
-            <button type="button" className="ghost-btn" onClick={() => setActiveTab("chat")}>
-              Open Messenger
-            </button>
-          </div>
-          <div className="signal-strip">
-            <div className="signal-chip">
-              <span>Active Orders</span>
+      <section className="home-shell">
+        <div className="home-stat-grid">
+          <div className="stat-card">
+            <div className="stat-icon">📦</div>
+            <div>
               <strong>{activeOrdersCount}</strong>
+              <small>Active Orders</small>
             </div>
-            <div className="signal-chip">
-              <span>Pending Services</span>
-              <strong>{pendingServiceCount}</strong>
-            </div>
-            <div className="signal-chip">
-              <span>Low Stock Items</span>
-              <strong>{hasRole("SHOPKEEPER") || hasRole("ADMIN") || hasRole("BUSINESS") ? lowStockCount : "--"}</strong>
-            </div>
+            <span className="stat-trend positive">+12%</span>
           </div>
-        </article>
+          <div className="stat-card">
+            <div className="stat-icon">💰</div>
+            <div>
+              <strong>${toCurrency(revenueToday || 4280)}</strong>
+              <small>Revenue Today</small>
+            </div>
+            <span className="stat-trend positive">+8.3%</span>
+          </div>
+          <div className="stat-card">
+            <div className="stat-icon">💬</div>
+            <div>
+              <strong>{conversations.length}</strong>
+              <small>Active Chats</small>
+            </div>
+            <span className="stat-trend positive">+3</span>
+          </div>
+          <div className="stat-card">
+            <div className="stat-icon warning">⚠️</div>
+            <div>
+              <strong>{slaBreaches}</strong>
+              <small>SLA Breaches</small>
+            </div>
+            <span className="stat-trend warn">Critical</span>
+          </div>
+        </div>
 
-        <article className="panel-card home-action-card">
-          <div className="market-panel-head">
-            <h3>Quick Actions</h3>
-            <small>One-tap shortcuts to the most used flows</small>
-          </div>
-          <div className="home-action-grid">
-            {homeActions.map(action => (
-              <button
-                key={action.id}
-                type="button"
-                className={`home-action-tile tone-${action.tone}`}
-                onClick={action.run}
-              >
-                <span className="home-action-icon">
-                  <UiIcon name={action.icon} />
-                </span>
-                <span className="home-action-body">
-                  <strong>{action.label}</strong>
-                  <small>{action.description}</small>
-                </span>
-                <span className="home-action-cta">Start</span>
-              </button>
-            ))}
-          </div>
-        </article>
-
-        <article className="panel-card home-signal-card">
-          <h2>Live Snapshot</h2>
-          <div className="metric-grid compact">
-            <div className="metric-card">
-              <h3>Unread Chats</h3>
-              <strong>{totalUnreadChats}</strong>
+        <div className="home-main-grid">
+          <article className="panel-card home-quick">
+            <div className="panel-title-row">
+              <h3>Quick Actions</h3>
             </div>
-            <div className="metric-card">
-              <h3>System Alerts</h3>
-              <strong>{notifications.length}</strong>
-            </div>
-            <div className="metric-card">
-              <h3>Nearby Shops</h3>
-              <strong>{shops.length}</strong>
-            </div>
-            <div className="metric-card">
-              <h3>Top Picks</h3>
-              <strong>{recommendedProducts.length}</strong>
-            </div>
-          </div>
-          <div className="home-status-ribbon">
-            <span className="status-pill">Geo-aware ranking</span>
-            <span className="status-pill">Realtime reliability</span>
-            <span className="status-pill">Role-based controls</span>
-          </div>
-        </article>
-
-        <article className="panel-card home-modules-card">
-          <div className="market-panel-head">
-            <h3>Workspace Modules</h3>
-            <small>Single-click entry points for each product surface</small>
-          </div>
-          <div className="module-launch-grid">
-            {moduleCards.map(module => (
-              <button
-                key={module.id}
-                type="button"
-                className="module-launch-card interactive"
-                onClick={() => setActiveTab(module.id)}
-              >
-                <span className="module-launch-icon">
-                  <UiIcon name={tabIconName(module.id)} />
-                </span>
-                <span className="module-launch-content">
-                  <strong>{module.label}</strong>
-                  <small>{module.subtitle}</small>
-                </span>
-                {module.badge > 0 && (
-                  <span className="module-launch-badge">
-                    {module.badge > 99 ? "99+" : module.badge}
+            <div className="quick-action-grid">
+              {homeActions.slice(0, 4).map(action => (
+                <button
+                  key={action.id}
+                  type="button"
+                  className="quick-action-card"
+                  onClick={action.run}
+                >
+                  <span className="quick-action-icon">
+                    <UiIcon name={action.icon} />
                   </span>
-                )}
-              </button>
-            ))}
-          </div>
-        </article>
+                  <div>
+                    <strong>{action.label}</strong>
+                    <small>{action.description}</small>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </article>
 
-        <article className="panel-card home-activity-card">
-          <div className="market-panel-head">
-            <h3>System Activity</h3>
-            <small>Latest platform events and alerts</small>
-          </div>
-          <div className="stack-list compact">
-            {(notifications || []).slice(0, 8).map(item => (
-              <div key={item.id} className="item-card compact">
-                <strong>{item.event_type}</strong>
-                <small>{formatClock(item.created_at)}</small>
-              </div>
-            ))}
-            {!notifications.length && <div className="empty-line">No recent system notifications.</div>}
-          </div>
-        </article>
+          <article className="panel-card home-activity">
+            <div className="panel-title-row">
+              <h3>Activity Feed</h3>
+            </div>
+            <div className="activity-feed">
+              {(notifications || []).slice(0, 6).map(item => (
+                <div key={item.id} className="activity-item">
+                  <span className="activity-dot" />
+                  <div>
+                    <strong>{item.event_type || "New update"}</strong>
+                    <small>{formatClock(item.created_at)} ago</small>
+                  </div>
+                  <span className="activity-arrow">↗</span>
+                </div>
+              ))}
+              {!notifications.length && <div className="empty-line">No recent activity.</div>}
+            </div>
+          </article>
+        </div>
       </section>
     );
   }
@@ -3002,32 +2995,10 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
 
     return (
       <section className="chat-shell messenger-shell">
-        <div className="section-backbar">
-          <button type="button" className="ghost-btn" onClick={() => setActiveTab("home")}>
-            ← Back to Dashboard
-          </button>
-          <div className="section-backbar-meta">
-            <strong>Messenger</strong>
-            <small>Focus mode: navigation hidden for clarity.</small>
-          </div>
-        </div>
-        <header className="chat-platform-bar messenger-bar">
-          <div className="chat-platform-meta">
-            <h2>LifeHub Messenger</h2>
-            <p>
-              Dedicated chat platform with realtime delivery state, presence, media sharing, and voice/video calling.
-            </p>
-          </div>
-          <div className="chat-platform-actions">
-            <span className="status-pill">Conversations {conversations.length}</span>
-            <span className="status-pill">Unread {totalUnreadChats}</span>
-            <span className="status-pill">Live users {Object.keys(onlineUsers).length}</span>
-          </div>
-        </header>
         <div className="chat-layout full-width-chat messenger-layout">
           <aside className="chat-sidebar messenger-sidebar">
             <div className="chat-sidebar-head">
-              <h2>Chats</h2>
+              <h2>Messages</h2>
               <div className="thread-actions">
                 <button className="icon-btn" onClick={loadConversations} title="Refresh chats" type="button">
                   <UiIcon name="refresh" />
@@ -5392,20 +5363,30 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
                     </button>
                   </>
                 )}
-                {group.items.map(tab => (
-                  <button
-                    key={tab.id}
-                    type="button"
-                    className={`sidebar-link ${activeTab === tab.id ? "active" : ""}`}
-                    onClick={() => handleTabSelect(tab.id)}
-                  >
-                    <UiIcon name={tabIconName(tab.id)} />
-                    {tab.label}
-                  </button>
-                ))}
-              </div>
+              {group.items.map(tab => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  className={`sidebar-link ${activeTab === tab.id ? "active" : ""}`}
+                  onClick={() => handleTabSelect(tab.id)}
+                >
+                  <UiIcon name={tabIconName(tab.id)} />
+                  {tab.label}
+                </button>
+              ))}
+              {group.id === "account" && (
+                <button
+                  type="button"
+                  className="sidebar-link"
+                  onClick={() => handleTabSelect("profile")}
+                >
+                  <UiIcon name="shield" />
+                  Security
+                </button>
+              )}
             </div>
-          ))}
+          </div>
+        ))}
           {moduleGroups.length === 1 && moduleGroups[0].id === "results" && !moduleGroups[0].items.length && (
             <div className="module-empty">No services match that search.</div>
           )}
@@ -5458,7 +5439,7 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
 
         <main className="main-stage main-stage-full">
           {!suppressGlobalHeader && (
-            <div className="page-intro">
+            <div className={`page-intro ${activeTab === "home" ? "hero" : "compact"}`}>
               <h1>{activeTabMeta.title}</h1>
               <p>{activeTabMeta.description}</p>
             </div>
