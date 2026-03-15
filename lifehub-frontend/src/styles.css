@@ -5664,10 +5664,10 @@ body {
 }
 
 .sidebar-v5 .brand-mark {
-  width: 40px;
-  height: 40px;
-  border-radius: 12px;
-  background: #06b6d4;
+  width: 38px;
+  height: 38px;
+  border-radius: 999px;
+  background: #22d3ee;
   display: grid;
   place-items: center;
   color: #ffffff;
@@ -5700,7 +5700,7 @@ body {
 .sidebar-group-title {
   font-size: 11px;
   letter-spacing: 0.14em;
-  color: #94a3b8;
+  color: #9ca3af;
   font-weight: 700;
   margin: 6px 0 4px;
 }
@@ -5718,18 +5718,19 @@ body {
   border-radius: 12px;
   background: transparent;
   border: 1px solid transparent;
-  color: #e5e7eb;
+  color: #d1d5db;
   font-weight: 600;
+  font-size: 14px;
 }
 
 .sidebar-link:hover {
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.06);
 }
 
 .sidebar-link.active {
-  background: rgba(6, 182, 212, 0.18);
-  border-color: rgba(6, 182, 212, 0.3);
-  color: #e0f2fe;
+  background: #1f2937;
+  border-color: rgba(148, 163, 184, 0.24);
+  color: #22d3ee;
 }
 
 .sidebar-link .ui-icon {
@@ -5737,7 +5738,7 @@ body {
 }
 
 .sidebar-link.active .ui-icon {
-  color: #67e8f9;
+  color: #22d3ee;
 }
 
 .sidebar-foot {
