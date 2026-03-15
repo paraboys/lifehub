@@ -375,6 +375,32 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
     if (canAccess.profile) available.push({ id: "profile", label: "Profile" });
     return available;
   }, [canAccess]);
+  const tabMap = useMemo(() => Object.fromEntries(tabs.map(tab => [tab.id, tab])), [tabs]);
+  const moduleGroups = useMemo(() => {
+    const needle = deferredModuleSearch.trim().toLowerCase();
+    if (needle) {
+      const matches = tabs.filter(tab =>
+        [tab.label, tab.id].some(value => String(value || "").toLowerCase().includes(needle))
+      );
+      return [{ id: "results", label: "Search Results", items: matches }];
+    }
+
+    const groupDefs = [
+      { id: "core", label: "Core", items: ["home", "chat"] },
+      { id: "commerce", label: "Commerce", items: ["marketplace", "orders", "wallet", "seller"] },
+      { id: "services", label: "Services", items: ["services"] },
+      { id: "ops", label: "Ops", items: ["ops"] },
+      { id: "account", label: "Account", items: ["profile"] }
+    ];
+
+    return groupDefs
+      .map(group => ({
+        id: group.id,
+        label: group.label,
+        items: group.items.map(id => tabMap[id]).filter(Boolean)
+      }))
+      .filter(group => group.items.length);
+  }, [deferredModuleSearch, tabMap, tabs]);
 
   const [activeTab, setActiveTab] = useState("home");
   const [error, setError] = useState("");
@@ -383,6 +409,9 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
   const [home, setHome] = useState(null);
   const [commandOpen, setCommandOpen] = useState(false);
   const [commandQuery, setCommandQuery] = useState("");
+  const [moduleSearch, setModuleSearch] = useState("");
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const deferredCommandQuery = useDeferredValue(commandQuery);
 
   const [conversations, setConversations] = useState([]);
   const [selectedConversationId, setSelectedConversationId] = useState("");
@@ -653,7 +682,6 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
   );
   const deferredChatSearch = useDeferredValue(chatSearch);
   const deferredThreadSearch = useDeferredValue(threadSearch);
-  const deferredCommandQuery = useDeferredValue(commandQuery);
   const deferredProductQuery = useDeferredValue(productQuery);
 
   const filteredConversations = useMemo(() => {
@@ -5313,88 +5341,211 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
     return renderProfileTab();
   }
 
+  function handleTabSelect(tabId) {
+    setActiveTab(tabId);
+    setSidebarOpen(false);
+  }
+
   const suppressGlobalHeader = activeTab === "chat"
     || (activeTab === "marketplace" && marketplaceView !== "catalog");
+  const showContextPanel = activeTab !== "chat";
+
+  const handleGlobalSearchChange = event => {
+    const value = event.target.value;
+    setCommandQuery(value);
+    if (!commandOpen) {
+      setCommandOpen(true);
+    }
+  };
 
   return (
-    <div className={`superapp-shell superapp-shell-full shell-${activeTab}`}>
-      <main className="main-stage main-stage-full">
-        {!suppressGlobalHeader && (
-          <>
-            <header className={`topbar topbar-full topbar-${activeTab}`}>
-              <div className="topbar-row">
-                <div className="topbar-main">
-                  <span className="topbar-eyebrow">{activeTabMeta.eyebrow}</span>
-                  <h3>{activeTabMeta.title}</h3>
-                  <p>{activeTabMeta.description}</p>
-                </div>
-                <div className="topbar-meta topbar-meta-card">
-                  <div className="topbar-avatar">
-                    {profilePhoto ? (
-                      <img src={profilePhoto} alt="Profile" className="profile-avatar" />
-                    ) : (
-                      <div className="profile-avatar">{String(user.name || "U").slice(0, 1)}</div>
-                    )}
-                  </div>
-                  <div className="topbar-user-copy">
-                    <strong>{user.name}</strong>
-                    <small>{roleLabel(userRoles)}</small>
-                  </div>
-                  <div className="chip-row">
-                    <button type="button" className="chip chip-button" onClick={() => setCommandOpen(true)}>
-                      Command Center
+    <div className={`superapp-shell superapp-shell-full superapp-shell-v4 shell-${activeTab} ${sidebarOpen ? "sidebar-open" : ""}`}>
+      <header className="global-topbar">
+        <button
+          type="button"
+          className="nav-toggle"
+          aria-label="Toggle navigation"
+          onClick={() => setSidebarOpen(prev => !prev)}
+        >
+          <span />
+          <span />
+          <span />
+        </button>
+        <div className="global-brand">
+          <div className="brand-mark">LH</div>
+          <div>
+            <strong>LifeHub</strong>
+            <small>Unified Service Console</small>
+          </div>
+        </div>
+        <div className="global-search" onClick={() => setCommandOpen(true)}>
+          <UiIcon name="search" />
+          <input
+            value={commandQuery}
+            onChange={handleGlobalSearchChange}
+            onFocus={() => setCommandOpen(true)}
+            placeholder="Search services, workflows, people, or actions"
+          />
+          <span className="global-search-hint">Ctrl + K</span>
+        </div>
+        <div className="global-actions">
+          <button type="button" className="ghost-btn" onClick={() => setCommandOpen(true)}>
+            Command
+          </button>
+          <button type="button" className="icon-btn badge-btn" onClick={() => handleTabSelect("home")}>
+            <UiIcon name="bell" />
+            {notifications.length > 0 && (
+              <span className="mini-badge">{notifications.length > 99 ? "99+" : notifications.length}</span>
+            )}
+          </button>
+          <button type="button" className="icon-btn badge-btn" onClick={() => handleTabSelect("chat")}>
+            <UiIcon name="chat" />
+            {totalUnreadChats > 0 && (
+              <span className="mini-badge">{totalUnreadChats > 99 ? "99+" : totalUnreadChats}</span>
+            )}
+          </button>
+          <div className="global-user">
+            {profilePhoto ? (
+              <img src={profilePhoto} alt="Profile" className="profile-avatar small" />
+            ) : (
+              <div className="profile-avatar small">{String(user.name || "U").slice(0, 1)}</div>
+            )}
+            <div>
+              <strong>{user.name || "LifeHub User"}</strong>
+              <small>{roleLabel(userRoles)}</small>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <div className="workspace-frame">
+        <aside className={`sidebar-v4 ${sidebarOpen ? "open" : ""}`}>
+          <div className="sidebar-search">
+            <UiIcon name="search" />
+            <input
+              value={moduleSearch}
+              onChange={event => setModuleSearch(event.target.value)}
+              placeholder="Search services"
+            />
+          </div>
+          <div className="sidebar-groups">
+            {moduleGroups.map(group => (
+              <div key={group.id} className="module-group">
+                <span className="module-group-title">{group.label}</span>
+                <div className="module-list">
+                  {group.items.map(tab => (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      className={`module-item ${activeTab === tab.id ? "active" : ""}`}
+                      onClick={() => handleTabSelect(tab.id)}
+                    >
+                      <span className="module-item-icon">
+                        <UiIcon name={tabIconName(tab.id)} />
+                        {tab.id === "home" && notifications.length > 0 && (
+                          <span className="nav-badge">{notifications.length > 99 ? "99+" : notifications.length}</span>
+                        )}
+                        {tab.id === "chat" && totalUnreadChats > 0 && (
+                          <span className="nav-badge">{totalUnreadChats > 99 ? "99+" : totalUnreadChats}</span>
+                        )}
+                      </span>
+                      <span className="module-item-label">{tab.label}</span>
                     </button>
-                    <button type="button" className="chip chip-button" onClick={() => setActiveTab("home")}>
-                      System Alerts: {notifications.length}
-                    </button>
-                    <button type="button" className="chip chip-button" onClick={() => setActiveTab("chat")}>
-                      Chat Alerts: {totalUnreadChats}
-                    </button>
-                    <span className="chip">Chat Events: {chatNotifications.length}</span>
-                    <span className="chip chip-live">
-                      {loading ? "Loading data..." : "Live session"}
-                    </span>
-                  </div>
+                  ))}
                 </div>
               </div>
-              <nav className="module-nav-grid">
-                {tabs.map(tab => (
-                  <button
-                    key={tab.id}
-                    type="button"
-                    className={`module-nav-item ${activeTab === tab.id ? "active" : ""}`}
-                    onClick={() => setActiveTab(tab.id)}
-                  >
-                    <span className="module-nav-icon">
-                      <UiIcon name={tabIconName(tab.id)} />
-                      {tab.id === "home" && notifications.length > 0 && (
-                        <span className="nav-badge">{notifications.length > 99 ? "99+" : notifications.length}</span>
-                      )}
-                      {tab.id === "chat" && totalUnreadChats > 0 && (
-                        <span className="nav-badge">{totalUnreadChats > 99 ? "99+" : totalUnreadChats}</span>
-                      )}
-                    </span>
-                    <span>{tab.label}</span>
-                  </button>
-                ))}
-              </nav>
-            </header>
-            <div className="command-deck">
-              <div className="command-deck-meta">
-                <strong>Workspace Controls</strong>
-                <small>{tabSubtitle(activeTab)}</small>
+            ))}
+            {moduleGroups.length === 1 && moduleGroups[0].id === "results" && !moduleGroups[0].items.length && (
+              <div className="module-empty">No services match that search.</div>
+            )}
+          </div>
+          <div className="sidebar-foot">
+            <strong>{loading ? "Syncing workspace" : "Live session"}</strong>
+            <small>{tabSubtitle(activeTab)}</small>
+            <button type="button" className="ghost-btn" onClick={bootstrap}>
+              Sync Workspace
+            </button>
+          </div>
+        </aside>
+        {sidebarOpen && <div className="sidebar-overlay" onClick={() => setSidebarOpen(false)} />}
+
+        <main className="main-stage main-stage-full">
+          {!suppressGlobalHeader && (
+            <section className="page-header">
+              <div>
+                <span className="eyebrow-chip">{activeTabMeta.eyebrow}</span>
+                <h2>{activeTabMeta.title}</h2>
+                <p>{activeTabMeta.description}</p>
               </div>
-              <button type="button" className="ghost-btn" onClick={bootstrap}>
-                Sync Workspace
+              <div className="page-actions">
+                <button type="button" className="ghost-btn" onClick={bootstrap}>
+                  Sync Workspace
+                </button>
+                <button type="button" className="ghost-btn" onClick={() => setCommandOpen(true)}>
+                  Open Command Center
+                </button>
+              </div>
+            </section>
+          )}
+
+          {error && <div className="alert danger">{error}</div>}
+          {toast && <div className="alert info">{toast}</div>}
+          {renderTab()}
+        </main>
+
+        {showContextPanel && (
+          <aside className="context-panel">
+            <div className="context-card">
+              <div className="context-title">Active Workspace</div>
+              <strong>{activeTabMeta.title}</strong>
+              <small>{tabSubtitle(activeTab)}</small>
+            </div>
+            <div className="context-card context-metrics">
+              <div>
+                <small>System Alerts</small>
+                <strong>{notifications.length}</strong>
+              </div>
+              <div>
+                <small>Chat Unread</small>
+                <strong>{totalUnreadChats}</strong>
+              </div>
+              <div>
+                <small>Chat Events</small>
+                <strong>{chatNotifications.length}</strong>
+              </div>
+            </div>
+            <div className="context-card">
+              <div className="context-title">Quick Actions</div>
+              <button type="button" className="ghost-btn" onClick={() => handleTabSelect("marketplace")}>
+                Open Marketplace
+              </button>
+              <button type="button" className="ghost-btn" onClick={() => handleTabSelect("services")}>
+                Find Services
+              </button>
+              <button type="button" className="ghost-btn" onClick={() => handleTabSelect("wallet")}>
+                Wallet Overview
               </button>
             </div>
-          </>
+            <div className="context-card context-user-card">
+              <div className="context-user-row">
+                {profilePhoto ? (
+                  <img src={profilePhoto} alt="Profile" className="profile-avatar small" />
+                ) : (
+                  <div className="profile-avatar small">{String(user.name || "U").slice(0, 1)}</div>
+                )}
+                <div>
+                  <strong>{user.name || "LifeHub User"}</strong>
+                  <small>{roleLabel(userRoles)}</small>
+                </div>
+              </div>
+              <div className="context-status">
+                <span>{loading ? "Refreshing live data..." : "All systems nominal"}</span>
+              </div>
+            </div>
+          </aside>
         )}
+      </div>
 
-        {error && <div className="alert danger">{error}</div>}
-        {toast && <div className="alert info">{toast}</div>}
-        {renderTab()}
-      </main>
       {commandOpen && (
         <div className="command-overlay" onClick={() => setCommandOpen(false)}>
           <div className="command-modal" onClick={event => event.stopPropagation()}>
