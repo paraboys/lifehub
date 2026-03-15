@@ -376,31 +376,6 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
     return available;
   }, [canAccess]);
   const tabMap = useMemo(() => Object.fromEntries(tabs.map(tab => [tab.id, tab])), [tabs]);
-  const moduleGroups = useMemo(() => {
-    const needle = deferredModuleSearch.trim().toLowerCase();
-    if (needle) {
-      const matches = tabs.filter(tab =>
-        [tab.label, tab.id].some(value => String(value || "").toLowerCase().includes(needle))
-      );
-      return [{ id: "results", label: "Search Results", items: matches }];
-    }
-
-    const groupDefs = [
-      { id: "core", label: "Core", items: ["home", "chat"] },
-      { id: "commerce", label: "Commerce", items: ["marketplace", "orders", "wallet", "seller"] },
-      { id: "services", label: "Services", items: ["services"] },
-      { id: "ops", label: "Ops", items: ["ops"] },
-      { id: "account", label: "Account", items: ["profile"] }
-    ];
-
-    return groupDefs
-      .map(group => ({
-        id: group.id,
-        label: group.label,
-        items: group.items.map(id => tabMap[id]).filter(Boolean)
-      }))
-      .filter(group => group.items.length);
-  }, [deferredModuleSearch, tabMap, tabs]);
 
   const [activeTab, setActiveTab] = useState("home");
   const [error, setError] = useState("");
@@ -412,6 +387,7 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
   const [moduleSearch, setModuleSearch] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const deferredCommandQuery = useDeferredValue(commandQuery);
+  const deferredModuleSearch = useDeferredValue(moduleSearch);
 
   const [conversations, setConversations] = useState([]);
   const [selectedConversationId, setSelectedConversationId] = useState("");
@@ -683,6 +659,31 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
   const deferredChatSearch = useDeferredValue(chatSearch);
   const deferredThreadSearch = useDeferredValue(threadSearch);
   const deferredProductQuery = useDeferredValue(productQuery);
+  const moduleGroups = useMemo(() => {
+    const needle = deferredModuleSearch.trim().toLowerCase();
+    if (needle) {
+      const matches = tabs.filter(tab =>
+        [tab.label, tab.id].some(value => String(value || "").toLowerCase().includes(needle))
+      );
+      return [{ id: "results", label: "Search Results", items: matches }];
+    }
+
+    const groupDefs = [
+      { id: "core", label: "Core", items: ["home", "chat"] },
+      { id: "commerce", label: "Commerce", items: ["marketplace", "orders", "wallet", "seller"] },
+      { id: "services", label: "Services", items: ["services"] },
+      { id: "ops", label: "Ops", items: ["ops"] },
+      { id: "account", label: "Account", items: ["profile"] }
+    ];
+
+    return groupDefs
+      .map(group => ({
+        id: group.id,
+        label: group.label,
+        items: group.items.map(id => tabMap[id]).filter(Boolean)
+      }))
+      .filter(group => group.items.length);
+  }, [deferredModuleSearch, tabMap, tabs]);
 
   const filteredConversations = useMemo(() => {
     if (!deferredChatSearch.trim()) return conversations;
