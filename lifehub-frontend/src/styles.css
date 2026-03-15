@@ -2241,6 +2241,37 @@ button:hover {
   gap: 6px;
 }
 
+.market-cart-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.market-cart-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.market-cart-actions input {
+  width: 70px;
+  background: #f8fafc;
+  border: 1px solid rgba(13, 74, 121, 0.18);
+  border-radius: 10px;
+  padding: 6px 8px;
+  color: var(--ink);
+}
+
+.market-cart-remove {
+  border: 1px solid rgba(239, 68, 68, 0.2);
+  background: #fee2e2;
+  color: #b91c1c;
+  border-radius: 10px;
+  padding: 6px 10px;
+  font-weight: 600;
+}
+
 .market-cart-item small {
   color: var(--ink-dim);
 }

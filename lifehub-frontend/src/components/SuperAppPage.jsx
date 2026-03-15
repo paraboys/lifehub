@@ -1833,6 +1833,14 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
     );
   }
 
+  function removeFromCart(productId) {
+    setCart(prev => prev.filter(item => String(item.productId) !== String(productId)));
+  }
+
+  function clearCart() {
+    setCart([]);
+  }
+
   async function openMarketplaceProduct(item, fallbackShop = null) {
     const normalized = normalizeMarketplaceProduct(item, fallbackShop || selectedShop);
     if (!normalized) return;
@@ -3880,15 +3888,26 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
                 <div className="market-cart-list">
                   {cart.map(item => (
                     <div key={item.productId} className="market-cart-item">
-                      <div>
-                        <strong>{item.name}</strong>
-                        <small>Unit {toCurrency(item.price)}</small>
+                      <div className="market-cart-row">
+                        <div>
+                          <strong>{item.name}</strong>
+                          <small>Unit {toCurrency(item.price)}</small>
+                        </div>
+                        <div className="market-cart-actions">
+                          <input
+                            value={item.quantity}
+                            onChange={event => updateCartQuantity(item.productId, event.target.value)}
+                            placeholder="Qty"
+                          />
+                          <button
+                            type="button"
+                            className="market-cart-remove"
+                            onClick={() => removeFromCart(item.productId)}
+                          >
+                            Remove
+                          </button>
+                        </div>
                       </div>
-                      <input
-                        value={item.quantity}
-                        onChange={event => updateCartQuantity(item.productId, event.target.value)}
-                        placeholder="Qty"
-                      />
                     </div>
                   ))}
                   {!cart.length && <div className="empty-line">Your cart is empty.</div>}
@@ -3898,6 +3917,11 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
                     <span>Total</span>
                     <strong>{toCurrency(cartTotal)}</strong>
                   </div>
+                  {!!cart.length && (
+                    <button type="button" className="ghost-btn" onClick={clearCart}>
+                      Clear cart
+                    </button>
+                  )}
                   <select value={checkoutMode} onChange={event => setCheckoutMode(event.target.value)}>
                     <option value="RAZORPAY">Razorpay Checkout</option>
                     <option value="WALLET">Wallet Balance</option>
@@ -4267,15 +4291,26 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
             <div className="market-cart-list">
               {cart.map(item => (
                 <div key={item.productId} className="market-cart-item">
-                  <div>
-                    <strong>{item.name}</strong>
-                    <small>Unit {toCurrency(item.price)}</small>
+                  <div className="market-cart-row">
+                    <div>
+                      <strong>{item.name}</strong>
+                      <small>Unit {toCurrency(item.price)}</small>
+                    </div>
+                    <div className="market-cart-actions">
+                      <input
+                        value={item.quantity}
+                        onChange={event => updateCartQuantity(item.productId, event.target.value)}
+                        placeholder="Qty"
+                      />
+                      <button
+                        type="button"
+                        className="market-cart-remove"
+                        onClick={() => removeFromCart(item.productId)}
+                      >
+                        Remove
+                      </button>
+                    </div>
                   </div>
-                  <input
-                    value={item.quantity}
-                    onChange={event => updateCartQuantity(item.productId, event.target.value)}
-                    placeholder="Qty"
-                  />
                 </div>
               ))}
               {!cart.length && <div className="empty-line">Your cart is empty.</div>}
@@ -4285,6 +4320,11 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
                 <span>Total</span>
                 <strong>{toCurrency(cartTotal)}</strong>
               </div>
+              {!!cart.length && (
+                <button type="button" className="ghost-btn" onClick={clearCart}>
+                  Clear cart
+                </button>
+              )}
               <button type="button" onClick={goToMarketplaceCheckout} disabled={!cart.length || !selectedShopId}>
                 Go to checkout page
               </button>
