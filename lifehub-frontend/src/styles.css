@@ -5445,3 +5445,198 @@ body {
     border-radius: 0 18px 18px 0;
   }
 }
+
+/* Loveable modern UI pass */
+:root {
+  --brand: #1f6bff;
+  --brand-deep: #1749cc;
+  --accent: #22c3a6;
+  --accent-warm: #f5a24d;
+  --ink: #0b1f35;
+  --ink-dim: #5a6f85;
+  --bg-base: #eef3fb;
+  --bg-top: #fcfdff;
+  --card-bg: #ffffff;
+  --card-border: rgba(11, 31, 53, 0.12);
+  --card-shadow: 0 18px 38px rgba(12, 28, 48, 0.08);
+  --card-shadow-hover: 0 26px 52px rgba(12, 28, 48, 0.14);
+  --radius-xl: 22px;
+  --radius-lg: 18px;
+  --radius-md: 14px;
+  --space-lg: 20px;
+  --space-md: 14px;
+  --space-sm: 10px;
+}
+
+body {
+  background:
+    radial-gradient(circle at 8% 10%, rgba(31, 107, 255, 0.09), transparent 40%),
+    radial-gradient(circle at 85% 18%, rgba(34, 195, 166, 0.08), transparent 45%),
+    radial-gradient(circle at 60% 90%, rgba(245, 162, 77, 0.08), transparent 48%),
+    linear-gradient(180deg, var(--bg-top), var(--bg-base));
+}
+
+.app {
+  max-width: 1360px;
+  padding: 24px;
+}
+
+.workspace-frame {
+  gap: 20px;
+}
+
+.global-topbar,
+.page-header,
+.sidebar-v4,
+.context-card,
+.command-deck,
+.panel-card,
+.item-card,
+.metric-card,
+.market-product-card,
+.market-result-card,
+.home-action-tile,
+.market-fast-deal-card,
+.market-shelf-item,
+.chat-shell,
+.chat-sidebar,
+.chat-thread {
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--card-border);
+  background: var(--card-bg);
+  box-shadow: var(--card-shadow);
+}
+
+.panel-card,
+.item-card,
+.metric-card,
+.market-product-card,
+.market-result-card,
+.home-action-tile,
+.market-fast-deal-card,
+.market-shelf-item {
+  padding: clamp(14px, 1.6vw, 20px);
+  transition: transform 180ms ease, box-shadow 180ms ease, border-color 180ms ease;
+}
+
+.panel-card:hover,
+.item-card:hover,
+.metric-card:hover,
+.market-product-card:hover,
+.market-result-card:hover,
+.home-action-tile:hover,
+.market-fast-deal-card:hover,
+.market-shelf-item:hover {
+  transform: translateY(-3px);
+  box-shadow: var(--card-shadow-hover);
+  border-color: rgba(31, 107, 255, 0.28);
+}
+
+.workspace-grid {
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 18px;
+}
+
+.metric-grid {
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 16px;
+}
+
+.home-action-grid {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 18px;
+}
+
+.market-product-grid,
+.market-result-grid,
+.market-shelf-items,
+.market-hero-shelf-grid,
+.market-grid-commerce {
+  gap: 18px;
+}
+
+.module-item,
+.module-nav-item {
+  border-radius: var(--radius-md);
+  background: #ffffff;
+  border: 1px solid rgba(11, 31, 53, 0.1);
+  transition: transform 160ms ease, box-shadow 160ms ease;
+}
+
+.module-item:hover,
+.module-nav-item:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 12px 22px rgba(12, 28, 48, 0.12);
+}
+
+.module-item.active,
+.module-nav-item.active {
+  background: linear-gradient(120deg, rgba(31, 107, 255, 0.14), rgba(34, 195, 166, 0.12));
+  border-color: rgba(31, 107, 255, 0.32);
+}
+
+.page-header h2 {
+  font-family: "Space Grotesk", "Sora", sans-serif;
+  font-weight: 700;
+}
+
+.context-card.context-metrics {
+  background:
+    linear-gradient(160deg, rgba(31, 107, 255, 0.08), rgba(34, 195, 166, 0.08)),
+    #ffffff;
+}
+
+.global-actions .ghost-btn,
+.page-actions .ghost-btn {
+  border-radius: 999px;
+  background: rgba(31, 107, 255, 0.08);
+  border-color: rgba(31, 107, 255, 0.22);
+  color: #1546c8;
+}
+
+.global-actions .ghost-btn:hover,
+.page-actions .ghost-btn:hover {
+  background: rgba(31, 107, 255, 0.16);
+}
+
+.chat-shell {
+  overflow: hidden;
+}
+
+.chat-sidebar,
+.chat-thread {
+  background: #f7f9fc;
+  border: 1px solid rgba(11, 31, 53, 0.1);
+  box-shadow: none;
+}
+
+@media (max-width: 1024px) {
+  .workspace-frame {
+    gap: 16px;
+  }
+
+  .workspace-grid {
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .app {
+    padding: 16px;
+  }
+
+  .panel-card,
+  .item-card,
+  .metric-card,
+  .market-product-card,
+  .market-result-card,
+  .home-action-tile {
+    padding: 14px;
+  }
+
+  .workspace-grid,
+  .metric-grid,
+  .home-action-grid {
+    grid-template-columns: 1fr;
+  }
+}
