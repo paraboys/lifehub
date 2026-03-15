@@ -784,6 +784,13 @@ button.danger {
   flex: 0 0 auto;
 }
 
+.chat-avatar-img {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
 .chat-avatar.large {
   width: 52px;
   height: 52px;
@@ -6088,6 +6095,212 @@ body {
 .superapp-shell-v5 .market-head-actions button.active {
   color: #0ea5e9;
   border-color: #0ea5e9;
+}
+
+/* Seller hub layout */
+.seller-shell {
+  display: grid;
+  gap: 18px;
+  padding-top: 6px;
+}
+
+.seller-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.seller-header h2 {
+  margin: 0;
+  font-size: 26px;
+}
+
+.seller-header p {
+  margin: 4px 0 0;
+  color: #6b7280;
+}
+
+.seller-primary-btn {
+  border-radius: 12px;
+  padding: 10px 16px;
+  background: #0ea5e9;
+  border: 1px solid #0ea5e9;
+  color: #ffffff;
+  font-weight: 700;
+}
+
+.seller-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 14px;
+}
+
+.seller-stat-card {
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 16px;
+  padding: 14px;
+  display: grid;
+  gap: 6px;
+}
+
+.seller-stat-label {
+  color: #6b7280;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.seller-category-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.seller-category-chip {
+  background: #f3f4f6;
+  border: 1px solid #e5e7eb;
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  color: #374151;
+}
+
+.seller-inventory-card {
+  padding: 16px;
+}
+
+.seller-table-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.seller-table {
+  display: grid;
+  gap: 8px;
+}
+
+.seller-table-row {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1fr 1fr 1fr;
+  gap: 10px;
+  align-items: center;
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px solid #e5e7eb;
+  background: #ffffff;
+}
+
+.seller-table-header {
+  background: #f9fafb;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #6b7280;
+}
+
+.seller-product-cell {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.seller-product-thumb {
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  object-fit: cover;
+  background: #f3f4f6;
+}
+
+.seller-product-thumb.placeholder {
+  display: grid;
+  place-items: center;
+  color: #6b7280;
+  font-weight: 700;
+}
+
+.seller-status {
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  width: fit-content;
+}
+
+.seller-status.active {
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.seller-status.low-stock {
+  background: #ffedd5;
+  color: #c2410c;
+}
+
+.seller-status.out-of-stock {
+  background: #e0f2fe;
+  color: #0284c7;
+}
+
+.seller-form-card {
+  padding: 16px;
+}
+
+@media (max-width: 1024px) {
+  .seller-table-row {
+    grid-template-columns: 2fr 1fr 1fr;
+    row-gap: 8px;
+  }
+
+  .seller-table-row span:nth-child(4),
+  .seller-table-row span:nth-child(5) {
+    display: none;
+  }
+}
+
+@media (max-width: 720px) {
+  .seller-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .seller-table-row {
+    grid-template-columns: 1fr;
+    align-items: start;
+  }
+}
+
+/* Chat independent scroll */
+.chat-shell {
+  height: calc(100vh - 220px);
+}
+
+.chat-layout {
+  height: 100%;
+}
+
+.chat-sidebar {
+  display: flex;
+  flex-direction: column;
+}
+
+.chat-list {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.chat-thread {
+  display: flex;
+  flex-direction: column;
+}
+
+.messages-panel {
+  flex: 1;
+  overflow-y: auto;
 }
 
 .superapp-shell-v5 button {

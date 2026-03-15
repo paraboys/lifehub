@@ -576,6 +576,7 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
     price: "",
     quantity: "1"
   });
+  const [sellerFormOpen, setSellerFormOpen] = useState(false);
   const [sellerProducts, setSellerProducts] = useState([]);
   const [sellerImageUploading, setSellerImageUploading] = useState(false);
   const [shopLocationForm, setShopLocationForm] = useState({
@@ -3172,7 +3173,15 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
                 >
                   <div className="chat-row">
                     <div className="chat-avatar">
-                      {initials(conv?.peers?.[0]?.name || conv?.peers?.[0]?.phone || "C")}
+                      {(() => {
+                        const label = conv?.peers?.[0]?.name || conv?.peers?.[0]?.phone || "Contact";
+                        const avatarUrl = conv?.peers?.[0]?.avatarUrl || providerAvatarUrl(label);
+                        return avatarUrl ? (
+                          <img src={avatarUrl} alt={label} className="chat-avatar-img" />
+                        ) : (
+                          initials(label)
+                        );
+                      })()}
                       {onlineUsers[String(conv?.peers?.[0]?.userId)] && <span className="online-dot" />}
                     </div>
                     <div className="chat-list-body">
@@ -3206,7 +3215,15 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
             <div className="chat-thread-head">
               <div className="thread-peer">
                 <div className="chat-avatar large">
-                  {initials(activePeer?.name || activePeer?.phone || "C")}
+                  {(() => {
+                    const label = activePeer?.name || activePeer?.phone || "Contact";
+                    const avatarUrl = activePeer?.avatarUrl || providerAvatarUrl(label);
+                    return avatarUrl ? (
+                      <img src={avatarUrl} alt={label} className="chat-avatar-img" />
+                    ) : (
+                      initials(label)
+                    );
+                  })()}
                   {activePeerOnline && <span className="online-dot" />}
                 </div>
                 <div className="thread-peer-meta">
@@ -4798,145 +4815,245 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
   }
 
   function renderSellerTab() {
+    const shopIdValue = sellerForm.shopId || selectedShopId || selectedShop?.id || "";
+    const sellerOrders = shopIdValue
+      ? orders.filter(order => String(order.shopId || order.shop_id || order.shop?.id || "") === String(shopIdValue))
+      : [];
+    const totalProducts = sellerProducts.length;
+    const categoryMap = sellerProducts.reduce((acc, product) => {
+      const key = String(product.category || "General").trim() || "General";
+      acc[key] = (acc[key] || 0) + 1;
+      return acc;
+    }, {});
+    const topCategories = Object.entries(categoryMap)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5);
+    const ordersToday = sellerOrders.filter(order => {
+      const rawDate = order.created_at || order.createdAt || order.timestamp;
+      if (!rawDate) return false;
+      const parsed = new Date(rawDate);
+      if (Number.isNaN(parsed.getTime())) return false;
+      return isSameDay(parsed, new Date());
+    }).length;
+    const revenue = sellerOrders.reduce((sum, order) => {
+      const amount = Number(order.totalAmount || order.total || order.amount || order.value || 0);
+      return Number.isFinite(amount) ? sum + amount : sum;
+    }, 0);
+    const growth = (() => {
+      const now = new Date();
+      const startThisWeek = new Date(now);
+      startThisWeek.setDate(now.getDate() - 7);
+      const startPrevWeek = new Date(now);
+      startPrevWeek.setDate(now.getDate() - 14);
+      const thisWeek = sellerOrders.reduce((sum, order) => {
+        const rawDate = order.created_at || order.createdAt || order.timestamp;
+        if (!rawDate) return sum;
+        const parsed = new Date(rawDate);
+        if (Number.isNaN(parsed.getTime())) return sum;
+        if (parsed < startThisWeek) return sum;
+        const amount = Number(order.totalAmount || order.total || order.amount || order.value || 0);
+        return Number.isFinite(amount) ? sum + amount : sum;
+      }, 0);
+      const prevWeek = sellerOrders.reduce((sum, order) => {
+        const rawDate = order.created_at || order.createdAt || order.timestamp;
+        if (!rawDate) return sum;
+        const parsed = new Date(rawDate);
+        if (Number.isNaN(parsed.getTime())) return sum;
+        if (parsed < startPrevWeek || parsed >= startThisWeek) return sum;
+        const amount = Number(order.totalAmount || order.total || order.amount || order.value || 0);
+        return Number.isFinite(amount) ? sum + amount : sum;
+      }, 0);
+      if (prevWeek <= 0) return 0;
+      return Math.round(((thisWeek - prevWeek) / prevWeek) * 100);
+    })();
+
     return (
-      <section className="workspace-grid">
-        <article className="panel-card">
-          <h2>Add Grocery Product</h2>
-          <div className="field-row">
-            <input
-              value={shopLocationForm.lat}
-              onChange={event =>
-                setShopLocationForm(prev => ({ ...prev, lat: event.target.value }))
-              }
-              placeholder="Shop lat"
-            />
-            <input
-              value={shopLocationForm.lng}
-              onChange={event =>
-                setShopLocationForm(prev => ({ ...prev, lng: event.target.value }))
-              }
-              placeholder="Shop lng"
-            />
-            <button type="button" onClick={updateShopLocation}>Update Shop Location</button>
+      <section className="seller-shell">
+        <div className="seller-header">
+          <div>
+            <h2>Seller Hub</h2>
+            <p>Manage your products and orders</p>
           </div>
-          <div className="field-row">
-            <input
-              value={sellerForm.shopId}
-              onChange={event => setSellerForm(prev => ({ ...prev, shopId: event.target.value }))}
-              placeholder="Shop ID"
-            />
-            <button type="button" onClick={() => loadSellerProducts()}>Load Inventory</button>
+          <button type="button" className="seller-primary-btn" onClick={() => setSellerFormOpen(true)}>
+            + Add Product
+          </button>
+        </div>
+
+        <div className="seller-stats-grid">
+          <div className="seller-stat-card">
+            <span className="seller-stat-label">Total Products</span>
+            <strong>{totalProducts}</strong>
           </div>
-          <div className="field-row">
-            <input
-              value={sellerForm.name}
-              onChange={event => setSellerForm(prev => ({ ...prev, name: event.target.value }))}
-              placeholder="Product name"
-            />
-            <input
-              value={sellerForm.company}
-              onChange={event => setSellerForm(prev => ({ ...prev, company: event.target.value }))}
-              placeholder="Company / Brand"
-            />
-            <input
-              value={sellerForm.category}
-              onChange={event => setSellerForm(prev => ({ ...prev, category: event.target.value }))}
-              placeholder="Category"
-            />
+          <div className="seller-stat-card">
+            <span className="seller-stat-label">Orders Today</span>
+            <strong>{ordersToday}</strong>
           </div>
-          <div className="field-row">
-            <input
-              value={sellerForm.imageUrl}
-              onChange={event => setSellerForm(prev => ({ ...prev, imageUrl: event.target.value }))}
-              placeholder="Product image URL (optional)"
-            />
+          <div className="seller-stat-card">
+            <span className="seller-stat-label">Revenue</span>
+            <strong>${toCurrency(revenue)}</strong>
           </div>
-          <div className="field-row seller-image-row">
-            <input type="file" accept="image/*" onChange={handleSellerImageSelection} disabled={sellerImageUploading} />
-            <small>
-              {sellerImageUploading
-                ? "Uploading image to media storage..."
-                : "Upload from device to auto-fill image URL."}
-            </small>
+          <div className="seller-stat-card">
+            <span className="seller-stat-label">Growth</span>
+            <strong>{growth}%</strong>
           </div>
-          {(() => {
-            const imageSrc = resolveMediaUrl(sellerForm.imageUrl, mediaBaseUrl);
-            return imageSrc ? (
-              <div className="field-row">
-                <img
-                  src={imageSrc}
-                  alt="Product preview"
-                  style={{ width: 140, height: 90, objectFit: "cover", borderRadius: 10 }}
-                />
-              </div>
-            ) : null;
-          })()}
-          <div className="field-row">
-            <input
-              value={sellerForm.description}
-              onChange={event => setSellerForm(prev => ({ ...prev, description: event.target.value }))}
-              placeholder="Product description"
-            />
+        </div>
+
+        {topCategories.length > 0 && (
+          <div className="seller-category-row">
+            {topCategories.map(([label, count]) => (
+              <span key={label} className="seller-category-chip">
+                {titleCase(label)} ? {count}
+              </span>
+            ))}
           </div>
-          <div className="field-row">
-            <input
-              value={sellerForm.price}
-              onChange={event => setSellerForm(prev => ({ ...prev, price: event.target.value }))}
-              placeholder="Price"
-            />
-            <input
-              value={sellerForm.quantity}
-              onChange={event => setSellerForm(prev => ({ ...prev, quantity: event.target.value }))}
-              placeholder="Quantity"
-            />
-            <button type="button" onClick={createSellerProduct}>Add Product</button>
+        )}
+
+        <article className="panel-card seller-inventory-card">
+          <div className="seller-table-head">
+            <h3>Inventory</h3>
+            <span>{sellerProducts.length} items</span>
+          </div>
+          <div className="seller-table">
+            <div className="seller-table-row seller-table-header">
+              <span>Product</span>
+              <span>SKU</span>
+              <span>Price</span>
+              <span>Stock</span>
+              <span>Status</span>
+            </div>
+            {sellerProducts.map(product => {
+              const status = Number(product.availableQuantity || 0) <= 0
+                ? "Out of Stock"
+                : Number(product.availableQuantity || 0) <= 10
+                  ? "Low Stock"
+                  : "Active";
+              const sku = product.sku || product.code || `SKU-${String(product.id).slice(-4)}`;
+              return (
+                <div key={product.id} className="seller-table-row">
+                  <div className="seller-product-cell">
+                    {(() => {
+                      const imageSrc = resolveMediaUrl(product.imageUrl, mediaBaseUrl);
+                      return imageSrc ? (
+                        <img src={imageSrc} alt={product.name} className="seller-product-thumb" />
+                      ) : (
+                        <div className="seller-product-thumb placeholder">{initials(product.name)}</div>
+                      );
+                    })()}
+                    <div>
+                      <strong>{product.name}</strong>
+                      <small>{product.category || "General"}</small>
+                    </div>
+                  </div>
+                  <span>{sku}</span>
+                  <span>${toCurrency(product.price)}</span>
+                  <span>{product.availableQuantity}</span>
+                  <span className={`seller-status ${status.replace(/\s+/g, "-").toLowerCase()}`}>{status}</span>
+                </div>
+              );
+            })}
+            {!sellerProducts.length && <div className="empty-line">No products loaded yet.</div>}
           </div>
         </article>
 
-        <article className="panel-card">
-          <h2>Inventory</h2>
-          <div className="stack-list">
-            {sellerProducts.map(product => (
-              <div key={product.id} className="item-card">
-                {(() => {
-                  const imageSrc = resolveMediaUrl(product.imageUrl, mediaBaseUrl);
-                  return imageSrc ? (
-                    <img
-                      src={imageSrc}
-                      alt={product.name}
-                      style={{ width: "100%", maxHeight: 140, objectFit: "cover", borderRadius: 10 }}
-                    />
-                  ) : null;
-                })()}
-                <div className="item-header">
-                  <strong>{product.name}</strong>
-                  <span className="status-pill">Qty {product.availableQuantity}</span>
-                </div>
-                <small>
-                  {(product.company ? `Company ${product.company} | ` : "")}
-                  Price {toCurrency(product.price)} | Category {product.category || "general"}
-                </small>
-                {!!product.description && <small>{product.description}</small>}
+        {sellerFormOpen && (
+          <article className="panel-card seller-form-card">
+            <div className="seller-table-head">
+              <h3>Add Product</h3>
+              <button type="button" className="ghost-btn" onClick={() => setSellerFormOpen(false)}>
+                Close
+              </button>
+            </div>
+            <div className="field-row">
+              <input
+                value={shopLocationForm.lat}
+                onChange={event => setShopLocationForm(prev => ({ ...prev, lat: event.target.value }))}
+                placeholder="Shop latitude"
+              />
+              <input
+                value={shopLocationForm.lng}
+                onChange={event => setShopLocationForm(prev => ({ ...prev, lng: event.target.value }))}
+                placeholder="Shop longitude"
+              />
+              <button type="button" onClick={updateShopLocation}>Update Location</button>
+            </div>
+            <div className="field-row">
+              <input
+                value={sellerForm.shopId}
+                onChange={event => setSellerForm(prev => ({ ...prev, shopId: event.target.value }))}
+                placeholder="Shop ID"
+              />
+              <button type="button" onClick={() => loadSellerProducts()}>Load Inventory</button>
+            </div>
+            <div className="field-row">
+              <input
+                value={sellerForm.name}
+                onChange={event => setSellerForm(prev => ({ ...prev, name: event.target.value }))}
+                placeholder="Product name"
+              />
+              <input
+                value={sellerForm.company}
+                onChange={event => setSellerForm(prev => ({ ...prev, company: event.target.value }))}
+                placeholder="Company / Brand"
+              />
+              <input
+                value={sellerForm.category}
+                onChange={event => setSellerForm(prev => ({ ...prev, category: event.target.value }))}
+                placeholder="Category"
+              />
+            </div>
+            <div className="field-row">
+              <input
+                value={sellerForm.imageUrl}
+                onChange={event => setSellerForm(prev => ({ ...prev, imageUrl: event.target.value }))}
+                placeholder="Product image URL (optional)"
+              />
+            </div>
+            <div className="field-row seller-image-row">
+              <input type="file" accept="image/*" onChange={handleSellerImageSelection} disabled={sellerImageUploading} />
+              <small>
+                {sellerImageUploading
+                  ? "Uploading image to media storage..."
+                  : "Upload from device to auto-fill image URL."}
+              </small>
+            </div>
+            {(() => {
+              const imageSrc = resolveMediaUrl(sellerForm.imageUrl, mediaBaseUrl);
+              return imageSrc ? (
                 <div className="field-row">
-                  <input
-                    placeholder="New quantity"
-                    onBlur={event => {
-                      if (!event.target.value) return;
-                      updateSellerQuantity(product.id, event.target.value);
-                      event.target.value = "";
-                    }}
+                  <img
+                    src={imageSrc}
+                    alt="Product preview"
+                    style={{ width: 140, height: 90, objectFit: "cover", borderRadius: 10 }}
                   />
                 </div>
-              </div>
-            ))}
-            {!sellerProducts.length && <div className="empty-line">No products loaded.</div>}
-          </div>
-        </article>
+              ) : null;
+            })()}
+            <div className="field-row">
+              <input
+                value={sellerForm.description}
+                onChange={event => setSellerForm(prev => ({ ...prev, description: event.target.value }))}
+                placeholder="Product description"
+              />
+            </div>
+            <div className="field-row">
+              <input
+                value={sellerForm.price}
+                onChange={event => setSellerForm(prev => ({ ...prev, price: event.target.value }))}
+                placeholder="Price"
+              />
+              <input
+                value={sellerForm.quantity}
+                onChange={event => setSellerForm(prev => ({ ...prev, quantity: event.target.value }))}
+                placeholder="Quantity"
+              />
+              <button type="button" onClick={createSellerProduct}>Add Product</button>
+            </div>
+          </article>
+        )}
       </section>
     );
   }
-
-  function renderOpsTab() {
+function renderOpsTab() {
     return (
       <section className="workspace-grid single">
         <article className="panel-card">
