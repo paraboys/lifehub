@@ -2972,6 +2972,15 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
 
     return (
       <section className="chat-shell messenger-shell">
+        <div className="section-backbar">
+          <button type="button" className="ghost-btn" onClick={() => setActiveTab("home")}>
+            ← Back to Dashboard
+          </button>
+          <div className="section-backbar-meta">
+            <strong>Messenger</strong>
+            <small>Focus mode: navigation hidden for clarity.</small>
+          </div>
+        </div>
         <header className="chat-platform-bar messenger-bar">
           <div className="chat-platform-meta">
             <h2>LifeHub Messenger</h2>
@@ -3444,6 +3453,17 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
 
     return (
       <section className="market-shell ecommerce-market-shell">
+        {(showingDetailPage || showingCheckoutPage) && (
+          <div className="section-backbar">
+            <button type="button" className="ghost-btn" onClick={() => setMarketplaceView("catalog")}>
+              ← Back to Marketplace
+            </button>
+            <div className="section-backbar-meta">
+              <strong>{showingCheckoutPage ? "Checkout" : "Product Details"}</strong>
+              <small>Focused view — global navigation hidden.</small>
+            </div>
+          </div>
+        )}
         <header className="panel-card market-hero ecommerce-market-hero market-command-hub">
           <div className="marketplace-masthead">
             <button type="button" className="market-brand-block" onClick={() => setMarketplaceView("catalog")}>
@@ -5293,76 +5313,83 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
     return renderProfileTab();
   }
 
+  const suppressGlobalHeader = activeTab === "chat"
+    || (activeTab === "marketplace" && marketplaceView !== "catalog");
+
   return (
     <div className={`superapp-shell superapp-shell-full shell-${activeTab}`}>
       <main className="main-stage main-stage-full">
-        <header className={`topbar topbar-full topbar-${activeTab}`}>
-          <div className="topbar-row">
-            <div className="topbar-main">
-              <span className="topbar-eyebrow">{activeTabMeta.eyebrow}</span>
-              <h3>{activeTabMeta.title}</h3>
-              <p>{activeTabMeta.description}</p>
-            </div>
-            <div className="topbar-meta topbar-meta-card">
-              <div className="topbar-avatar">
-                {profilePhoto ? (
-                  <img src={profilePhoto} alt="Profile" className="profile-avatar" />
-                ) : (
-                  <div className="profile-avatar">{String(user.name || "U").slice(0, 1)}</div>
-                )}
+        {!suppressGlobalHeader && (
+          <>
+            <header className={`topbar topbar-full topbar-${activeTab}`}>
+              <div className="topbar-row">
+                <div className="topbar-main">
+                  <span className="topbar-eyebrow">{activeTabMeta.eyebrow}</span>
+                  <h3>{activeTabMeta.title}</h3>
+                  <p>{activeTabMeta.description}</p>
+                </div>
+                <div className="topbar-meta topbar-meta-card">
+                  <div className="topbar-avatar">
+                    {profilePhoto ? (
+                      <img src={profilePhoto} alt="Profile" className="profile-avatar" />
+                    ) : (
+                      <div className="profile-avatar">{String(user.name || "U").slice(0, 1)}</div>
+                    )}
+                  </div>
+                  <div className="topbar-user-copy">
+                    <strong>{user.name}</strong>
+                    <small>{roleLabel(userRoles)}</small>
+                  </div>
+                  <div className="chip-row">
+                    <button type="button" className="chip chip-button" onClick={() => setCommandOpen(true)}>
+                      Command Center
+                    </button>
+                    <button type="button" className="chip chip-button" onClick={() => setActiveTab("home")}>
+                      System Alerts: {notifications.length}
+                    </button>
+                    <button type="button" className="chip chip-button" onClick={() => setActiveTab("chat")}>
+                      Chat Alerts: {totalUnreadChats}
+                    </button>
+                    <span className="chip">Chat Events: {chatNotifications.length}</span>
+                    <span className="chip chip-live">
+                      {loading ? "Loading data..." : "Live session"}
+                    </span>
+                  </div>
+                </div>
               </div>
-              <div className="topbar-user-copy">
-                <strong>{user.name}</strong>
-                <small>{roleLabel(userRoles)}</small>
+              <nav className="module-nav-grid">
+                {tabs.map(tab => (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    className={`module-nav-item ${activeTab === tab.id ? "active" : ""}`}
+                    onClick={() => setActiveTab(tab.id)}
+                  >
+                    <span className="module-nav-icon">
+                      <UiIcon name={tabIconName(tab.id)} />
+                      {tab.id === "home" && notifications.length > 0 && (
+                        <span className="nav-badge">{notifications.length > 99 ? "99+" : notifications.length}</span>
+                      )}
+                      {tab.id === "chat" && totalUnreadChats > 0 && (
+                        <span className="nav-badge">{totalUnreadChats > 99 ? "99+" : totalUnreadChats}</span>
+                      )}
+                    </span>
+                    <span>{tab.label}</span>
+                  </button>
+                ))}
+              </nav>
+            </header>
+            <div className="command-deck">
+              <div className="command-deck-meta">
+                <strong>Workspace Controls</strong>
+                <small>{tabSubtitle(activeTab)}</small>
               </div>
-              <div className="chip-row">
-                <button type="button" className="chip chip-button" onClick={() => setCommandOpen(true)}>
-                  Command Center
-                </button>
-                <button type="button" className="chip chip-button" onClick={() => setActiveTab("home")}>
-                  System Alerts: {notifications.length}
-                </button>
-                <button type="button" className="chip chip-button" onClick={() => setActiveTab("chat")}>
-                  Chat Alerts: {totalUnreadChats}
-                </button>
-                <span className="chip">Chat Events: {chatNotifications.length}</span>
-                <span className="chip chip-live">
-                  {loading ? "Loading data..." : "Live session"}
-                </span>
-              </div>
-            </div>
-          </div>
-          <nav className="module-nav-grid">
-            {tabs.map(tab => (
-              <button
-                key={tab.id}
-                type="button"
-                className={`module-nav-item ${activeTab === tab.id ? "active" : ""}`}
-                onClick={() => setActiveTab(tab.id)}
-              >
-                <span className="module-nav-icon">
-                  <UiIcon name={tabIconName(tab.id)} />
-                  {tab.id === "home" && notifications.length > 0 && (
-                    <span className="nav-badge">{notifications.length > 99 ? "99+" : notifications.length}</span>
-                  )}
-                  {tab.id === "chat" && totalUnreadChats > 0 && (
-                    <span className="nav-badge">{totalUnreadChats > 99 ? "99+" : totalUnreadChats}</span>
-                  )}
-                </span>
-                <span>{tab.label}</span>
+              <button type="button" className="ghost-btn" onClick={bootstrap}>
+                Sync Workspace
               </button>
-            ))}
-          </nav>
-        </header>
-        <div className="command-deck">
-          <div className="command-deck-meta">
-            <strong>Workspace Controls</strong>
-            <small>{tabSubtitle(activeTab)}</small>
-          </div>
-          <button type="button" className="ghost-btn" onClick={bootstrap}>
-            Sync Workspace
-          </button>
-        </div>
+            </div>
+          </>
+        )}
 
         {error && <div className="alert danger">{error}</div>}
         {toast && <div className="alert info">{toast}</div>}

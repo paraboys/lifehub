@@ -4665,3 +4665,148 @@ body {
 .panel-card h3 {
   letter-spacing: -0.02em;
 }
+
+/* Clean Layout v2 (spacious, enterprise) */
+@keyframes liftIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+.main-stage {
+  gap: 24px;
+}
+
+.topbar-row {
+  gap: 16px;
+}
+
+.topbar-main h3 {
+  font-weight: 700;
+}
+
+.module-nav-grid {
+  gap: 12px;
+}
+
+.module-nav-item {
+  padding: 10px 12px;
+  font-size: 13px;
+}
+
+.command-deck {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 12px;
+}
+
+.panel-card,
+.metric-card,
+.item-card,
+.market-product-card,
+.market-result-card,
+.market-shelf-item,
+.home-action-tile,
+.module-launch-card {
+  animation: liftIn 260ms ease;
+}
+
+.panel-card {
+  padding: 20px;
+  border-radius: 18px;
+}
+
+.workspace-grid {
+  gap: 20px;
+}
+
+.home-grid {
+  gap: 20px;
+  row-gap: 20px;
+}
+
+.home-hero-card {
+  grid-column: span 7;
+}
+
+.home-signal-card {
+  grid-column: span 5;
+  max-width: none;
+}
+
+.home-activity-card {
+  grid-column: span 12;
+}
+
+.home-action-grid {
+  gap: 18px;
+}
+
+.home-action-tile {
+  padding: 14px;
+  box-shadow: var(--soft-shadow);
+}
+
+.market-top-grid,
+.market-search-grid,
+.market-product-grid,
+.market-shelf-items {
+  gap: 16px;
+}
+
+.market-product-card,
+.market-result-card,
+.market-fast-deal-card {
+  box-shadow: var(--soft-shadow);
+}
+
+.chat-shell {
+  border-radius: 18px;
+}
+
+.chat-sidebar,
+.chat-thread {
+  border-radius: 16px;
+}
+
+.section-backbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: #ffffff;
+  box-shadow: var(--soft-shadow);
+}
+
+.section-backbar .ghost-btn {
+  padding: 8px 12px;
+}
+
+.section-backbar-meta {
+  display: grid;
+  gap: 2px;
+}
+
+.section-backbar-meta strong {
+  font-size: 14px;
+}
+
+.section-backbar-meta small {
+  color: var(--ink-dim);
+  font-size: 12px;
+}
