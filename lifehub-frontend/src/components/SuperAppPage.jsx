@@ -551,6 +551,7 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
   const [transactions, setTransactions] = useState([]);
   const [topupAmount, setTopupAmount] = useState("500");
   const [paymentIntent, setPaymentIntent] = useState(null);
+  const [walletAction, setWalletAction] = useState("");
   const [transferBusy, setTransferBusy] = useState(false);
   const [transferForm, setTransferForm] = useState({
     recipientType: "phone",
@@ -3515,7 +3516,10 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
         <header className="panel-card market-hero ecommerce-market-hero market-command-hub">
           <div className="marketplace-masthead">
             <button type="button" className="market-brand-block" onClick={() => setMarketplaceView("catalog")}>
-              <span className="market-brand-logo">LIFEHUB</span>
+              <span className="market-brand-row">
+                <img className="market-brand-logo" src="/lh-logo.svg" alt="LifeHub logo" />
+                <span className="market-brand-title">LifeHub</span>
+              </span>
               <span className="market-brand-subtitle">Grocery Marketplace</span>
             </button>
             <button type="button" className="market-location-card" onClick={useCurrentLocation}>
@@ -4672,144 +4676,266 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
   }
 
   function renderWalletTab() {
+    const balanceValue = Number(
+      walletSummary?.availableBalance ?? walletSummary?.wallet?.balance ?? 0
+    );
+    const safeBalance = Number.isFinite(balanceValue) ? balanceValue : 0;
+    const formatMoney = value => {
+      const amount = Number(value || 0);
+      if (!Number.isFinite(amount)) return "0.00";
+      return amount.toLocaleString(undefined, {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2
+      });
+    };
+    const formatTransactionTime = raw => {
+      if (!raw) return "";
+      const date = new Date(raw);
+      if (Number.isNaN(date.getTime())) return "";
+      const today = new Date();
+      const yesterday = new Date();
+      yesterday.setDate(today.getDate() - 1);
+      const label = isSameDay(date, today)
+        ? "Today"
+        : isSameDay(date, yesterday)
+          ? "Yesterday"
+          : date.toLocaleDateString();
+      const time = formatClock(date);
+      return [label, time].filter(Boolean).join(", ");
+    };
+    const resolveTransactionAmount = tx => {
+      const raw = Number(tx?.amount ?? tx?.value ?? 0);
+      return Number.isFinite(raw) ? raw : 0;
+    };
+    const resolveTransactionLabel = tx => {
+      const fallback = tx?.description || tx?.note || "Transaction";
+      const rawType = tx?.transaction_type || tx?.type || fallback;
+      return titleCase(String(rawType).replace(/_/g, " "));
+    };
+    const resolveTransactionMeta = tx => {
+      const orderId = tx?.order_id || tx?.orderId;
+      const reference = tx?.reference_id || tx?.referenceId;
+      const refLabel = orderId
+        ? `Order #${orderId}`
+        : reference
+          ? `Ref ${reference}`
+          : tx?.counterparty || tx?.merchant || "";
+      const timeLabel = formatTransactionTime(tx?.created_at || tx?.createdAt || tx?.timestamp);
+      return [refLabel, timeLabel].filter(Boolean).join(" · ");
+    };
+    const isCreditTransaction = tx => {
+      const type = String(tx?.transaction_type || tx?.type || "").toUpperCase();
+      const amount = resolveTransactionAmount(tx);
+      const creditHints = ["TOPUP", "RECEIVE", "REFUND", "CREDIT", "PAYMENT_RECEIVED"];
+      const debitHints = ["TRANSFER", "PAYOUT", "DEBIT", "PAYMENT", "ORDER", "WITHDRAW"];
+      if (creditHints.some(hint => type.includes(hint))) return true;
+      if (debitHints.some(hint => type.includes(hint))) return false;
+      return amount >= 0;
+    };
+
     return (
-      <section className="workspace-grid">
-        <article className="panel-card">
-          <h2>Wallet and Payments</h2>
-          <div className="field-row">
-            <button type="button" onClick={loadWallet}>Refresh</button>
-            <input
-              value={topupAmount}
-              onChange={event => setTopupAmount(event.target.value)}
-              placeholder="Topup amount"
-            />
-            <button type="button" onClick={topupWallet}>Topup via Razorpay</button>
-          </div>
-          {paymentIntent && (
-            <div className="item-card">
-              <strong>Gateway Intent</strong>
-              <small>Intent: {paymentIntent.intentId}</small>
-              <small>Provider: {paymentIntent.provider}</small>
-              {paymentIntent.checkout?.provider === "RAZORPAY" && (
-                <small>Order ID: {paymentIntent.checkout.orderId}</small>
-              )}
-              {paymentIntent.checkout?.provider === "STRIPE" && (
-                <small>PaymentIntent: {paymentIntent.checkout.paymentIntentId}</small>
-              )}
-              <small>
-                Configure gateway webhook to:
-                {" "}
-                <code>{`${API_URL.replace("/api", "")}/api/payments/webhooks/${String(paymentIntent.provider || "").toLowerCase()}`}</code>
-              </small>
+      <section className="wallet-shell">
+        <div className="wallet-balance-card">
+          <div className="wallet-balance-top">
+            <div className="wallet-balance-meta">
+              <span>Available Balance</span>
+              <strong>${formatMoney(safeBalance)}</strong>
             </div>
-          )}
-          <div className="divider" />
-          <h3>Send Money</h3>
-          <div className="field-row">
-            <select
-              value={transferForm.recipientType}
-              onChange={event =>
-                setTransferForm(prev => ({
-                  ...prev,
-                  recipientType: event.target.value
-                }))
-              }
-            >
-              <option value="phone">Transfer to phone</option>
-              <option value="upi">Transfer to UPI ID</option>
-            </select>
-            {transferForm.recipientType === "phone" ? (
-              <input
-                value={transferForm.toPhone}
-                onChange={event =>
-                  setTransferForm(prev => ({ ...prev, toPhone: event.target.value }))
-                }
-                placeholder="Recipient phone"
-              />
-            ) : (
-              <input
-                value={transferForm.toUpiId}
-                onChange={event =>
-                  setTransferForm(prev => ({ ...prev, toUpiId: event.target.value }))
-                }
-                placeholder="Recipient UPI ID (example@bank)"
-              />
-            )}
-          </div>
-          <div className="field-row">
-            <input
-              value={transferForm.amount}
-              onChange={event =>
-                setTransferForm(prev => ({ ...prev, amount: event.target.value }))
-              }
-              placeholder="Amount"
-            />
-            <input
-              value={transferForm.note}
-              onChange={event =>
-                setTransferForm(prev => ({ ...prev, note: event.target.value }))
-              }
-              placeholder="Note (optional)"
-            />
-            <button type="button" onClick={transferWalletBalance} disabled={transferBusy}>
-              {transferBusy ? "Transferring..." : "Send"}
+            <button type="button" className="wallet-refresh" onClick={loadWallet} aria-label="Refresh wallet">
+              <UiIcon name="refresh" size={16} />
             </button>
           </div>
-          <div className="divider" />
-          <h3>Receive Money</h3>
-          <div className="item-card wallet-receive-card">
-            <small>Your UPI ID</small>
-            <strong>{receiveProfile?.upiId || userSettings?.payments?.upiId || "Set UPI ID in profile settings"}</strong>
-            {!!receiveProfile?.qrCodeUrl && (
-              <img
-                src={receiveProfile.qrCodeUrl}
-                alt="Receive payment QR"
-                className="wallet-receive-qr"
-              />
-            )}
-            {!!receiveProfile?.upiUri && (
-              <small>
-                UPI URI: <code>{receiveProfile.upiUri}</code>
-              </small>
-            )}
+          <div className="wallet-actions">
+            <button
+              type="button"
+              className={`wallet-action primary ${walletAction === "topup" ? "active" : ""}`}
+              onClick={() => setWalletAction(prev => (prev === "topup" ? "" : "topup"))}
+            >
+              <UiIcon name="plus" size={16} />
+              Top Up
+            </button>
+            <button
+              type="button"
+              className={`wallet-action ${walletAction === "transfer" ? "active" : ""}`}
+              onClick={() => setWalletAction(prev => (prev === "transfer" ? "" : "transfer"))}
+            >
+              <span className="wallet-action-icon">↗</span>
+              Transfer
+            </button>
+            <button
+              type="button"
+              className={`wallet-action ${walletAction === "cards" ? "active" : ""}`}
+              onClick={() => setWalletAction(prev => (prev === "cards" ? "" : "cards"))}
+            >
+              <UiIcon name="wallet" size={16} />
+              Cards
+            </button>
           </div>
-          <div className="metric-grid wide">
-            <div className="metric-card">
-              <h3>Available</h3>
-              <strong>{toCurrency(walletSummary?.availableBalance)}</strong>
-            </div>
-            <div className="metric-card">
-              <h3>Locked</h3>
-              <strong>{toCurrency(walletSummary?.lockedBalance)}</strong>
-            </div>
-            <div className="metric-card">
-              <h3>Balance</h3>
-              <strong>{toCurrency(walletSummary?.wallet?.balance)}</strong>
-            </div>
-            <div className="metric-card">
-              <h3>Transactions</h3>
-              <strong>{transactions.length}</strong>
-            </div>
-          </div>
-        </article>
-
-        <article className="panel-card">
-          <h2>Recent Transactions</h2>
-          <div className="stack-list">
-            {transactions.map(tx => (
-              <div key={tx.id} className="item-card">
-                <div className="item-header">
-                  <strong>{tx.transaction_type}</strong>
-                  <span className="status-pill">{tx.status}</span>
-                </div>
-                <small>
-                  Amount {toCurrency(tx.amount)} | Ref {tx.reference_id || "n/a"}
-                </small>
+          {walletAction === "topup" && (
+            <div className="wallet-inline-form">
+              <div className="wallet-inline-row">
+                <input
+                  value={topupAmount}
+                  onChange={event => setTopupAmount(event.target.value)}
+                  placeholder="Top up amount"
+                />
+                <button type="button" onClick={topupWallet}>
+                  Pay now
+                </button>
               </div>
-            ))}
-            {!transactions.length && <div className="empty-line">No transactions available.</div>}
+              {paymentIntent && (
+                <div className="wallet-intent-note">
+                  <div>
+                    <strong>Gateway Intent Ready</strong>
+                    <small>Provider: {paymentIntent.provider}</small>
+                  </div>
+                  <code>
+                    {`${API_URL.replace("/api", "")}/api/payments/webhooks/${String(paymentIntent.provider || "").toLowerCase()}`}
+                  </code>
+                </div>
+              )}
+            </div>
+          )}
+          {walletAction === "transfer" && (
+            <div className="wallet-inline-form">
+              <div className="wallet-inline-row">
+                <select
+                  value={transferForm.recipientType}
+                  onChange={event =>
+                    setTransferForm(prev => ({
+                      ...prev,
+                      recipientType: event.target.value
+                    }))
+                  }
+                >
+                  <option value="phone">Transfer to phone</option>
+                  <option value="upi">Transfer to UPI ID</option>
+                </select>
+                {transferForm.recipientType === "phone" ? (
+                  <input
+                    value={transferForm.toPhone}
+                    onChange={event =>
+                      setTransferForm(prev => ({ ...prev, toPhone: event.target.value }))
+                    }
+                    placeholder="Recipient phone"
+                  />
+                ) : (
+                  <input
+                    value={transferForm.toUpiId}
+                    onChange={event =>
+                      setTransferForm(prev => ({ ...prev, toUpiId: event.target.value }))
+                    }
+                    placeholder="Recipient UPI ID (example@bank)"
+                  />
+                )}
+              </div>
+              <div className="wallet-inline-row">
+                <input
+                  value={transferForm.amount}
+                  onChange={event =>
+                    setTransferForm(prev => ({ ...prev, amount: event.target.value }))
+                  }
+                  placeholder="Amount"
+                />
+                <input
+                  value={transferForm.note}
+                  onChange={event =>
+                    setTransferForm(prev => ({ ...prev, note: event.target.value }))
+                  }
+                  placeholder="Note (optional)"
+                />
+                <button type="button" onClick={transferWalletBalance} disabled={transferBusy}>
+                  {transferBusy ? "Transferring..." : "Send"}
+                </button>
+              </div>
+            </div>
+          )}
+          {walletAction === "cards" && (
+            <div className="wallet-inline-form">
+              <div className="wallet-inline-info">
+                Link cards or UPI IDs from Settings to unlock instant transfers.
+              </div>
+              <button type="button" onClick={() => setActiveTab("profile")}>
+                Open Settings
+              </button>
+            </div>
+          )}
+        </div>
+
+        <div className="wallet-section-title">Transactions</div>
+        <div className="wallet-transactions-card">
+          {transactions.map(tx => {
+            const credit = isCreditTransaction(tx);
+            const amountValue = Math.abs(resolveTransactionAmount(tx));
+            return (
+              <div key={tx.id || tx.reference_id || tx.created_at} className="wallet-transaction-row">
+                <div className="wallet-transaction-left">
+                  <span className={`wallet-transaction-icon ${credit ? "credit" : "debit"}`}>
+                    {credit ? "↙" : "↗"}
+                  </span>
+                  <div className="wallet-transaction-info">
+                    <strong>{resolveTransactionLabel(tx)}</strong>
+                    <small>{resolveTransactionMeta(tx) || "Recent activity"}</small>
+                  </div>
+                </div>
+                <div className={`wallet-transaction-amount ${credit ? "credit" : "debit"}`}>
+                  {credit ? "+" : "-"}${formatMoney(amountValue)}
+                </div>
+              </div>
+            );
+          })}
+          {!transactions.length && (
+            <div className="wallet-empty">No transactions available yet.</div>
+          )}
+        </div>
+
+        <details className="wallet-advanced">
+          <summary>Advanced wallet tools</summary>
+          <div className="wallet-advanced-grid">
+            <div className="wallet-advanced-card">
+              <h4>Receive Money</h4>
+              <div className="wallet-receive-card">
+                <small>Your UPI ID</small>
+                <strong>
+                  {receiveProfile?.upiId || userSettings?.payments?.upiId || "Set UPI ID in profile settings"}
+                </strong>
+                {!!receiveProfile?.qrCodeUrl && (
+                  <img
+                    src={receiveProfile.qrCodeUrl}
+                    alt="Receive payment QR"
+                    className="wallet-receive-qr"
+                  />
+                )}
+                {!!receiveProfile?.upiUri && (
+                  <small>
+                    UPI URI: <code>{receiveProfile.upiUri}</code>
+                  </small>
+                )}
+              </div>
+            </div>
+            <div className="wallet-advanced-card">
+              <h4>Balances</h4>
+              <div className="wallet-metric-grid">
+                <div className="wallet-metric">
+                  <span>Available</span>
+                  <strong>${formatMoney(walletSummary?.availableBalance)}</strong>
+                </div>
+                <div className="wallet-metric">
+                  <span>Locked</span>
+                  <strong>${formatMoney(walletSummary?.lockedBalance)}</strong>
+                </div>
+                <div className="wallet-metric">
+                  <span>Total Balance</span>
+                  <strong>${formatMoney(walletSummary?.wallet?.balance)}</strong>
+                </div>
+                <div className="wallet-metric">
+                  <span>Transactions</span>
+                  <strong>{transactions.length}</strong>
+                </div>
+              </div>
+            </div>
           </div>
-        </article>
+        </details>
       </section>
     );
   }
@@ -5482,7 +5608,7 @@ function renderOpsTab() {
     <div className={`superapp-shell superapp-shell-full superapp-shell-v5 shell-${activeTab} ${sidebarOpen ? "sidebar-open" : ""}`}>
       <aside className={`sidebar-v5 ${sidebarOpen ? "open" : ""}`}>
         <div className="sidebar-brand">
-          <div className="brand-mark">LH</div>
+          <img className="brand-mark" src="/lh-logo.svg" alt="LifeHub logo" />
           <strong>LifeHub</strong>
         </div>
         <div className="sidebar-search">

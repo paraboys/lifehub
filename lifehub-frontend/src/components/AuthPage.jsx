@@ -230,7 +230,10 @@ export default function AuthPage({ onAuthSuccess }) {
   return (
     <div className="auth-shell auth-shell-modern">
       <div className="auth-hero auth-hero-modern">
-        <h1>LifeHub</h1>
+        <div className="auth-brand">
+          <img src="/lh-logo.svg" alt="LifeHub logo" />
+          <h1>LifeHub</h1>
+        </div>
         <p>
           Marketplace, services, chat, secure wallet, and realtime operations in one software.
         </p>
