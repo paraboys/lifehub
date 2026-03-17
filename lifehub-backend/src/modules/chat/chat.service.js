@@ -12,6 +12,11 @@ const BLOCKED_WORDS = (process.env.CHAT_BLOCKED_WORDS || "abuse,scam,fraud")
   .split(",")
   .map(v => v.trim().toLowerCase())
   .filter(Boolean);
+const CONTACT_TABLE = "chat_contacts";
+const CONTACT_PENDING = "PENDING";
+const CONTACT_ACCEPTED = "ACCEPTED";
+const CONTACT_REJECTED = "REJECTED";
+let chatContactsEnsured = false;
 
 async function getParticipantIds(conversationId) {
   const participants = await prisma.conversation_participants.findMany({
@@ -19,6 +24,37 @@ async function getParticipantIds(conversationId) {
     select: { user_id: true }
   });
   return participants.map(p => String(p.user_id));
+}
+
+async function ensureChatContactsTable() {
+  if (chatContactsEnsured) return;
+
+  await prisma.$executeRawUnsafe(`
+    CREATE TABLE IF NOT EXISTS "${CONTACT_TABLE}" (
+      "id" BIGSERIAL PRIMARY KEY,
+      "requester_user_id" BIGINT NOT NULL REFERENCES "users"("id") ON DELETE CASCADE,
+      "addressee_user_id" BIGINT NOT NULL REFERENCES "users"("id") ON DELETE CASCADE,
+      "status" VARCHAR(16) NOT NULL DEFAULT '${CONTACT_PENDING}',
+      "created_at" TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "responded_at" TIMESTAMP(6),
+      CONSTRAINT "chat_contacts_no_self_request" CHECK ("requester_user_id" <> "addressee_user_id"),
+      CONSTRAINT "chat_contacts_status_check" CHECK ("status" IN ('${CONTACT_PENDING}','${CONTACT_ACCEPTED}','${CONTACT_REJECTED}'))
+    )
+  `);
+  await prisma.$executeRawUnsafe(`
+    CREATE UNIQUE INDEX IF NOT EXISTS "chat_contacts_requester_addressee_key"
+    ON "${CONTACT_TABLE}" ("requester_user_id", "addressee_user_id")
+  `);
+  await prisma.$executeRawUnsafe(`
+    CREATE INDEX IF NOT EXISTS "chat_contacts_addressee_status_idx"
+    ON "${CONTACT_TABLE}" ("addressee_user_id", "status", "created_at" DESC)
+  `);
+  await prisma.$executeRawUnsafe(`
+    CREATE INDEX IF NOT EXISTS "chat_contacts_requester_status_idx"
+    ON "${CONTACT_TABLE}" ("requester_user_id", "status", "created_at" DESC)
+  `);
+
+  chatContactsEnsured = true;
 }
 
 function normalizePhone(phone) {
@@ -43,13 +79,21 @@ async function assertParticipant(conversationId, userId) {
 }
 
 async function assertNotSpam(userId) {
-  const key = `chat:rate:${userId}`;
-  const count = await redis.incr(key);
-  if (count === 1) {
-    await redis.expire(key, 60);
-  }
-  if (count > MAX_MESSAGES_PER_MIN) {
-    throw new Error("Too many messages. Please slow down.");
+  try {
+    const key = `chat:rate:${userId}`;
+    const count = await redis.incr(key);
+    if (count === 1) {
+      await redis.expire(key, 60);
+    }
+    if (count > MAX_MESSAGES_PER_MIN) {
+      throw new Error("Too many messages. Please slow down.");
+    }
+  } catch (error) {
+    const message = String(error?.message || "").toLowerCase();
+    if (message.includes("wrongpass") || message.includes("stream isn't writeable")) {
+      return;
+    }
+    throw error;
   }
 }
 
@@ -98,7 +142,352 @@ export async function createConversation({ creatorId, participantIds = [], type 
   return conversation;
 }
 
+async function getExistingDirectConversation(creatorId, peerId) {
+  const candidateConversations = await prisma.conversations.findMany({
+    where: {
+      type: "DIRECT",
+      conversation_participants: {
+        some: { user_id: BigInt(creatorId) }
+      },
+      AND: [
+        {
+          conversation_participants: {
+            some: { user_id: BigInt(peerId) }
+          }
+        }
+      ]
+    },
+    include: {
+      conversation_participants: {
+        select: { user_id: true }
+      }
+    },
+    orderBy: { created_at: "desc" },
+    take: 20
+  });
+
+  return candidateConversations.find(item => {
+    const participants = item.conversation_participants || [];
+    if (participants.length !== 2) return false;
+    const ids = participants.map(p => String(p.user_id));
+    return ids.includes(String(creatorId)) && ids.includes(String(peerId));
+  }) || null;
+}
+
+async function getOrCreateDirectConversationBetweenUsers(creatorId, peerId) {
+  const existing = await getExistingDirectConversation(creatorId, peerId);
+  if (existing) return existing;
+
+  return createConversation({
+    creatorId,
+    participantIds: [String(peerId)],
+    type: "DIRECT"
+  });
+}
+
+async function getContactRecord(userId, peerId) {
+  await ensureChatContactsTable();
+  const uid = String(BigInt(userId));
+  const pid = String(BigInt(peerId));
+  const rows = await prisma.$queryRawUnsafe(`
+    SELECT *
+    FROM "${CONTACT_TABLE}"
+    WHERE ("requester_user_id" = ${uid} AND "addressee_user_id" = ${pid})
+       OR ("requester_user_id" = ${pid} AND "addressee_user_id" = ${uid})
+    ORDER BY
+      CASE
+        WHEN "status" = '${CONTACT_ACCEPTED}' THEN 0
+        WHEN "status" = '${CONTACT_PENDING}' THEN 1
+        ELSE 2
+      END,
+      "created_at" DESC
+    LIMIT 1
+  `);
+
+  return rows?.[0] || null;
+}
+
+async function getContactStatus(userId, peerId) {
+  const row = await getContactRecord(userId, peerId);
+  if (!row) return "NONE";
+  if (String(row.status || "").toUpperCase() === CONTACT_ACCEPTED) return CONTACT_ACCEPTED;
+  if (String(row.status || "").toUpperCase() === CONTACT_REJECTED) return CONTACT_REJECTED;
+  if (String(row.requester_user_id) === String(userId)) return "OUTGOING_PENDING";
+  return "INCOMING_PENDING";
+}
+
+async function ensureAcceptedContact(userId, peerId) {
+  await ensureChatContactsTable();
+  const uid = String(BigInt(userId));
+  const pid = String(BigInt(peerId));
+  const existing = await getContactRecord(uid, pid);
+
+  if (existing && String(existing.status || "").toUpperCase() === CONTACT_ACCEPTED) {
+    return existing;
+  }
+
+  if (existing) {
+    await prisma.$executeRawUnsafe(`
+      UPDATE "${CONTACT_TABLE}"
+      SET "status" = '${CONTACT_ACCEPTED}',
+          "responded_at" = CURRENT_TIMESTAMP
+      WHERE "id" = ${String(existing.id)}
+    `);
+  } else {
+    await prisma.$executeRawUnsafe(`
+      INSERT INTO "${CONTACT_TABLE}" ("requester_user_id", "addressee_user_id", "status", "responded_at")
+      VALUES (${uid}, ${pid}, '${CONTACT_ACCEPTED}', CURRENT_TIMESTAMP)
+    `);
+  }
+
+  return getContactRecord(uid, pid);
+}
+
+async function getAcceptedContactUserIds(userId) {
+  await ensureChatContactsTable();
+  const uid = String(BigInt(userId));
+  const rows = await prisma.$queryRawUnsafe(`
+    SELECT CASE
+      WHEN "requester_user_id" = ${uid} THEN "addressee_user_id"
+      ELSE "requester_user_id"
+    END AS "contact_user_id"
+    FROM "${CONTACT_TABLE}"
+    WHERE ("requester_user_id" = ${uid} OR "addressee_user_id" = ${uid})
+      AND "status" = '${CONTACT_ACCEPTED}'
+  `);
+
+  return new Set((rows || []).map(row => String(row.contact_user_id)));
+}
+
+function mapContactDirectoryRow(row) {
+  return {
+    id: row.id,
+    requestId: row.id,
+    userId: row.contactUserId || row.peerUserId,
+    name: row.name || "Unknown",
+    phone: row.phone || null,
+    status: row.status,
+    createdAt: row.createdAt || row.created_at,
+    respondedAt: row.respondedAt || row.responded_at
+  };
+}
+
+export async function listContactDirectory(userId) {
+  await ensureChatContactsTable();
+  const uid = String(BigInt(userId));
+
+  const [contacts, incoming, outgoing] = await Promise.all([
+    prisma.$queryRawUnsafe(`
+      SELECT
+        cc."id",
+        cc."status",
+        cc."created_at" AS "createdAt",
+        cc."responded_at" AS "respondedAt",
+        CASE WHEN cc."requester_user_id" = ${uid} THEN cc."addressee_user_id" ELSE cc."requester_user_id" END AS "contactUserId",
+        u."name",
+        u."phone"
+      FROM "${CONTACT_TABLE}" cc
+      JOIN "users" u
+        ON u."id" = CASE WHEN cc."requester_user_id" = ${uid} THEN cc."addressee_user_id" ELSE cc."requester_user_id" END
+      WHERE (cc."requester_user_id" = ${uid} OR cc."addressee_user_id" = ${uid})
+        AND cc."status" = '${CONTACT_ACCEPTED}'
+      ORDER BY COALESCE(cc."responded_at", cc."created_at") DESC
+    `),
+    prisma.$queryRawUnsafe(`
+      SELECT
+        cc."id",
+        cc."status",
+        cc."created_at" AS "createdAt",
+        cc."requester_user_id" AS "peerUserId",
+        u."name",
+        u."phone"
+      FROM "${CONTACT_TABLE}" cc
+      JOIN "users" u ON u."id" = cc."requester_user_id"
+      WHERE cc."addressee_user_id" = ${uid}
+        AND cc."status" = '${CONTACT_PENDING}'
+      ORDER BY cc."created_at" DESC
+    `),
+    prisma.$queryRawUnsafe(`
+      SELECT
+        cc."id",
+        cc."status",
+        cc."created_at" AS "createdAt",
+        cc."addressee_user_id" AS "peerUserId",
+        u."name",
+        u."phone"
+      FROM "${CONTACT_TABLE}" cc
+      JOIN "users" u ON u."id" = cc."addressee_user_id"
+      WHERE cc."requester_user_id" = ${uid}
+        AND cc."status" = '${CONTACT_PENDING}'
+      ORDER BY cc."created_at" DESC
+    `)
+  ]);
+
+  return {
+    contacts: (contacts || []).map(mapContactDirectoryRow),
+    incomingRequests: (incoming || []).map(mapContactDirectoryRow),
+    outgoingRequests: (outgoing || []).map(mapContactDirectoryRow)
+  };
+}
+
+export async function requestContactByPhone({ requesterId, phone }) {
+  const normalizedPhone = normalizePhone(phone);
+  if (!normalizedPhone) {
+    throw new Error("phone is required");
+  }
+
+  const peer = await prisma.users.findUnique({
+    where: { phone: normalizedPhone },
+    select: { id: true, name: true, phone: true }
+  });
+  if (!peer) {
+    throw new Error("No LifeHub account found for this phone number");
+  }
+  if (String(peer.id) === String(requesterId)) {
+    throw new Error("Cannot add yourself as a contact");
+  }
+
+  await ensureChatContactsTable();
+  const existing = await getContactRecord(requesterId, peer.id);
+  if (existing && String(existing.status || "").toUpperCase() === CONTACT_ACCEPTED) {
+    const conversation = await getOrCreateDirectConversationBetweenUsers(requesterId, peer.id);
+    return {
+      status: CONTACT_ACCEPTED,
+      requestId: String(existing.id),
+      contact: peer,
+      conversationId: String(conversation.id)
+    };
+  }
+
+  if (
+    existing
+    && String(existing.status || "").toUpperCase() === CONTACT_PENDING
+    && String(existing.requester_user_id) === String(peer.id)
+  ) {
+    await prisma.$executeRawUnsafe(`
+      UPDATE "${CONTACT_TABLE}"
+      SET "status" = '${CONTACT_ACCEPTED}',
+          "responded_at" = CURRENT_TIMESTAMP
+      WHERE "id" = ${String(existing.id)}
+    `);
+    const conversation = await getOrCreateDirectConversationBetweenUsers(requesterId, peer.id);
+    await createNotification({
+      userId: String(peer.id),
+      eventType: "CHAT.CONTACT_ACCEPTED",
+      priority: "MEDIUM",
+      payload: {
+        userId: String(requesterId),
+        conversationId: String(conversation.id)
+      },
+      channels: ["IN_APP", "PUSH"]
+    }).catch(() => {});
+    return {
+      status: CONTACT_ACCEPTED,
+      requestId: String(existing.id),
+      contact: peer,
+      conversationId: String(conversation.id)
+    };
+  }
+
+  if (
+    existing
+    && String(existing.status || "").toUpperCase() === CONTACT_PENDING
+    && String(existing.requester_user_id) === String(requesterId)
+  ) {
+    return {
+      status: CONTACT_PENDING,
+      requestId: String(existing.id),
+      contact: peer
+    };
+  }
+
+  await prisma.$executeRawUnsafe(`
+    INSERT INTO "${CONTACT_TABLE}" ("requester_user_id", "addressee_user_id", "status")
+    VALUES (${String(BigInt(requesterId))}, ${String(BigInt(peer.id))}, '${CONTACT_PENDING}')
+  `);
+  const created = await getContactRecord(requesterId, peer.id);
+
+  await createNotification({
+    userId: String(peer.id),
+    eventType: "CHAT.CONTACT_REQUEST",
+    priority: "MEDIUM",
+    payload: {
+      requesterId: String(requesterId),
+      requesterPhone: normalizedPhone
+    },
+    channels: ["IN_APP", "PUSH"]
+  }).catch(() => {});
+
+  return {
+    status: CONTACT_PENDING,
+    requestId: String(created?.id || ""),
+    contact: peer
+  };
+}
+
+export async function respondToContactRequest({ requestId, userId, action }) {
+  await ensureChatContactsTable();
+  const responseAction = String(action || "").trim().toUpperCase();
+  if (!["ACCEPT", "REJECT"].includes(responseAction)) {
+    throw new Error("action must be ACCEPT or REJECT");
+  }
+
+  const rows = await prisma.$queryRawUnsafe(`
+    SELECT cc.*, u."name", u."phone"
+    FROM "${CONTACT_TABLE}" cc
+    JOIN "users" u ON u."id" = cc."requester_user_id"
+    WHERE cc."id" = ${String(BigInt(requestId))}
+      AND cc."addressee_user_id" = ${String(BigInt(userId))}
+    LIMIT 1
+  `);
+  const request = rows?.[0];
+  if (!request) {
+    throw new Error("Contact request not found");
+  }
+  if (String(request.status || "").toUpperCase() !== CONTACT_PENDING) {
+    throw new Error(`Contact request already ${String(request.status || "").toLowerCase()}`);
+  }
+
+  const nextStatus = responseAction === "ACCEPT" ? CONTACT_ACCEPTED : CONTACT_REJECTED;
+  await prisma.$executeRawUnsafe(`
+    UPDATE "${CONTACT_TABLE}"
+    SET "status" = '${nextStatus}',
+        "responded_at" = CURRENT_TIMESTAMP
+    WHERE "id" = ${String(request.id)}
+  `);
+
+  let conversationId = null;
+  if (nextStatus === CONTACT_ACCEPTED) {
+    await ensureAcceptedContact(userId, request.requester_user_id);
+    const conversation = await getOrCreateDirectConversationBetweenUsers(userId, request.requester_user_id);
+    conversationId = String(conversation.id);
+  }
+
+  await createNotification({
+    userId: String(request.requester_user_id),
+    eventType: nextStatus === CONTACT_ACCEPTED ? "CHAT.CONTACT_ACCEPTED" : "CHAT.CONTACT_REJECTED",
+    priority: "MEDIUM",
+    payload: {
+      requestId: String(request.id),
+      conversationId
+    },
+    channels: ["IN_APP", "PUSH"]
+  }).catch(() => {});
+
+  return {
+    requestId: String(request.id),
+    status: nextStatus,
+    conversationId,
+    contact: {
+      id: request.requester_user_id,
+      name: request.name,
+      phone: request.phone
+    }
+  };
+}
+
 export async function listConversations(userId) {
+  const acceptedContactIds = await getAcceptedContactUserIds(userId);
   const memberships = await prisma.conversation_participants.findMany({
     where: { user_id: BigInt(userId) },
     include: {
@@ -127,7 +516,7 @@ export async function listConversations(userId) {
     }
   });
 
-  return Promise.all(memberships.map(async row => {
+  const rows = await Promise.all(memberships.map(async row => {
     const conversation = row.conversations;
     const peers = (conversation.conversation_participants || [])
       .filter(item => String(item.user_id) !== String(userId))
@@ -159,6 +548,18 @@ export async function listConversations(userId) {
       unreadCount
     };
   }));
+
+  return rows
+    .filter(row => {
+      if (String(row.type || "").toUpperCase() === "GROUP") return true;
+      const peerId = row?.peers?.[0]?.userId;
+      return peerId ? acceptedContactIds.has(String(peerId)) : false;
+    })
+    .sort((a, b) => {
+      const aTime = new Date(a?.lastMessage?.created_at || a.created_at || 0).getTime();
+      const bTime = new Date(b?.lastMessage?.created_at || b.created_at || 0).getTime();
+      return bTime - aTime;
+    });
 }
 
 export async function createConversationByPhone({ creatorId, phone }) {
@@ -177,42 +578,12 @@ export async function createConversationByPhone({ creatorId, phone }) {
     throw new Error("Cannot create conversation with yourself");
   }
 
-  const candidateConversations = await prisma.conversations.findMany({
-    where: {
-      type: "DIRECT",
-      conversation_participants: {
-        some: { user_id: BigInt(creatorId) }
-      },
-      AND: [
-        {
-          conversation_participants: {
-            some: { user_id: peer.id }
-          }
-        }
-      ]
-    },
-    include: {
-      conversation_participants: {
-        select: { user_id: true }
-      }
-    },
-    orderBy: { created_at: "desc" },
-    take: 20
-  });
+  const contactStatus = await getContactStatus(creatorId, peer.id);
+  if (contactStatus !== CONTACT_ACCEPTED) {
+    throw new Error("Send and accept a contact request before starting a direct chat");
+  }
 
-  const existing = candidateConversations.find(item => {
-    const participants = item.conversation_participants || [];
-    if (participants.length !== 2) return false;
-    const ids = participants.map(p => String(p.user_id));
-    return ids.includes(String(creatorId)) && ids.includes(String(peer.id));
-  });
-  if (existing) return existing;
-
-  return createConversation({
-    creatorId,
-    participantIds: [String(peer.id)],
-    type: "DIRECT"
-  });
+  return getOrCreateDirectConversationBetweenUsers(creatorId, peer.id);
 }
 
 export async function createGroupConversationByPhones({
@@ -260,15 +631,31 @@ export async function resolveContactsByPhones({ userId, phones = [] }) {
     }
   });
 
-  return users;
+  const contacts = [];
+  for (const user of users) {
+    contacts.push({
+      ...user,
+      contactStatus: await getContactStatus(userId, user.id)
+    });
+  }
+
+  return contacts;
 }
 
-export async function listMessages({ conversationId, userId, limit = 50 }) {
+export async function listMessages({ conversationId, userId, limit = 50, beforeMessageId = null }) {
   await assertParticipant(conversationId, userId);
 
+  const take = Math.min(Math.max(Number(limit) || 50, 1), 200);
   const rows = await prisma.messages.findMany({
     where: {
-      conversation_id: BigInt(conversationId)
+      conversation_id: BigInt(conversationId),
+      ...(beforeMessageId
+        ? {
+            id: {
+              lt: BigInt(beforeMessageId)
+            }
+          }
+        : {})
     },
     include: {
       message_attachments: true,
@@ -282,10 +669,12 @@ export async function listMessages({ conversationId, userId, limit = 50 }) {
     orderBy: {
       created_at: "desc"
     },
-    take: Math.min(Math.max(Number(limit) || 50, 1), 200)
+    take: take + 1
   });
 
-  return rows.map(message => {
+  const hasMore = rows.length > take;
+  const page = hasMore ? rows.slice(0, take) : rows;
+  const messages = page.map(message => {
     const statuses = message.message_status || [];
     const others = statuses.filter(
       item => String(item.user_id) !== String(message.sender_id)
@@ -305,6 +694,12 @@ export async function listMessages({ conversationId, userId, limit = 50 }) {
       deliveryStatus
     };
   });
+
+  return {
+    messages,
+    hasMore,
+    nextCursor: page.length ? String(page[page.length - 1].id) : null
+  };
 }
 
 export async function sendMessage({

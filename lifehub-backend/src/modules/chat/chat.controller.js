@@ -60,14 +60,49 @@ export async function resolveContacts(req, res) {
   }
 }
 
+export async function listContactDirectory(req, res) {
+  try {
+    const payload = await chatService.listContactDirectory(req.user.id);
+    res.json(jsonSafe(payload));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+}
+
+export async function requestContact(req, res) {
+  try {
+    const payload = await chatService.requestContactByPhone({
+      requesterId: req.user.id,
+      phone: req.body.phone
+    });
+    res.status(201).json(jsonSafe(payload));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+}
+
+export async function respondContactRequest(req, res) {
+  try {
+    const payload = await chatService.respondToContactRequest({
+      requestId: req.params.requestId,
+      userId: req.user.id,
+      action: req.body.action
+    });
+    res.json(jsonSafe(payload));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+}
+
 export async function listMessages(req, res) {
   try {
-    const messages = await chatService.listMessages({
+    const payload = await chatService.listMessages({
       conversationId: req.params.conversationId,
       userId: req.user.id,
-      limit: req.query.limit
+      limit: req.query.limit,
+      beforeMessageId: req.query.beforeMessageId
     });
-    res.json(jsonSafe({ messages }));
+    res.json(jsonSafe(payload));
   } catch (err) {
     res.status(400).json({ error: err.message });
   }

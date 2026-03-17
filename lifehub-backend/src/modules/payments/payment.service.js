@@ -10,6 +10,9 @@ import { eventBus } from "../../common/events/eventBus.js";
 import { getSharedRedisClient } from "../../config/redis.js";
 
 const redis = getSharedRedisClient();
+const memoryIntentStore = new Map();
+const memoryProviderIntentStore = new Map();
+const memorySettledStore = new Map();
 
 const INTENT_TTL_SECONDS = Math.max(Number(process.env.PAYMENT_INTENT_TTL_SECONDS || 86400), 600);
 
@@ -29,26 +32,82 @@ function settledKey(provider, providerPaymentId) {
   return `payment:settled:${provider}:${providerPaymentId}`;
 }
 
+function expiresAtTs() {
+  return Date.now() + INTENT_TTL_SECONDS * 1000;
+}
+
+function saveMemoryIntent(payload) {
+  const expiresAt = expiresAtTs();
+  memoryIntentStore.set(payload.intentId, { payload, expiresAt });
+  memoryProviderIntentStore.set(providerIntentKey(payload.provider, payload.providerIntentId), {
+    intentId: payload.intentId,
+    expiresAt
+  });
+}
+
+function readMemoryIntent(intentId) {
+  const row = memoryIntentStore.get(intentId);
+  if (!row) return null;
+  if (row.expiresAt <= Date.now()) {
+    memoryIntentStore.delete(intentId);
+    return null;
+  }
+  return row.payload;
+}
+
+function readMemoryIntentByProvider(provider, providerIntentId) {
+  const row = memoryProviderIntentStore.get(providerIntentKey(provider, providerIntentId));
+  if (!row) return null;
+  if (row.expiresAt <= Date.now()) {
+    memoryProviderIntentStore.delete(providerIntentKey(provider, providerIntentId));
+    return null;
+  }
+  return readMemoryIntent(row.intentId);
+}
+
+function markMemorySettled(provider, providerPaymentId) {
+  const key = settledKey(provider, providerPaymentId);
+  const existing = memorySettledStore.get(key);
+  if (existing && existing > Date.now()) {
+    return false;
+  }
+  memorySettledStore.set(key, expiresAtTs());
+  return true;
+}
+
 async function saveIntent(payload) {
-  await redis.set(intentKey(payload.intentId), JSON.stringify(payload), "EX", INTENT_TTL_SECONDS);
-  await redis.set(
-    providerIntentKey(payload.provider, payload.providerIntentId),
-    payload.intentId,
-    "EX",
-    INTENT_TTL_SECONDS
-  );
+  saveMemoryIntent(payload);
+  try {
+    await redis.set(intentKey(payload.intentId), JSON.stringify(payload), "EX", INTENT_TTL_SECONDS);
+    await redis.set(
+      providerIntentKey(payload.provider, payload.providerIntentId),
+      payload.intentId,
+      "EX",
+      INTENT_TTL_SECONDS
+    );
+  } catch {
+    // in-memory mirror remains available
+  }
 }
 
 async function getIntentById(intentId) {
-  const raw = await redis.get(intentKey(intentId));
-  if (!raw) return null;
-  return JSON.parse(raw);
+  try {
+    const raw = await redis.get(intentKey(intentId));
+    if (raw) return JSON.parse(raw);
+  } catch {
+    // fall back to in-memory store when redis is unavailable
+  }
+  return readMemoryIntent(intentId);
 }
 
 async function getIntentByProvider(provider, providerIntentId) {
-  const id = await redis.get(providerIntentKey(provider, providerIntentId));
-  if (!id) return null;
-  return getIntentById(id);
+  try {
+    const id = await redis.get(providerIntentKey(provider, providerIntentId));
+    if (id) return getIntentById(id);
+  } catch {
+    // fall back to in-memory store when redis is unavailable
+  }
+  return readMemoryIntentByProvider(provider, providerIntentId);
 }
 
 async function markIntentSettled(intent) {
@@ -65,13 +124,18 @@ async function settleIntent({
   intent,
   providerPaymentId
 }) {
-  const dedupe = await redis.set(
-    settledKey(intent.provider, providerPaymentId),
-    "1",
-    "EX",
-    INTENT_TTL_SECONDS,
-    "NX"
-  );
+  let dedupe = null;
+  try {
+    dedupe = await redis.set(
+      settledKey(intent.provider, providerPaymentId),
+      "1",
+      "EX",
+      INTENT_TTL_SECONDS,
+      "NX"
+    );
+  } catch {
+    dedupe = markMemorySettled(intent.provider, providerPaymentId) ? "OK" : null;
+  }
   if (!dedupe) {
     return { duplicate: true, intentId: intent.intentId };
   }

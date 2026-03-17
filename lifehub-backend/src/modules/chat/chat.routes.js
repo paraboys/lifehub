@@ -8,6 +8,9 @@ import {
   createGroupConversationByPhones,
   listConversations,
   resolveContacts,
+  listContactDirectory,
+  requestContact,
+  respondContactRequest,
   listMessages,
   sendMessage,
   markRead,
@@ -27,6 +30,9 @@ router.post("/conversations/by-phone", authenticate, allowChatRole, abuseGuard("
 router.post("/conversations/group-by-phones", authenticate, allowChatRole, abuseGuard("chat"), createGroupConversationByPhones);
 router.get("/conversations", authenticate, allowChatRole, abuseGuard("chat"), listConversations);
 router.post("/contacts/resolve", authenticate, allowChatRole, abuseGuard("chat"), resolveContacts);
+router.get("/contacts", authenticate, allowChatRole, abuseGuard("chat"), listContactDirectory);
+router.post("/contacts/request", authenticate, allowChatRole, abuseGuard("chat"), requestContact);
+router.post("/contacts/requests/:requestId/respond", authenticate, allowChatRole, abuseGuard("chat"), respondContactRequest);
 router.get("/conversations/:conversationId/messages", authenticate, allowChatRole, abuseGuard("chat"), listMessages);
 router.post("/conversations/:conversationId/messages", authenticate, allowChatRole, abuseGuard("chat"), sendMessage);
 router.post("/conversations/:conversationId/read", authenticate, allowChatRole, abuseGuard("chat"), markRead);

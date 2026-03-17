@@ -537,9 +537,19 @@ export default function SuperAppPage({
   const [peerPhone, setPeerPhone] = useState("");
   const [groupPhones, setGroupPhones] = useState("");
   const [contactPhones, setContactPhones] = useState("");
+  const [contactRequestPhone, setContactRequestPhone] = useState("");
   const [resolvedContacts, setResolvedContacts] = useState([]);
+  const [contactDirectory, setContactDirectory] = useState({
+    contacts: [],
+    incomingRequests: [],
+    outgoingRequests: []
+  });
   const [chatSearch, setChatSearch] = useState("");
   const [chatListMode, setChatListMode] = useState("all");
+  const [loadingMessages, setLoadingMessages] = useState(false);
+  const [loadingOlderMessages, setLoadingOlderMessages] = useState(false);
+  const [messageCursor, setMessageCursor] = useState(null);
+  const [hasOlderMessages, setHasOlderMessages] = useState(false);
   const [callSession, setCallSession] = useState({
     open: false,
     roomId: "",
@@ -579,6 +589,8 @@ export default function SuperAppPage({
   const [marketCategory, setMarketCategory] = useState("all");
   const locationThrottleRef = useRef(0);
   const messageEndRef = useRef(null);
+  const messagePanelRef = useRef(null);
+  const prependScrollStateRef = useRef(null);
 
   const [shopFilters, setShopFilters] = useState({
     lat: "28.6139",
@@ -671,6 +683,7 @@ export default function SuperAppPage({
   });
   const [workflowId, setWorkflowId] = useState("1");
   const [userSettings, setUserSettings] = useState(DEFAULT_SETTINGS);
+  const [settingsSection, setSettingsSection] = useState("menu");
   const [profileDraft, setProfileDraft] = useState(() => ({
     name: session?.user?.name || "",
     email: session?.user?.email || ""
@@ -1200,8 +1213,16 @@ export default function SuperAppPage({
       };
     }
     if (activeTab === "profile") {
+      const sectionTitles = {
+        menu: "Settings",
+        profile: "Profile Settings",
+        security: "Security Settings",
+        privacy: "Privacy",
+        notifications: "Notifications",
+        preferences: "Account Preferences"
+      };
       return {
-        title: "Settings",
+        title: sectionTitles[settingsSection] || "Settings",
         eyebrow: "Account",
         description: "Manage your account preferences and notifications."
       };
@@ -1218,7 +1239,7 @@ export default function SuperAppPage({
       eyebrow: "Dashboard",
       description: `You have ${activeOrdersCount} active deliveries and ${pendingServiceCount} services scheduled.`
     };
-  }, [activeTab, user.name, activeOrdersCount, pendingServiceCount]);
+  }, [activeTab, user.name, activeOrdersCount, pendingServiceCount, settingsSection]);
   const visibleConversations = useMemo(() => {
     if (chatListMode === "unread") {
       return filteredConversations.filter(conv => Number(conv.unreadCount || 0) > 0);
@@ -1228,6 +1249,16 @@ export default function SuperAppPage({
     }
     return filteredConversations;
   }, [filteredConversations, chatListMode]);
+  const acceptedContacts = contactDirectory.contacts || [];
+  const incomingContactRequests = contactDirectory.incomingRequests || [];
+  const outgoingContactRequests = contactDirectory.outgoingRequests || [];
+  const walletBalance = Number(walletSummary?.balance || 0);
+  const chatWalletLocked = walletBalance <= 0;
+  const marketplaceSubtotal = Number(cartTotal.toFixed(2));
+  const marketplaceSavings = Number(
+    cart.reduce((sum, item) => sum + (Number(item.price || 0) * 0.12 * Number(item.quantity || 0)), 0).toFixed(2)
+  );
+  const marketplacePayable = marketplaceSubtotal;
   const filteredMessages = useMemo(() => {
     if (!deferredThreadSearch.trim()) return messages;
     const needle = deferredThreadSearch.trim().toLowerCase();
@@ -1320,8 +1351,8 @@ export default function SuperAppPage({
         key: intent.checkout.keyId,
         amount: Math.round(Number(intent.amount || 0) * 100),
         currency: intent.currency || "INR",
-        name: "LifeHub",
-        description: "Wallet topup payment",
+        name: options.name || "LifeHub",
+        description: options.description || "Wallet topup payment",
         order_id: intent.checkout.orderId,
         handler: async response => {
           try {
@@ -1371,6 +1402,15 @@ export default function SuperAppPage({
     setConversations(rows);
   }
 
+  async function loadContactDirectory() {
+    const data = await api("/chat/contacts");
+    setContactDirectory({
+      contacts: data.contacts || [],
+      incomingRequests: data.incomingRequests || [],
+      outgoingRequests: data.outgoingRequests || []
+    });
+  }
+
   async function loadPresence() {
     const data = await api("/chat/presence");
     const map = {};
@@ -1381,21 +1421,54 @@ export default function SuperAppPage({
   }
 
   async function loadMessages(conversationId, options = {}) {
-    const { markRead = false } = options;
+    const { markRead = false, mode = "replace", beforeMessageId = null } = options;
     if (!conversationId) return;
-    const data = await api(`/chat/conversations/${conversationId}/messages?limit=100`);
-    const ordered = [...(data.messages || [])].reverse();
-    setMessages(ordered);
-    const latest = ordered[ordered.length - 1];
-    if (markRead && latest?.id) {
-      await api(`/chat/conversations/${conversationId}/delivered`, {
-        method: "POST",
-        body: JSON.stringify({ lastMessageId: latest.id })
+    const params = new URLSearchParams({ limit: mode === "prepend" ? "40" : "80" });
+    if (beforeMessageId) {
+      params.set("beforeMessageId", String(beforeMessageId));
+    }
+
+    if (mode === "prepend") {
+      setLoadingOlderMessages(true);
+      if (messagePanelRef.current) {
+        prependScrollStateRef.current = {
+          height: messagePanelRef.current.scrollHeight,
+          top: messagePanelRef.current.scrollTop
+        };
+      }
+    } else {
+      setLoadingMessages(true);
+    }
+
+    try {
+      const data = await api(`/chat/conversations/${conversationId}/messages?${params}`);
+      const ordered = [...(data.messages || [])].reverse();
+      setHasOlderMessages(Boolean(data.hasMore));
+      setMessageCursor(data.nextCursor || null);
+      setMessages(prev => {
+        if (mode === "prepend") {
+          const seen = new Set(prev.map(item => String(item.id)));
+          return [...ordered.filter(item => !seen.has(String(item.id))), ...prev];
+        }
+        return ordered;
       });
-      await api(`/chat/conversations/${conversationId}/read`, {
-        method: "POST",
-        body: JSON.stringify({ lastMessageId: latest.id })
-      });
+      const latest = ordered[ordered.length - 1];
+      if (markRead && latest?.id) {
+        await api(`/chat/conversations/${conversationId}/delivered`, {
+          method: "POST",
+          body: JSON.stringify({ lastMessageId: latest.id })
+        });
+        await api(`/chat/conversations/${conversationId}/read`, {
+          method: "POST",
+          body: JSON.stringify({ lastMessageId: latest.id })
+        });
+      }
+    } finally {
+      if (mode === "prepend") {
+        setLoadingOlderMessages(false);
+      } else {
+        setLoadingMessages(false);
+      }
     }
   }
 
@@ -1405,10 +1478,23 @@ export default function SuperAppPage({
       if (!nextId) return;
       setSelectedConversationId(nextId);
       setThreadSearch("");
-      await loadMessages(nextId, { markRead: true });
-      await loadConversations();
+      await loadMessages(nextId, { markRead: true, mode: "replace" });
+      await Promise.all([loadConversations(), loadContactDirectory()]);
     } catch (err) {
       setError(err.message || "Unable to open conversation");
+    }
+  }
+
+  async function loadOlderConversationMessages() {
+    if (!selectedConversationId || !hasOlderMessages || !messageCursor || loadingOlderMessages) return;
+    try {
+      await loadMessages(selectedConversationId, {
+        mode: "prepend",
+        beforeMessageId: messageCursor,
+        markRead: false
+      });
+    } catch (err) {
+      setError(err.message || "Unable to load older messages");
     }
   }
 
@@ -1416,6 +1502,10 @@ export default function SuperAppPage({
     try {
       const text = chatText.trim();
       if (!selectedConversationId || (!text && !pendingAttachments.length)) return;
+      if (chatWalletLocked) {
+        setError("Top up your wallet first to start messaging in LifeHub chat.");
+        return;
+      }
       await api(`/chat/conversations/${selectedConversationId}/messages`, {
         method: "POST",
         body: JSON.stringify({
@@ -1432,7 +1522,7 @@ export default function SuperAppPage({
       setChatText("");
       setPendingAttachments([]);
       await publishTypingState(false);
-      await loadMessages(selectedConversationId, { markRead: false });
+      await loadMessages(selectedConversationId, { markRead: false, mode: "replace" });
       await loadConversations();
     } catch (err) {
       setError(err.message || "Unable to send message");
@@ -1601,9 +1691,9 @@ export default function SuperAppPage({
         })
       });
       setPeerPhone("");
-      await loadConversations();
+      await Promise.all([loadConversations(), loadContactDirectory()]);
       if (conversation?.id) {
-        setSelectedConversationId(String(conversation.id));
+        await openConversation(String(conversation.id));
       }
     } catch (err) {
       setError(err.message || "Unable to create chat");
@@ -1628,7 +1718,7 @@ export default function SuperAppPage({
       setGroupPhones("");
       await loadConversations();
       if (conversation?.id) {
-        setSelectedConversationId(String(conversation.id));
+        await openConversation(String(conversation.id));
       }
     } catch (err) {
       setError(err.message || "Unable to create group");
@@ -1653,6 +1743,68 @@ export default function SuperAppPage({
       setResolvedContacts(data.contacts || []);
     } catch (err) {
       setError(err.message || "Unable to sync contacts");
+    }
+  }
+
+  async function sendContactRequest(phoneOverride = "") {
+    try {
+      const phone = String(phoneOverride || contactRequestPhone || "").trim();
+      if (!phone) {
+        setError("Enter a phone number first.");
+        return;
+      }
+      const payload = await api("/chat/contacts/request", {
+        method: "POST",
+        body: JSON.stringify({ phone })
+      });
+      setContactRequestPhone("");
+      await Promise.all([loadContactDirectory(), loadConversations()]);
+      if (payload?.conversationId) {
+        setToast(`Contact connected. Chat with ${payload?.contact?.name || payload?.contact?.phone}.`);
+        await openConversation(payload.conversationId);
+      } else {
+        setToast(`Request sent to ${payload?.contact?.name || payload?.contact?.phone}.`);
+      }
+    } catch (err) {
+      setError(err.message || "Unable to send contact request");
+    }
+  }
+
+  async function respondToContactRequest(requestId, action) {
+    try {
+      const payload = await api(`/chat/contacts/requests/${requestId}/respond`, {
+        method: "POST",
+        body: JSON.stringify({ action })
+      });
+      await Promise.all([loadContactDirectory(), loadConversations()]);
+      if (String(action || "").toUpperCase() === "ACCEPT" && payload?.conversationId) {
+        setToast(`${payload?.contact?.name || "Contact"} added to your chat list.`);
+        await openConversation(payload.conversationId);
+      } else {
+        setToast("Contact request updated.");
+      }
+    } catch (err) {
+      setError(err.message || "Unable to update contact request");
+    }
+  }
+
+  async function startConversationFromContact(contact) {
+    try {
+      const existing = conversations.find(conv => String(conv?.peers?.[0]?.userId || "") === String(contact?.userId || ""));
+      if (existing?.id) {
+        await openConversation(existing.id);
+        return;
+      }
+      const payload = await api("/chat/conversations/by-phone", {
+        method: "POST",
+        body: JSON.stringify({ phone: contact.phone })
+      });
+      if (payload?.id) {
+        await Promise.all([loadConversations(), loadContactDirectory()]);
+        await openConversation(payload.id);
+      }
+    } catch (err) {
+      setError(err.message || "Unable to open contact chat");
     }
   }
 
@@ -2000,6 +2152,9 @@ export default function SuperAppPage({
         {
           productId: product.id,
           name: product.name,
+          company: product.company || "",
+          description: product.description || "",
+          imageUrl: product.imageUrl || "",
           price: Number(product.price || 0),
           quantity: 1
         }
@@ -2024,6 +2179,16 @@ export default function SuperAppPage({
 
   function removeFromCart(productId) {
     setCart(prev => prev.filter(item => String(item.productId) !== String(productId)));
+  }
+
+  function incrementCartItem(productId) {
+    const current = cart.find(item => String(item.productId) === String(productId));
+    updateCartQuantity(productId, Number(current?.quantity || 0) + 1);
+  }
+
+  function decrementCartItem(productId) {
+    const current = cart.find(item => String(item.productId) === String(productId));
+    updateCartQuantity(productId, Number(current?.quantity || 0) - 1);
   }
 
   function clearCart() {
@@ -2074,6 +2239,9 @@ export default function SuperAppPage({
         {
           productId: normalized.productId,
           name: normalized.name,
+          company: normalized.company || "",
+          description: normalized.description || "",
+          imageUrl: normalized.imageUrl || "",
           price: Number(normalized.price || 0),
           quantity: 1
         }
@@ -2169,6 +2337,7 @@ export default function SuperAppPage({
       setPaymentIntent(intent);
       setPendingOrderAfterPayment(true);
       await openRazorpayCheckout(intent, {
+        description: "LifeHub marketplace payment",
         onSettled: async () => {
           setPendingOrderAfterPayment(false);
           await placeOrder();
@@ -2747,10 +2916,15 @@ export default function SuperAppPage({
 
   async function topupWallet() {
     try {
+      const amount = Number(topupAmount || 0);
+      if (!Number.isFinite(amount) || amount <= 0) {
+        setError("Enter a valid top-up amount.");
+        return;
+      }
       const intent = await api("/payments/intents", {
         method: "POST",
         body: JSON.stringify({
-          amount: Number(topupAmount || 0),
+          amount,
           purpose: "TOPUP",
           provider: "RAZORPAY",
           paymentMethod: "UPI",
@@ -2758,7 +2932,9 @@ export default function SuperAppPage({
         })
       });
       setPaymentIntent(intent);
-      await openRazorpayCheckout(intent);
+      await openRazorpayCheckout(intent, {
+        description: "LifeHub wallet top-up"
+      });
       setToast("Payment successful. Wallet credited.");
       await loadWallet();
     } catch (err) {
@@ -2896,6 +3072,7 @@ export default function SuperAppPage({
         loadHome(),
         loadUserProfile(),
         loadConversations(),
+        loadContactDirectory(),
         searchShops(),
         loadProviders(),
         loadWallet(),
@@ -3143,17 +3320,30 @@ export default function SuperAppPage({
 
   useEffect(() => {
     if (activeTab === "chat" && selectedConversationId) {
-      loadMessages(selectedConversationId, { markRead: true }).catch(() => {});
+      loadMessages(selectedConversationId, { markRead: true, mode: "replace" }).catch(() => {});
     }
   }, [activeTab, selectedConversationId]);
 
   useEffect(() => {
     if (activeTab !== "chat") return;
+    if (prependScrollStateRef.current && messagePanelRef.current) {
+      const previous = prependScrollStateRef.current;
+      const nextHeight = messagePanelRef.current.scrollHeight;
+      messagePanelRef.current.scrollTop = nextHeight - previous.height + previous.top;
+      prependScrollStateRef.current = null;
+      return;
+    }
     messageEndRef.current?.scrollIntoView({
       behavior: "smooth",
       block: "end"
     });
   }, [messages, activeTab]);
+
+  useEffect(() => {
+    if (activeTab !== "profile") {
+      setSettingsSection("menu");
+    }
+  }, [activeTab]);
 
   useEffect(() => {
     if (activeTab !== "home" || !notificationUnreadCount) return;
@@ -3169,6 +3359,7 @@ export default function SuperAppPage({
       loadNotifications().catch(() => {});
       if (activeTab === "chat") {
         loadConversations().catch(() => {});
+        loadContactDirectory().catch(() => {});
       }
     }, 15000);
 
@@ -3517,56 +3708,74 @@ export default function SuperAppPage({
     const activePeerName = activePeer?.name || `Conversation ${selectedConversationId || "-"}`;
     const activePeerOnline = Boolean(activePeer?.userId && onlineUsers[String(activePeer.userId)]);
     const canCall = Boolean(
-      selectedConversationId &&
-      activePeer?.userId &&
-      String(selectedThread?.type || "DIRECT").toUpperCase() !== "GROUP"
+      selectedConversationId
+      && activePeer?.userId
+      && String(selectedThread?.type || "DIRECT").toUpperCase() !== "GROUP"
     );
+    const chatPlaceholderCopy = chatWalletLocked
+      ? "Top up your wallet once to unlock LifeHub conversations and provider chats."
+      : "Select an accepted contact from the left and start chatting.";
 
     return (
-      <section className="chat-shell messenger-shell">
-        <div className="chat-layout full-width-chat messenger-layout">
-          <aside className="chat-sidebar messenger-sidebar">
-            <div className="chat-sidebar-head">
-              <h2>Messages</h2>
-              <div className="thread-actions">
-                <button className="icon-btn" onClick={loadConversations} title="Refresh chats" type="button">
-                  <UiIcon name="refresh" />
-                </button>
-                <button className="icon-btn" onClick={() => setChatListMode("groups")} title="Show groups" type="button">
-                  <UiIcon name="plus" />
-                </button>
-                <button
-                  className="icon-btn"
-                  type="button"
-                  title="Show unread first"
-                  onClick={() => setChatListMode("unread")}
-                >
-                  <UiIcon name="dots" />
-                </button>
+      <section className="chat-shell messenger-shell whatsapp-shell">
+        <div className="chat-layout full-width-chat messenger-layout whatsapp-layout">
+          <aside className="chat-sidebar messenger-sidebar whatsapp-sidebar">
+            <div className="chat-sidebar-profile">
+              <div className="chat-avatar large own-profile">
+                {profilePhoto ? (
+                  <img src={profilePhoto} alt={user.name || "Profile"} className="chat-avatar-img" />
+                ) : (
+                  initials(user.name || "User")
+                )}
               </div>
+              <div>
+                <strong>{user.name || "LifeHub User"}</strong>
+                <small>{roleLabel(userRoles)}</small>
+              </div>
+              <button className="icon-btn" onClick={loadConversations} title="Refresh chats" type="button">
+                <UiIcon name="refresh" />
+              </button>
             </div>
 
-            <div className="chat-sidebar-stats">
-              <span>{visibleConversations.length} conversations</span>
+            <div className="chat-sidebar-stats whatsapp-stats">
+              <span>{visibleConversations.length} chats</span>
               <span>{totalUnreadChats} unread</span>
+              <span>{acceptedContacts.length} contacts</span>
             </div>
 
-            <label className="chat-search-wrap">
+            {chatWalletLocked && (
+              <div className="chat-wallet-lock panel-soft-card">
+                <div>
+                  <strong>Wallet top-up required</strong>
+                  <small>Balance {toCurrency(walletBalance)}. Add funds once, then messaging stays unlocked.</small>
+                </div>
+                <div className="chat-wallet-lock-actions">
+                  <input
+                    value={topupAmount}
+                    onChange={event => setTopupAmount(event.target.value)}
+                    placeholder="Top-up amount"
+                  />
+                  <button type="button" onClick={topupWallet}>Pay & Unlock</button>
+                </div>
+              </div>
+            )}
+
+            <label className="chat-search-wrap whatsapp-search">
               <UiIcon name="search" />
               <input
                 value={chatSearch}
                 onChange={event => setChatSearch(event.target.value)}
-                placeholder="Search chats or start a new conversation"
+                placeholder="Search accepted contacts or chats"
               />
             </label>
 
-            <div className="chat-filter-row">
+            <div className="chat-filter-row compact">
               <button
                 className={`chat-filter-chip ${chatListMode === "all" ? "active" : ""}`}
                 type="button"
                 onClick={() => setChatListMode("all")}
               >
-                All ({filteredConversations.length})
+                All
               </button>
               <button
                 className={`chat-filter-chip ${chatListMode === "unread" ? "active" : ""}`}
@@ -3584,133 +3793,179 @@ export default function SuperAppPage({
               </button>
             </div>
 
-            <details className="chat-tools">
-              <summary>New chat and contacts</summary>
-              <div className="chat-tools-body">
-                <div className="chat-action-row">
-                  <input
-                    value={peerPhone}
-                    onChange={event => setPeerPhone(event.target.value)}
-                    placeholder="Phone number"
-                    onKeyDown={event => {
-                      if (event.key === "Enter") createConversationByPhone();
-                    }}
-                  />
-                  <button type="button" onClick={createConversationByPhone}>New chat</button>
+            <div className="chat-contact-launcher panel-soft-card">
+              <div className="chat-section-head">
+                <div>
+                  <strong>Add Contact</strong>
+                  <small>Search LifeHub users by phone number</small>
                 </div>
-                <div className="chat-action-row">
-                  <input
-                    value={contactPhones}
-                    onChange={event => setContactPhones(event.target.value)}
-                    placeholder="Contact numbers"
-                  />
-                  <button type="button" onClick={resolveContacts}>Sync</button>
-                </div>
-                <div className="chat-action-row">
-                  <input
-                    value={groupPhones}
-                    onChange={event => setGroupPhones(event.target.value)}
-                    placeholder="Group numbers"
-                  />
-                  <button type="button" onClick={createGroupConversation}>New group</button>
-                </div>
-                <div className="chat-permission-row">
-                  <button
-                    type="button"
-                    className="btn-secondary"
-                    onClick={pickContactsFromDevice}
-                    disabled={!canUseDeviceContacts}
-                  >
-                    {canUseDeviceContacts ? "Import Contacts" : "Contacts Unavailable"}
-                  </button>
-                  <small className="inline-help">
-                    {canUseDeviceContacts
-                      ? "Grant access once to import contacts."
-                      : "Manual number entry is enabled."}
-                  </small>
-                </div>
+                <button type="button" className="ghost-btn" onClick={loadContactDirectory}>Refresh</button>
               </div>
-            </details>
+              <div className="chat-action-row tight">
+                <input
+                  value={contactRequestPhone}
+                  onChange={event => setContactRequestPhone(event.target.value)}
+                  placeholder="Enter phone number"
+                  onKeyDown={event => {
+                    if (event.key === "Enter") sendContactRequest();
+                  }}
+                />
+                <button type="button" onClick={sendContactRequest}>Add</button>
+              </div>
+              <div className="chat-permission-row compact">
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={pickContactsFromDevice}
+                  disabled={!canUseDeviceContacts}
+                >
+                  {canUseDeviceContacts ? "Import" : "Manual only"}
+                </button>
+                <input
+                  value={contactPhones}
+                  onChange={event => setContactPhones(event.target.value)}
+                  placeholder="Paste contact numbers"
+                />
+                <button type="button" className="ghost-btn" onClick={resolveContacts}>Find</button>
+              </div>
+              <div className="chat-action-row tight">
+                <input
+                  value={groupPhones}
+                  onChange={event => setGroupPhones(event.target.value)}
+                  placeholder="Group member numbers"
+                />
+                <button type="button" className="ghost-btn" onClick={createGroupConversation}>New group</button>
+              </div>
+            </div>
+
+            {!!incomingContactRequests.length && (
+              <div className="chat-request-stack panel-soft-card">
+                <div className="chat-section-head">
+                  <strong>Incoming Requests</strong>
+                  <small>{incomingContactRequests.length} waiting</small>
+                </div>
+                {incomingContactRequests.map(request => (
+                  <div key={request.requestId} className="chat-request-row">
+                    <div>
+                      <strong>{request.name}</strong>
+                      <small>{request.phone}</small>
+                    </div>
+                    <div className="chat-request-actions">
+                      <button type="button" className="ghost-btn" onClick={() => respondToContactRequest(request.requestId, "REJECT")}>Reject</button>
+                      <button type="button" onClick={() => respondToContactRequest(request.requestId, "ACCEPT")}>Accept</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {!!outgoingContactRequests.length && (
+              <div className="chat-request-stack muted panel-soft-card">
+                <div className="chat-section-head">
+                  <strong>Pending Sent</strong>
+                  <small>{outgoingContactRequests.length} request(s)</small>
+                </div>
+                {outgoingContactRequests.slice(0, 3).map(request => (
+                  <div key={request.requestId} className="chat-request-row">
+                    <div>
+                      <strong>{request.name}</strong>
+                      <small>{request.phone}</small>
+                    </div>
+                    <span className="status-pill">Pending</span>
+                  </div>
+                ))}
+              </div>
+            )}
 
             {!!resolvedContacts.length && (
-              <div className="chat-resolved-list">
-                {resolvedContacts.map(contact => (
-                  <button
-                    key={contact.id}
-                    className="item-card button-like"
-                    type="button"
-                    onClick={async () => {
-                      try {
-                        const conversation = await api("/chat/conversations/by-phone", {
-                          method: "POST",
-                          body: JSON.stringify({ phone: contact.phone })
-                        });
-                        await loadConversations();
-                        if (conversation?.id) {
-                          setSelectedConversationId(String(conversation.id));
-                        }
-                      } catch (err) {
-                        setError(err.message || "Unable to start contact chat");
-                      }
-                    }}
-                  >
-                    <strong>{contact.name}</strong>
-                    <small>{contact.phone}</small>
+              <div className="chat-discovery-grid panel-soft-card">
+                <div className="chat-section-head">
+                  <strong>Matched on LifeHub</strong>
+                  <small>{resolvedContacts.length} result(s)</small>
+                </div>
+                {resolvedContacts.slice(0, 5).map(contact => (
+                  <div key={contact.id} className="chat-discovery-row">
+                    <div>
+                      <strong>{contact.name}</strong>
+                      <small>{contact.phone}</small>
+                    </div>
+                    {String(contact.contactStatus || "").toUpperCase() === "ACCEPTED" ? (
+                      <button type="button" className="ghost-btn" onClick={() => startConversationFromContact(contact)}>
+                        Chat
+                      </button>
+                    ) : String(contact.contactStatus || "").toUpperCase() === "OUTGOING_PENDING" ? (
+                      <span className="status-pill">Request sent</span>
+                    ) : String(contact.contactStatus || "").toUpperCase() === "INCOMING_PENDING" ? (
+                      <span className="status-pill">Needs approval</span>
+                    ) : (
+                      <button type="button" className="ghost-btn" onClick={() => sendContactRequest(contact.phone)}>
+                        Add
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {!!acceptedContacts.length && (
+              <div className="chat-accepted-strip">
+                {acceptedContacts.slice(0, 8).map(contact => (
+                  <button key={contact.requestId || contact.userId} type="button" className="chat-contact-pill" onClick={() => startConversationFromContact(contact)}>
+                    <span>{initials(contact.name)}</span>
+                    <small>{contact.name}</small>
                   </button>
                 ))}
               </div>
             )}
 
-            <div className="chat-list">
-              {visibleConversations.map(conv => (
-                <button
-                  key={conv.id}
-                  className={`chat-list-item ${String(conv.id) === String(selectedConversationId) ? "active" : ""}`}
-                  onClick={() => openConversation(conv.id)}
-                  type="button"
-                >
-                  <div className="chat-row">
-                    <div className="chat-avatar">
-                      {(() => {
-                        const label = conv?.peers?.[0]?.name || conv?.peers?.[0]?.phone || "Contact";
-                        const avatarUrl = conv?.peers?.[0]?.avatarUrl || providerAvatarUrl(label);
-                        return avatarUrl ? (
+            <div className="chat-list whatsapp-chat-list">
+              {visibleConversations.map(conv => {
+                const peer = conv?.peers?.[0] || {};
+                const label = peer?.name || `Conversation #${conv.id}`;
+                const avatarUrl = peer?.avatarUrl || providerAvatarUrl(label);
+                const isActive = String(conv.id) === String(selectedConversationId);
+                const unreadCount = Number(conv?.unreadCount || 0);
+                return (
+                  <button
+                    key={conv.id}
+                    className={`chat-list-item whatsapp-list-item ${isActive ? "active" : ""}`}
+                    onClick={() => openConversation(conv.id)}
+                    type="button"
+                  >
+                    <div className="chat-row">
+                      <div className="chat-avatar">
+                        {avatarUrl ? (
                           <img src={avatarUrl} alt={label} className="chat-avatar-img" />
                         ) : (
                           initials(label)
-                        );
-                      })()}
-                      {onlineUsers[String(conv?.peers?.[0]?.userId)] && <span className="online-dot" />}
-                    </div>
-                    <div className="chat-list-body">
-                      <div className="chat-list-top">
-                        <strong>{conv?.peers?.[0]?.name || `Conversation #${conv.id}`}</strong>
-                        <div className="chat-meta">
+                        )}
+                        {onlineUsers[String(peer?.userId)] && <span className="online-dot" />}
+                      </div>
+                      <div className="chat-list-body">
+                        <div className="chat-list-top">
+                          <strong>{label}</strong>
                           <small>{formatClock(conv?.lastMessage?.created_at)}</small>
                         </div>
-                      </div>
-                      <small className="chat-list-meta">
-                        {onlineUsers[String(conv?.peers?.[0]?.userId)] ? "Online" : "Offline"} |{" "}
-                        {conv?.peers?.[0]?.phone || titleCase(conv.type || "direct")}
-                      </small>
-                      <div className="chat-preview-row">
-                        <small>{messagePreview(conv?.lastMessage?.content, 62)}</small>
-                        {Number(conv?.unreadCount || 0) > 0 && (
-                          <span className="unread-badge">{conv.unreadCount}</span>
-                        )}
+                        <small className="chat-list-meta">
+                          {messagePreview(conv?.lastMessage?.content, 58)}
+                        </small>
+                        <div className="chat-preview-row">
+                          <small>{peer?.phone || titleCase(conv.type || "direct")}</small>
+                          {unreadCount > 0 && <span className="unread-badge">{unreadCount}</span>}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                </button>
-              ))}
+                  </button>
+                );
+              })}
               {!visibleConversations.length && (
-                <div className="empty-line">No conversations for this filter.</div>
+                <div className="empty-line">No accepted contact chats yet.</div>
               )}
             </div>
           </aside>
 
-          <article className="chat-thread messenger-thread">
-            <div className="chat-thread-head">
+          <article className="chat-thread messenger-thread whatsapp-thread">
+            <div className="chat-thread-head whatsapp-thread-head">
               <div className="thread-peer">
                 <div className="chat-avatar large">
                   {(() => {
@@ -3725,9 +3980,11 @@ export default function SuperAppPage({
                   {activePeerOnline && <span className="online-dot" />}
                 </div>
                 <div className="thread-peer-meta">
-                  <h2>{activePeerName}</h2>
+                  <h2>{selectedConversationId ? activePeerName : "LifeHub Messenger"}</h2>
                   <small>
-                    {activePeerOnline ? "Online now" : "Offline"} | {activePeer?.phone || "Secure chat"}
+                    {selectedConversationId
+                      ? `${activePeerOnline ? "Online now" : "Offline"} | ${activePeer?.phone || "Secure chat"}`
+                      : `${acceptedContacts.length} contacts ready to message`}
                   </small>
                 </div>
               </div>
@@ -3761,73 +4018,94 @@ export default function SuperAppPage({
                 {activeCallRoomId && <span className="chip">Room {activeCallRoomId}</span>}
               </div>
             </div>
-            <div className="chat-thread-tools">
+            <div className="chat-thread-tools whatsapp-thread-tools">
               <input
                 ref={threadSearchInputRef}
                 value={threadSearch}
                 onChange={event => setThreadSearch(event.target.value)}
-                placeholder="Search in this conversation"
+                placeholder="Search inside this chat"
               />
               {activeTypingLabel && <span className="typing-pill">{activeTypingLabel} typing...</span>}
             </div>
 
             {!selectedConversationId ? (
-              <div className="chat-placeholder">
-                <h3>Select a conversation</h3>
-                <p>Pick a chat from the left to start messaging.</p>
+              <div className="chat-placeholder whatsapp-placeholder">
+                <h3>Start with an accepted contact</h3>
+                <p>{chatPlaceholderCopy}</p>
+                <div className="chat-placeholder-actions">
+                  <button type="button" onClick={loadContactDirectory}>Refresh contacts</button>
+                  {!!acceptedContacts[0] && (
+                    <button type="button" className="ghost-btn" onClick={() => startConversationFromContact(acceptedContacts[0])}>
+                      Open latest contact
+                    </button>
+                  )}
+                </div>
               </div>
             ) : (
               <>
-                <div className="messages-panel whatsapp-feed">
-                  {filteredMessages.map(message => (
-                    <div
-                      key={message.id}
-                      className={`message-row ${String(message.sender_id) === String(user.id) ? "mine" : "theirs"}`}
-                    >
-                      {String(message.sender_id) !== String(user.id) && (
-                        <div className="chat-avatar tiny">
-                          {initials(activePeer?.name || activePeer?.phone || "U")}
-                        </div>
-                      )}
-                      <div
-                        className={`message-bubble ${
-                          String(message.sender_id) === String(user.id) ? "mine" : "theirs"
-                        }`}
+                <div
+                  ref={messagePanelRef}
+                  className="messages-panel whatsapp-feed"
+                  onScroll={event => {
+                    if (event.currentTarget.scrollTop < 64) {
+                      loadOlderConversationMessages();
+                    }
+                  }}
+                >
+                  {(loadingOlderMessages || hasOlderMessages) && (
+                    <div className="messages-loader-row">
+                      <button
+                        type="button"
+                        className="ghost-btn"
+                        onClick={loadOlderConversationMessages}
+                        disabled={loadingOlderMessages || !hasOlderMessages}
                       >
-                        {String(message.sender_id) !== String(user.id) && (
-                          <strong className="bubble-author">{activePeer?.name || "User"}</strong>
-                        )}
-                        <p>{message.content}</p>
-                        {!!message?.message_attachments?.length && (
-                          <div className="bubble-attachments">
-                            {message.message_attachments.map(attachment => (
-                              <a
-                                key={`${message.id}_${attachment.id || attachment.file_url}`}
-                                href={attachment.file_url}
-                                target="_blank"
-                                rel="noreferrer"
-                              >
-                                {attachment.file_type || "file"}
-                              </a>
-                            ))}
+                        {loadingOlderMessages ? "Loading older messages..." : hasOlderMessages ? "Load older messages" : "All caught up"}
+                      </button>
+                    </div>
+                  )}
+                  {loadingMessages && <div className="empty-line">Loading messages...</div>}
+                  {filteredMessages.map(message => {
+                    const mine = String(message.sender_id) === String(user.id);
+                    return (
+                      <div key={message.id} className={`message-row ${mine ? "mine" : "theirs"}`}>
+                        {!mine && (
+                          <div className="chat-avatar tiny">
+                            {initials(activePeer?.name || activePeer?.phone || "U")}
                           </div>
                         )}
-                        <small className="bubble-meta">
-                          {formatClock(message.created_at)}{" "}
-                          {String(message.sender_id) === String(user.id) && (
-                            <span
-                              className={`delivery-pill ${deliveryMarker(message.deliveryStatus).toLowerCase()}`}
-                            >
-                              <UiIcon name="check" size={12} />
-                              {deliveryMarker(message.deliveryStatus)}
-                            </span>
+                        <div className={`message-bubble ${mine ? "mine" : "theirs"}`}>
+                          {!mine && <strong className="bubble-author">{activePeer?.name || "User"}</strong>}
+                          <p>{message.content}</p>
+                          {!!message?.message_attachments?.length && (
+                            <div className="bubble-attachments">
+                              {message.message_attachments.map(attachment => (
+                                <a
+                                  key={`${message.id}_${attachment.id || attachment.file_url}`}
+                                  href={attachment.file_url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                >
+                                  {attachment.file_type || "file"}
+                                </a>
+                              ))}
+                            </div>
                           )}
-                        </small>
+                          <small className="bubble-meta">
+                            {formatClock(message.created_at)}
+                            {mine && (
+                              <span className={`delivery-pill ${deliveryMarker(message.deliveryStatus).toLowerCase()}`}>
+                                <UiIcon name="check" size={12} />
+                                {deliveryMarker(message.deliveryStatus)}
+                              </span>
+                            )}
+                          </small>
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                   <div ref={messageEndRef} />
-                  {!filteredMessages.length && <div className="empty-line">No messages for this filter.</div>}
+                  {!loadingMessages && !filteredMessages.length && <div className="empty-line">No messages in this conversation yet.</div>}
                 </div>
 
                 {!!pendingAttachments.length && (
@@ -3851,7 +4129,7 @@ export default function SuperAppPage({
                     type="button"
                     title="Attach file"
                     onClick={triggerAttachmentPicker}
-                    disabled={uploadingAttachment}
+                    disabled={uploadingAttachment || chatWalletLocked}
                   >
                     <UiIcon name="attach" />
                   </button>
@@ -3860,6 +4138,7 @@ export default function SuperAppPage({
                     type="button"
                     title="Emoji"
                     onClick={() => handleChatInputChange(`${chatText} :)`)}
+                    disabled={chatWalletLocked}
                   >
                     <UiIcon name="emoji" />
                   </button>
@@ -3871,9 +4150,10 @@ export default function SuperAppPage({
                         sendMessage();
                       }
                     }}
-                    placeholder="Type a message"
+                    placeholder={chatWalletLocked ? "Top up wallet to unlock chat" : "Type a message"}
+                    disabled={chatWalletLocked}
                   />
-                  <button className="send-btn" onClick={sendMessage} type="button">
+                  <button className="send-btn" onClick={sendMessage} type="button" disabled={chatWalletLocked}>
                     <UiIcon name="send" />
                     Send
                   </button>
@@ -3885,57 +4165,6 @@ export default function SuperAppPage({
                     onChange={handleChatFileSelection}
                   />
                 </div>
-
-                {callSession.open && (
-                  <div className="call-overlay">
-                    <div className="call-panel">
-                      <div className="call-head">
-                        <strong>
-                          {callSession.type === "audio" ? "Audio Call" : "Video Call"} |{" "}
-                          {activePeerName}
-                        </strong>
-                        <span className="status-pill">{callSession.status}</span>
-                      </div>
-                      <div className="call-media-grid">
-                        <div className="call-media-box">
-                          <small>You</small>
-                          <video
-                            ref={localVideoRef}
-                            autoPlay
-                            muted
-                            playsInline
-                            className={`call-video ${callSession.type === "audio" ? "audio-only" : ""}`}
-                          />
-                        </div>
-                        <div className="call-media-box">
-                          <small>Peer {remoteCallUserId || currentCallTargetId}</small>
-                          <video
-                            ref={remoteVideoRef}
-                            autoPlay
-                            playsInline
-                            className={`call-video ${
-                              callSession.type === "audio" || !remoteStreamActive ? "audio-only" : ""
-                            }`}
-                          />
-                        </div>
-                      </div>
-                      <div className="call-actions">
-                        {callSession.status === "incoming" ? (
-                          <>
-                            <button type="button" onClick={acceptIncomingCall}>Accept</button>
-                            <button type="button" className="danger" onClick={declineIncomingCall}>
-                              Decline
-                            </button>
-                          </>
-                        ) : (
-                          <button type="button" className="danger" onClick={() => endCurrentCall()}>
-                            End Call
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                )}
               </>
             )}
             {!selectedConversationId && callSession.open && (
@@ -3946,6 +4175,53 @@ export default function SuperAppPage({
                       {callSession.type === "audio" ? "Audio Call" : "Video Call"} | Incoming
                     </strong>
                     <span className="status-pill">{callSession.status}</span>
+                  </div>
+                  <div className="call-actions">
+                    {callSession.status === "incoming" ? (
+                      <>
+                        <button type="button" onClick={acceptIncomingCall}>Accept</button>
+                        <button type="button" className="danger" onClick={declineIncomingCall}>
+                          Decline
+                        </button>
+                      </>
+                    ) : (
+                      <button type="button" className="danger" onClick={() => endCurrentCall()}>
+                        End Call
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+            {selectedConversationId && callSession.open && (
+              <div className="call-overlay">
+                <div className="call-panel">
+                  <div className="call-head">
+                    <strong>
+                      {callSession.type === "audio" ? "Audio Call" : "Video Call"} | {activePeerName}
+                    </strong>
+                    <span className="status-pill">{callSession.status}</span>
+                  </div>
+                  <div className="call-media-grid">
+                    <div className="call-media-box">
+                      <small>You</small>
+                      <video
+                        ref={localVideoRef}
+                        autoPlay
+                        muted
+                        playsInline
+                        className={`call-video ${callSession.type === "audio" ? "audio-only" : ""}`}
+                      />
+                    </div>
+                    <div className="call-media-box">
+                      <small>Peer {remoteCallUserId || currentCallTargetId}</small>
+                      <video
+                        ref={remoteVideoRef}
+                        autoPlay
+                        playsInline
+                        className={`call-video ${callSession.type === "audio" || !remoteStreamActive ? "audio-only" : ""}`}
+                      />
+                    </div>
                   </div>
                   <div className="call-actions">
                     {callSession.status === "incoming" ? (
@@ -4223,6 +4499,9 @@ export default function SuperAppPage({
                     addToCart({
                       id: selectedMarketplaceDetail.productId,
                       name: selectedMarketplaceDetail.name,
+                      company: selectedMarketplaceDetail.company,
+                      description: selectedMarketplaceDetail.description,
+                      imageUrl: selectedMarketplaceDetail.imageUrl,
                       price: selectedMarketplaceDetail.price
                     })
                   }
@@ -4270,7 +4549,13 @@ export default function SuperAppPage({
                   )}
                 </div>
                 <div className="product-detail-price-row">
-                  <strong className="market-price">{toCurrency(selectedMarketplaceDetail.price)}</strong>
+                  <div>
+                    <strong className="market-price">{toCurrency(selectedMarketplaceDetail.price)}</strong>
+                    <div className="market-price-subline">
+                      <span className="market-strike-price">{toCurrency(Number(selectedMarketplaceDetail.price || 0) * 1.12)}</span>
+                      <span className="market-discount-badge">12% off</span>
+                    </div>
+                  </div>
                   <small>
                     Product {ratingSummary(selectedMarketplaceDetail.rating, selectedMarketplaceDetail.feedbackCount)}
                     {" "} | Shop {ratingSummary(selectedMarketplaceDetail.shop?.rating, selectedMarketplaceDetail.shop?.feedbackCount)}
@@ -4339,7 +4624,14 @@ export default function SuperAppPage({
                       type="button"
                       onClick={event => {
                         event.stopPropagation();
-                        addToCart({ id: product.productId, name: product.name, price: product.price });
+                        addToCart({
+                          id: product.productId,
+                          name: product.name,
+                          company: product.company,
+                          description: product.description,
+                          imageUrl: product.imageUrl,
+                          price: product.price
+                        });
                       }}
                     >
                       Add to cart
@@ -4381,14 +4673,16 @@ export default function SuperAppPage({
                       <div className="market-cart-row">
                         <div>
                           <strong>{item.name}</strong>
-                          <small>Unit {toCurrency(item.price)}</small>
+                          <small>{item.company || "Marketplace item"} | Unit {toCurrency(item.price)}</small>
                         </div>
                         <div className="market-cart-actions">
+                          <button type="button" className="qty-btn" onClick={() => decrementCartItem(item.productId)}>-</button>
                           <input
                             value={item.quantity}
                             onChange={event => updateCartQuantity(item.productId, event.target.value)}
                             placeholder="Qty"
                           />
+                          <button type="button" className="qty-btn" onClick={() => incrementCartItem(item.productId)}>+</button>
                           <button
                             type="button"
                             className="market-cart-remove"
@@ -4403,9 +4697,19 @@ export default function SuperAppPage({
                   {!cart.length && <div className="empty-line">Your cart is empty.</div>}
                 </div>
                 <div className="market-cart-footer">
+                  <div className="market-summary-breakdown">
+                    <div className="market-total-row">
+                      <span>Subtotal</span>
+                      <strong>{toCurrency(marketplaceSubtotal)}</strong>
+                    </div>
+                    <div className="market-total-row muted">
+                      <span>Your savings</span>
+                      <strong>-{toCurrency(marketplaceSavings)}</strong>
+                    </div>
+                  </div>
                   <div className="market-total-row">
-                    <span>Total</span>
-                    <strong>{toCurrency(cartTotal)}</strong>
+                    <span>Payable now</span>
+                    <strong>{toCurrency(marketplacePayable)}</strong>
                   </div>
                   {!!cart.length && (
                     <button type="button" className="ghost-btn" onClick={clearCart}>
@@ -4612,6 +4916,22 @@ export default function SuperAppPage({
                       <div className="market-product-actions">
                         <strong className="market-price">{toCurrency(item.price)}</strong>
                         <div className="market-action-pair">
+                          <button
+                            type="button"
+                            className="ghost-btn"
+                            onClick={() =>
+                              addToCart({
+                                id: item.productId,
+                                name: item.productName,
+                                company: item.company,
+                                description: item.description,
+                                imageUrl: item.imageUrl,
+                                price: item.price
+                              })
+                            }
+                          >
+                            Add to cart
+                          </button>
                           <button type="button" className="ghost-btn" onClick={() => openMarketplaceProduct(item, item?.shop || null)}>
                             View Details
                           </button>
@@ -4737,6 +5057,7 @@ export default function SuperAppPage({
                       </small>
                     </div>
                     <div className="market-product-foot">
+                      <span className="market-discount-badge">12% off</span>
                       <span className="status-pill">Qty {product.availableQuantity}</span>
                       <span className="status-pill">{titleCase(product.category || "general")}</span>
                     </div>
@@ -4784,14 +5105,16 @@ export default function SuperAppPage({
                   <div className="market-cart-row">
                     <div>
                       <strong>{item.name}</strong>
-                      <small>Unit {toCurrency(item.price)}</small>
+                      <small>{item.company || "Marketplace item"} | Unit {toCurrency(item.price)}</small>
                     </div>
                     <div className="market-cart-actions">
+                      <button type="button" className="qty-btn" onClick={() => decrementCartItem(item.productId)}>-</button>
                       <input
                         value={item.quantity}
                         onChange={event => updateCartQuantity(item.productId, event.target.value)}
                         placeholder="Qty"
                       />
+                      <button type="button" className="qty-btn" onClick={() => incrementCartItem(item.productId)}>+</button>
                       <button
                         type="button"
                         className="market-cart-remove"
@@ -4806,9 +5129,19 @@ export default function SuperAppPage({
               {!cart.length && <div className="empty-line">Your cart is empty.</div>}
             </div>
             <div className="market-cart-footer">
+              <div className="market-summary-breakdown">
+                <div className="market-total-row">
+                  <span>Subtotal</span>
+                  <strong>{toCurrency(marketplaceSubtotal)}</strong>
+                </div>
+                <div className="market-total-row muted">
+                  <span>Your savings</span>
+                  <strong>-{toCurrency(marketplaceSavings)}</strong>
+                </div>
+              </div>
               <div className="market-total-row">
-                <span>Total</span>
-                <strong>{toCurrency(cartTotal)}</strong>
+                <span>Payable now</span>
+                <strong>{toCurrency(marketplacePayable)}</strong>
               </div>
               {!!cart.length && (
                 <button type="button" className="ghost-btn" onClick={clearCart}>
@@ -5729,402 +6062,548 @@ function renderOpsTab() {
   }
 
   function renderProfileTab() {
-    return (
-      <section className="profile-shell">
-        <div className="profile-top-grid">
-          <article className="panel-card profile-summary-card">
-            <div className="profile-head profile-head-modern">
-              <div className="profile-avatar-wrap large">
-                {profilePhoto ? (
-                  <img src={profilePhoto} alt="Profile" className="profile-avatar" />
-                ) : (
-                  <div className="profile-avatar">{String(user.name || "U").slice(0, 1)}</div>
-                )}
-              </div>
-              <div className="profile-summary-copy">
-                <span className="dashboard-kicker">Profile center</span>
-                <strong>{user.name}</strong>
-                <small>{user.phone}</small>
-                <small>{user.email || "Add your email to complete account setup"}</small>
-                <div className="profile-role-chips">
-                  {(userRoles.length ? userRoles : ["CUSTOMER"]).map(role => (
-                    <span key={role} className="dashboard-meta-chip">{role}</span>
-                  ))}
-                </div>
-              </div>
-            </div>
-            <div className="profile-completion-card">
-              <div>
-                <strong>{profileCompletion}% complete</strong>
-                <small>Profile, payment, and notification readiness</small>
-              </div>
-              <div className="profile-progress-track">
-                <span style={{ width: `${profileCompletion}%` }} />
-              </div>
-            </div>
-            <label className="profile-photo-input">
-              <span>Profile photo</span>
-              <input type="file" accept="image/*" onChange={handleProfilePhotoChange} />
-            </label>
-          </article>
+    const settingsMenu = [
+      {
+        id: "profile",
+        title: "Profile Settings",
+        description: "Photo, name, email, and account identity used across LifeHub.",
+        icon: "user"
+      },
+      {
+        id: "security",
+        title: "Security Settings",
+        description: "Password, login alerts, and session protection controls.",
+        icon: "shield"
+      },
+      {
+        id: "privacy",
+        title: "Privacy",
+        description: "Read receipts, last seen, profile visibility, and live location privacy.",
+        icon: "settings"
+      },
+      {
+        id: "notifications",
+        title: "Notifications",
+        description: "Push, SMS, email, quiet hours, and test notifications.",
+        icon: "bell"
+      },
+      {
+        id: "preferences",
+        title: "Account Preferences",
+        description: "Payments, chat behavior, and UI preferences for daily usage.",
+        icon: "chart"
+      }
+    ];
 
-          <article className="panel-card profile-editor-card">
-            <div className="panel-title-row">
-              <div>
-                <h3>Personal information</h3>
-                <small>Update identity details used across orders, chats, and wallet receipts.</small>
+    const sectionMeta = settingsMenu.find(item => item.id === settingsSection);
+
+    if (settingsSection === "menu") {
+      return (
+        <section className="settings-shell">
+          <div className="settings-hero-card panel-card">
+            <div className="settings-hero-copy">
+              <span className="dashboard-kicker">Account center</span>
+              <h2>{user.name || "LifeHub User"}</h2>
+              <p>Manage your account, security, notifications, and payment preferences from one organized settings hub.</p>
+              <div className="settings-hero-meta">
+                <span className="dashboard-meta-chip">{profileCompletion}% profile complete</span>
+                <span className="dashboard-meta-chip">Wallet {toCurrency(walletBalance)}</span>
+                <span className="dashboard-meta-chip">{notificationUnreadCount} unread alerts</span>
               </div>
             </div>
-            <div className="profile-form-grid">
-              <label>
-                Full name
-                <input
-                  value={profileDraft.name}
-                  onChange={event => setProfileDraft(prev => ({ ...prev, name: event.target.value }))}
-                  placeholder="Your name"
-                />
-              </label>
-              <label>
-                Email address
-                <input
-                  type="email"
-                  value={profileDraft.email}
-                  onChange={event => setProfileDraft(prev => ({ ...prev, email: event.target.value }))}
-                  placeholder="you@lifehub.app"
-                />
-              </label>
-              <label>
-                Mobile number
-                <input value={user.phone || ""} readOnly placeholder="Phone number" />
-              </label>
-              <label>
-                Roles
-                <input value={(userRoles.length ? userRoles : ["CUSTOMER"]).join(", ")} readOnly />
-              </label>
+            <div className="settings-hero-avatar">
+              {profilePhoto ? (
+                <img src={profilePhoto} alt="Profile" className="profile-avatar" />
+              ) : (
+                <div className="profile-avatar">{String(user.name || "U").slice(0, 1)}</div>
+              )}
             </div>
-            <div className="profile-form-actions">
-              <button type="button" onClick={saveProfileDetails} disabled={savingProfile}>
-                {savingProfile ? "Saving..." : "Save personal info"}
+          </div>
+
+          <div className="settings-menu-grid">
+            {settingsMenu.map(item => (
+              <button
+                key={item.id}
+                type="button"
+                className="settings-menu-card"
+                onClick={() => setSettingsSection(item.id)}
+              >
+                <span className="settings-menu-icon"><UiIcon name={item.icon} /></span>
+                <div>
+                  <strong>{item.title}</strong>
+                  <small>{item.description}</small>
+                </div>
+                <span className="settings-menu-arrow">{"->"}</span>
               </button>
-              <button type="button" className="ghost-btn" onClick={loadUserProfile}>
-                Refresh profile
-              </button>
-            </div>
-          </article>
+            ))}
+          </div>
+        </section>
+      );
+    }
+
+    return (
+      <section className="settings-shell settings-detail-shell">
+        <div className="settings-detail-topbar">
+          <button type="button" className="ghost-btn settings-back-btn" onClick={() => setSettingsSection("menu")}>
+            {"<- Back"}
+          </button>
+          <div>
+            <strong>{sectionMeta?.title || "Settings"}</strong>
+            <small>{sectionMeta?.description || "Update this settings section."}</small>
+          </div>
         </div>
 
-        <div className="profile-settings-grid">
-          <article className="panel-card profile-password-card">
-            <div className="panel-title-row">
-              <div>
-                <h3>Password and access</h3>
-                <small>Change password securely and keep account sessions protected.</small>
+        {settingsSection === "profile" && (
+          <div className="settings-detail-grid two-up">
+            <article className="panel-card profile-summary-card">
+              <div className="profile-head profile-head-modern">
+                <div className="profile-avatar-wrap large">
+                  {profilePhoto ? (
+                    <img src={profilePhoto} alt="Profile" className="profile-avatar" />
+                  ) : (
+                    <div className="profile-avatar">{String(user.name || "U").slice(0, 1)}</div>
+                  )}
+                </div>
+                <div className="profile-summary-copy">
+                  <span className="dashboard-kicker">Identity</span>
+                  <strong>{user.name}</strong>
+                  <small>{user.phone}</small>
+                  <small>{user.email || "Add your email to complete account setup"}</small>
+                </div>
               </div>
-            </div>
-            <div className="profile-form-grid compact">
-              <label>
-                Current password
-                <input
-                  type="password"
-                  value={passwordDraft.currentPassword}
-                  onChange={event => setPasswordDraft(prev => ({ ...prev, currentPassword: event.target.value }))}
-                  placeholder="Current password"
-                />
+              <div className="profile-completion-card">
+                <div>
+                  <strong>{profileCompletion}% complete</strong>
+                  <small>Photo, contact, and billing readiness</small>
+                </div>
+                <div className="profile-progress-track">
+                  <span style={{ width: `${profileCompletion}%` }} />
+                </div>
+              </div>
+              <label className="profile-photo-input">
+                <span>Profile photo</span>
+                <input type="file" accept="image/*" onChange={handleProfilePhotoChange} />
               </label>
-              <label>
-                New password
-                <input
-                  type="password"
-                  value={passwordDraft.newPassword}
-                  onChange={event => setPasswordDraft(prev => ({ ...prev, newPassword: event.target.value }))}
-                  placeholder="Minimum 6 characters"
-                />
-              </label>
-              <label>
-                Confirm password
-                <input
-                  type="password"
-                  value={passwordDraft.confirmPassword}
-                  onChange={event => setPasswordDraft(prev => ({ ...prev, confirmPassword: event.target.value }))}
-                  placeholder="Confirm new password"
-                />
-              </label>
-            </div>
-            <div className="profile-form-actions">
-              <button type="button" onClick={changePasswordAction} disabled={changingPassword}>
-                {changingPassword ? "Updating..." : "Change password"}
-              </button>
-            </div>
-          </article>
+            </article>
 
-          <article className="panel-card profile-settings-card">
-            <div className="panel-title-row">
-              <div>
-                <h3>Payments</h3>
-                <small>Wallet top-up preferences and payout identity.</small>
+            <article className="panel-card profile-editor-card">
+              <div className="panel-title-row">
+                <div>
+                  <h3>Editable profile information</h3>
+                  <small>Used on orders, chat headers, receipts, and service bookings.</small>
+                </div>
               </div>
-            </div>
-            <div className="profile-form-grid compact">
-              <label>
-                UPI ID
-                <input
-                  value={userSettings.payments?.upiId || ""}
-                  onChange={event =>
-                    setUserSettings(prev => ({
-                      ...prev,
-                      payments: {
-                        ...(prev.payments || {}),
-                        upiId: event.target.value
-                      }
-                    }))
-                  }
-                  placeholder="example@bank"
-                />
-              </label>
-              <label>
-                Auto top-up threshold
-                <input
-                  value={userSettings.payments?.autoTopupThreshold || ""}
-                  onChange={event =>
-                    setUserSettings(prev => ({
-                      ...prev,
-                      payments: {
-                        ...(prev.payments || {}),
-                        autoTopupThreshold: event.target.value
-                      }
-                    }))
-                  }
-                  placeholder="500"
-                />
-              </label>
-              <label>
-                Auto top-up amount
-                <input
-                  value={userSettings.payments?.autoTopupAmount || ""}
-                  onChange={event =>
-                    setUserSettings(prev => ({
-                      ...prev,
-                      payments: {
-                        ...(prev.payments || {}),
-                        autoTopupAmount: event.target.value
-                      }
-                    }))
-                  }
-                  placeholder="1000"
-                />
-              </label>
-            </div>
-          </article>
+              <div className="profile-form-grid">
+                <label>
+                  Full name
+                  <input
+                    value={profileDraft.name}
+                    onChange={event => setProfileDraft(prev => ({ ...prev, name: event.target.value }))}
+                    placeholder="Your name"
+                  />
+                </label>
+                <label>
+                  Email address
+                  <input
+                    type="email"
+                    value={profileDraft.email}
+                    onChange={event => setProfileDraft(prev => ({ ...prev, email: event.target.value }))}
+                    placeholder="you@lifehub.app"
+                  />
+                </label>
+                <label>
+                  Mobile number
+                  <input value={user.phone || ""} readOnly placeholder="Phone number" />
+                </label>
+                <label>
+                  Roles
+                  <input value={(userRoles.length ? userRoles : ["CUSTOMER"]).join(", ")} readOnly />
+                </label>
+              </div>
+              <div className="profile-form-actions">
+                <button type="button" onClick={saveProfileDetails} disabled={savingProfile}>
+                  {savingProfile ? "Saving..." : "Save profile"}
+                </button>
+                <button type="button" className="ghost-btn" onClick={loadUserProfile}>
+                  Refresh
+                </button>
+              </div>
+            </article>
+          </div>
+        )}
 
-          <article className="panel-card profile-settings-card">
-            <div className="panel-title-row">
-              <div>
-                <h3>Notifications</h3>
-                <small>Control alert channels and trigger a live test.</small>
+        {settingsSection === "security" && (
+          <div className="settings-detail-grid two-up">
+            <article className="panel-card profile-password-card">
+              <div className="panel-title-row">
+                <div>
+                  <h3>Password and access</h3>
+                  <small>Update your password and protect account sessions.</small>
+                </div>
               </div>
-            </div>
-            <div className="profile-toggle-grid">
-              <label><input type="checkbox" checked={Boolean(userSettings.notifications?.inApp)} onChange={event => setUserSettings(prev => ({ ...prev, notifications: { ...(prev.notifications || {}), inApp: event.target.checked } }))} />In-app</label>
-              <label><input type="checkbox" checked={Boolean(userSettings.notifications?.push)} onChange={event => setUserSettings(prev => ({ ...prev, notifications: { ...(prev.notifications || {}), push: event.target.checked } }))} />Push</label>
-              <label><input type="checkbox" checked={Boolean(userSettings.notifications?.sms)} onChange={event => setUserSettings(prev => ({ ...prev, notifications: { ...(prev.notifications || {}), sms: event.target.checked } }))} />SMS</label>
-              <label><input type="checkbox" checked={Boolean(userSettings.notifications?.email)} onChange={event => setUserSettings(prev => ({ ...prev, notifications: { ...(prev.notifications || {}), email: event.target.checked } }))} />Email</label>
-              <label><input type="checkbox" checked={Boolean(userSettings.notifications?.orderAlerts)} onChange={event => setUserSettings(prev => ({ ...prev, notifications: { ...(prev.notifications || {}), orderAlerts: event.target.checked } }))} />Order alerts</label>
-            </div>
-            <div className="profile-form-actions wrap">
-              <button type="button" className="ghost-btn" onClick={requestBrowserPushPermission}>Push: {browserPushPermission}</button>
-              <button type="button" className="ghost-btn" onClick={sendNotificationTest}>Send test notification</button>
-              <button type="button" onClick={saveNotificationPreferences}>Save notification rules</button>
-            </div>
-          </article>
+              <div className="profile-form-grid compact">
+                <label>
+                  Current password
+                  <input
+                    type="password"
+                    value={passwordDraft.currentPassword}
+                    onChange={event => setPasswordDraft(prev => ({ ...prev, currentPassword: event.target.value }))}
+                    placeholder="Current password"
+                  />
+                </label>
+                <label>
+                  New password
+                  <input
+                    type="password"
+                    value={passwordDraft.newPassword}
+                    onChange={event => setPasswordDraft(prev => ({ ...prev, newPassword: event.target.value }))}
+                    placeholder="Minimum 6 characters"
+                  />
+                </label>
+                <label>
+                  Confirm password
+                  <input
+                    type="password"
+                    value={passwordDraft.confirmPassword}
+                    onChange={event => setPasswordDraft(prev => ({ ...prev, confirmPassword: event.target.value }))}
+                    placeholder="Confirm new password"
+                  />
+                </label>
+              </div>
+              <div className="profile-form-actions">
+                <button type="button" onClick={changePasswordAction} disabled={changingPassword}>
+                  {changingPassword ? "Updating..." : "Change password"}
+                </button>
+              </div>
+            </article>
 
-          <article className="panel-card profile-settings-card">
-            <div className="panel-title-row">
-              <div>
-                <h3>Quiet hours and location</h3>
-                <small>Choose how LifeHub behaves when you are unavailable.</small>
+            <article className="panel-card profile-settings-card">
+              <div className="panel-title-row">
+                <div>
+                  <h3>Session protection</h3>
+                  <small>Choose alerting and automatic session timeout rules.</small>
+                </div>
               </div>
-            </div>
-            <div className="profile-toggle-grid">
-              <label>
-                <input
-                  type="checkbox"
-                  checked={Boolean(notificationPrefs.quietHours?.enabled)}
-                  onChange={event =>
-                    setNotificationPrefs(prev => ({
+              <div className="profile-toggle-grid">
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(userSettings.security?.loginAlerts)}
+                    onChange={event => setUserSettings(prev => ({
                       ...prev,
-                      quietHours: {
-                        ...(prev.quietHours || {}),
-                        enabled: event.target.checked
+                      security: {
+                        ...(prev.security || {}),
+                        loginAlerts: event.target.checked
                       }
-                    }))
-                  }
-                />
-                Quiet hours
-              </label>
-              <label>
-                <input
-                  type="checkbox"
-                  checked={Boolean(userSettings.location?.shareLiveLocation)}
-                  onChange={event =>
-                    setUserSettings(prev => ({
-                      ...prev,
-                      location: {
-                        ...(prev.location || {}),
-                        shareLiveLocation: event.target.checked
-                      }
-                    }))
-                  }
-                />
-                Share live location
-              </label>
-            </div>
-            <div className="profile-form-grid compact">
-              <label>
-                Quiet hours start
-                <input
-                  value={notificationPrefs.quietHours?.startHour ?? 22}
-                  onChange={event =>
-                    setNotificationPrefs(prev => ({
-                      ...prev,
-                      quietHours: {
-                        ...(prev.quietHours || {}),
-                        startHour: Number(event.target.value || 0)
-                      }
-                    }))
-                  }
-                  placeholder="22"
-                />
-              </label>
-              <label>
-                Quiet hours end
-                <input
-                  value={notificationPrefs.quietHours?.endHour ?? 7}
-                  onChange={event =>
-                    setNotificationPrefs(prev => ({
-                      ...prev,
-                      quietHours: {
-                        ...(prev.quietHours || {}),
-                        endHour: Number(event.target.value || 0)
-                      }
-                    }))
-                  }
-                  placeholder="7"
-                />
-              </label>
-              <label>
-                Location precision
-                <select
-                  value={userSettings.location?.locationPrecision || "precise"}
-                  onChange={event =>
-                    setUserSettings(prev => ({
-                      ...prev,
-                      location: {
-                        ...(prev.location || {}),
-                        locationPrecision: event.target.value
-                      }
-                    }))
-                  }
-                >
-                  <option value="precise">Precise</option>
-                  <option value="approximate">Approximate</option>
-                </select>
-              </label>
-            </div>
-          </article>
-
-          <article className="panel-card profile-settings-card">
-            <div className="panel-title-row">
-              <div>
-                <h3>Privacy and chat</h3>
-                <small>Set visibility, read receipts, and media behavior.</small>
+                    }))}
+                  />
+                  Login alerts
+                </label>
               </div>
-            </div>
-            <div className="profile-toggle-grid">
-              <label><input type="checkbox" checked={Boolean(userSettings.privacy?.readReceipts)} onChange={event => setUserSettings(prev => ({ ...prev, privacy: { ...(prev.privacy || {}), readReceipts: event.target.checked } }))} />Read receipts</label>
-              <label><input type="checkbox" checked={Boolean(userSettings.security?.loginAlerts)} onChange={event => setUserSettings(prev => ({ ...prev, security: { ...(prev.security || {}), loginAlerts: event.target.checked } }))} />Login alerts</label>
-              <label><input type="checkbox" checked={Boolean(userSettings.chat?.enterToSend)} onChange={event => setUserSettings(prev => ({ ...prev, chat: { ...(prev.chat || {}), enterToSend: event.target.checked } }))} />Enter to send</label>
-            </div>
-            <div className="profile-form-grid compact">
-              <label>
-                Last seen visibility
-                <select
-                  value={userSettings.privacy?.lastSeenVisibility || "contacts"}
-                  onChange={event =>
-                    setUserSettings(prev => ({
-                      ...prev,
-                      privacy: {
-                        ...(prev.privacy || {}),
-                        lastSeenVisibility: event.target.value
-                      }
-                    }))
-                  }
-                >
-                  <option value="everyone">Everyone</option>
-                  <option value="contacts">Contacts</option>
-                  <option value="nobody">Nobody</option>
-                </select>
-              </label>
-              <label>
-                Default call type
-                <select
-                  value={userSettings.chat?.defaultCallType || "video"}
-                  onChange={event =>
-                    setUserSettings(prev => ({
-                      ...prev,
-                      chat: {
-                        ...(prev.chat || {}),
-                        defaultCallType: event.target.value
-                      }
-                    }))
-                  }
-                >
-                  <option value="video">Video</option>
-                  <option value="audio">Audio</option>
-                </select>
-              </label>
-              <label>
-                Auto-download media
-                <select
-                  value={userSettings.chat?.autoDownloadMedia || "wifi"}
-                  onChange={event =>
-                    setUserSettings(prev => ({
-                      ...prev,
-                      chat: {
-                        ...(prev.chat || {}),
-                        autoDownloadMedia: event.target.value
-                      }
-                    }))
-                  }
-                >
-                  <option value="always">Always</option>
-                  <option value="wifi">Wifi only</option>
-                  <option value="never">Never</option>
-                </select>
-              </label>
-              <label>
-                Session timeout (minutes)
-                <input
-                  value={userSettings.security?.sessionTimeoutMinutes || 120}
-                  onChange={event =>
-                    setUserSettings(prev => ({
+              <div className="profile-form-grid compact">
+                <label>
+                  Session timeout (minutes)
+                  <input
+                    value={userSettings.security?.sessionTimeoutMinutes || 120}
+                    onChange={event => setUserSettings(prev => ({
                       ...prev,
                       security: {
                         ...(prev.security || {}),
                         sessionTimeoutMinutes: Number(event.target.value || 0)
                       }
-                    }))
-                  }
-                  placeholder="120"
-                />
-              </label>
-            </div>
-          </article>
-        </div>
+                    }))}
+                    placeholder="120"
+                  />
+                </label>
+                <label>
+                  Device ID
+                  <input value={deviceId} readOnly />
+                </label>
+              </div>
+              <div className="profile-form-actions">
+                <button type="button" onClick={saveUserSettings}>Save security settings</button>
+              </div>
+            </article>
+          </div>
+        )}
 
-        <div className="profile-footer-actions">
-          <button type="button" onClick={saveUserSettings}>Save preferences</button>
-          <button type="button" className="danger" onClick={onLogout}>Logout</button>
-        </div>
+        {settingsSection === "privacy" && (
+          <div className="settings-detail-grid two-up">
+            <article className="panel-card profile-settings-card">
+              <div className="panel-title-row">
+                <div>
+                  <h3>Privacy</h3>
+                  <small>Control who can see your activity and profile identity.</small>
+                </div>
+              </div>
+              <div className="profile-toggle-grid">
+                <label><input type="checkbox" checked={Boolean(userSettings.privacy?.readReceipts)} onChange={event => setUserSettings(prev => ({ ...prev, privacy: { ...(prev.privacy || {}), readReceipts: event.target.checked } }))} />Read receipts</label>
+                <label><input type="checkbox" checked={Boolean(userSettings.location?.shareLiveLocation)} onChange={event => setUserSettings(prev => ({ ...prev, location: { ...(prev.location || {}), shareLiveLocation: event.target.checked } }))} />Share live location</label>
+              </div>
+              <div className="profile-form-grid compact">
+                <label>
+                  Last seen visibility
+                  <select
+                    value={userSettings.privacy?.lastSeenVisibility || "contacts"}
+                    onChange={event => setUserSettings(prev => ({
+                      ...prev,
+                      privacy: {
+                        ...(prev.privacy || {}),
+                        lastSeenVisibility: event.target.value
+                      }
+                    }))}
+                  >
+                    <option value="everyone">Everyone</option>
+                    <option value="contacts">Contacts</option>
+                    <option value="nobody">Nobody</option>
+                  </select>
+                </label>
+                <label>
+                  Profile photo visibility
+                  <select
+                    value={userSettings.privacy?.profilePhotoVisibility || "everyone"}
+                    onChange={event => setUserSettings(prev => ({
+                      ...prev,
+                      privacy: {
+                        ...(prev.privacy || {}),
+                        profilePhotoVisibility: event.target.value
+                      }
+                    }))}
+                  >
+                    <option value="everyone">Everyone</option>
+                    <option value="contacts">Contacts</option>
+                    <option value="nobody">Nobody</option>
+                  </select>
+                </label>
+                <label>
+                  Location precision
+                  <select
+                    value={userSettings.location?.locationPrecision || "precise"}
+                    onChange={event => setUserSettings(prev => ({
+                      ...prev,
+                      location: {
+                        ...(prev.location || {}),
+                        locationPrecision: event.target.value
+                      }
+                    }))}
+                  >
+                    <option value="precise">Precise</option>
+                    <option value="approximate">Approximate</option>
+                  </select>
+                </label>
+              </div>
+              <div className="profile-form-actions">
+                <button type="button" onClick={saveUserSettings}>Save privacy settings</button>
+              </div>
+            </article>
+          </div>
+        )}
+
+        {settingsSection === "notifications" && (
+          <div className="settings-detail-grid two-up">
+            <article className="panel-card profile-settings-card">
+              <div className="panel-title-row">
+                <div>
+                  <h3>Notification channels</h3>
+                  <small>Choose where LifeHub should reach you first.</small>
+                </div>
+              </div>
+              <div className="profile-toggle-grid">
+                <label><input type="checkbox" checked={Boolean(userSettings.notifications?.inApp)} onChange={event => setUserSettings(prev => ({ ...prev, notifications: { ...(prev.notifications || {}), inApp: event.target.checked } }))} />In-app</label>
+                <label><input type="checkbox" checked={Boolean(userSettings.notifications?.push)} onChange={event => setUserSettings(prev => ({ ...prev, notifications: { ...(prev.notifications || {}), push: event.target.checked } }))} />Push</label>
+                <label><input type="checkbox" checked={Boolean(userSettings.notifications?.sms)} onChange={event => setUserSettings(prev => ({ ...prev, notifications: { ...(prev.notifications || {}), sms: event.target.checked } }))} />SMS</label>
+                <label><input type="checkbox" checked={Boolean(userSettings.notifications?.email)} onChange={event => setUserSettings(prev => ({ ...prev, notifications: { ...(prev.notifications || {}), email: event.target.checked } }))} />Email</label>
+                <label><input type="checkbox" checked={Boolean(userSettings.notifications?.orderAlerts)} onChange={event => setUserSettings(prev => ({ ...prev, notifications: { ...(prev.notifications || {}), orderAlerts: event.target.checked } }))} />Order alerts</label>
+              </div>
+              <div className="profile-form-actions wrap">
+                <button type="button" className="ghost-btn" onClick={requestBrowserPushPermission}>Push: {browserPushPermission}</button>
+                <button type="button" className="ghost-btn" onClick={sendNotificationTest}>Send test notification</button>
+                <button type="button" onClick={saveUserSettings}>Save channel settings</button>
+              </div>
+            </article>
+
+            <article className="panel-card profile-settings-card">
+              <div className="panel-title-row">
+                <div>
+                  <h3>Quiet hours</h3>
+                  <small>Pause non-critical alerts while you are away or sleeping.</small>
+                </div>
+              </div>
+              <div className="profile-toggle-grid">
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(notificationPrefs.quietHours?.enabled)}
+                    onChange={event => setNotificationPrefs(prev => ({
+                      ...prev,
+                      quietHours: {
+                        ...(prev.quietHours || {}),
+                        enabled: event.target.checked
+                      }
+                    }))}
+                  />
+                  Enable quiet hours
+                </label>
+              </div>
+              <div className="profile-form-grid compact">
+                <label>
+                  Start hour
+                  <input
+                    value={notificationPrefs.quietHours?.startHour ?? 22}
+                    onChange={event => setNotificationPrefs(prev => ({
+                      ...prev,
+                      quietHours: {
+                        ...(prev.quietHours || {}),
+                        startHour: Number(event.target.value || 0)
+                      }
+                    }))}
+                  />
+                </label>
+                <label>
+                  End hour
+                  <input
+                    value={notificationPrefs.quietHours?.endHour ?? 7}
+                    onChange={event => setNotificationPrefs(prev => ({
+                      ...prev,
+                      quietHours: {
+                        ...(prev.quietHours || {}),
+                        endHour: Number(event.target.value || 0)
+                      }
+                    }))}
+                  />
+                </label>
+              </div>
+              <div className="profile-form-actions">
+                <button type="button" onClick={saveNotificationPreferences}>Save quiet hours</button>
+              </div>
+            </article>
+          </div>
+        )}
+
+        {settingsSection === "preferences" && (
+          <div className="settings-detail-grid two-up">
+            <article className="panel-card profile-settings-card">
+              <div className="panel-title-row">
+                <div>
+                  <h3>Payment preferences</h3>
+                  <small>Set payout identity and auto top-up thresholds.</small>
+                </div>
+              </div>
+              <div className="profile-form-grid compact">
+                <label>
+                  UPI ID
+                  <input
+                    value={userSettings.payments?.upiId || ""}
+                    onChange={event => setUserSettings(prev => ({
+                      ...prev,
+                      payments: {
+                        ...(prev.payments || {}),
+                        upiId: event.target.value
+                      }
+                    }))}
+                    placeholder="example@bank"
+                  />
+                </label>
+                <label>
+                  Auto top-up threshold
+                  <input
+                    value={userSettings.payments?.autoTopupThreshold || ""}
+                    onChange={event => setUserSettings(prev => ({
+                      ...prev,
+                      payments: {
+                        ...(prev.payments || {}),
+                        autoTopupThreshold: event.target.value
+                      }
+                    }))}
+                    placeholder="500"
+                  />
+                </label>
+                <label>
+                  Auto top-up amount
+                  <input
+                    value={userSettings.payments?.autoTopupAmount || ""}
+                    onChange={event => setUserSettings(prev => ({
+                      ...prev,
+                      payments: {
+                        ...(prev.payments || {}),
+                        autoTopupAmount: event.target.value
+                      }
+                    }))}
+                    placeholder="1000"
+                  />
+                </label>
+              </div>
+            </article>
+
+            <article className="panel-card profile-settings-card">
+              <div className="panel-title-row">
+                <div>
+                  <h3>Chat and UI preferences</h3>
+                  <small>Choose interaction defaults for messaging and the interface.</small>
+                </div>
+              </div>
+              <div className="profile-toggle-grid">
+                <label><input type="checkbox" checked={Boolean(userSettings.chat?.enterToSend)} onChange={event => setUserSettings(prev => ({ ...prev, chat: { ...(prev.chat || {}), enterToSend: event.target.checked } }))} />Enter to send</label>
+                <label><input type="checkbox" checked={Boolean(userSettings.ui?.compactMode)} onChange={event => setUserSettings(prev => ({ ...prev, ui: { ...(prev.ui || {}), compactMode: event.target.checked } }))} />Compact mode</label>
+              </div>
+              <div className="profile-form-grid compact">
+                <label>
+                  Default call type
+                  <select
+                    value={userSettings.chat?.defaultCallType || "video"}
+                    onChange={event => setUserSettings(prev => ({
+                      ...prev,
+                      chat: {
+                        ...(prev.chat || {}),
+                        defaultCallType: event.target.value
+                      }
+                    }))}
+                  >
+                    <option value="video">Video</option>
+                    <option value="audio">Audio</option>
+                  </select>
+                </label>
+                <label>
+                  Auto-download media
+                  <select
+                    value={userSettings.chat?.autoDownloadMedia || "wifi"}
+                    onChange={event => setUserSettings(prev => ({
+                      ...prev,
+                      chat: {
+                        ...(prev.chat || {}),
+                        autoDownloadMedia: event.target.value
+                      }
+                    }))}
+                  >
+                    <option value="always">Always</option>
+                    <option value="wifi">Wifi only</option>
+                    <option value="never">Never</option>
+                  </select>
+                </label>
+                <label>
+                  Interface language
+                  <select
+                    value={userSettings.ui?.language || "en"}
+                    onChange={event => setUserSettings(prev => ({
+                      ...prev,
+                      ui: {
+                        ...(prev.ui || {}),
+                        language: event.target.value
+                      }
+                    }))}
+                  >
+                    <option value="en">English</option>
+                    <option value="hi">Hindi</option>
+                  </select>
+                </label>
+              </div>
+              <div className="profile-form-actions">
+                <button type="button" onClick={saveUserSettings}>Save preferences</button>
+                <button type="button" className="danger" onClick={onLogout}>Logout</button>
+              </div>
+            </article>
+          </div>
+        )}
       </section>
     );
   }
@@ -6153,7 +6632,8 @@ function renderOpsTab() {
   }
 
   const suppressGlobalHeader = activeTab === "chat"
-    || (activeTab === "marketplace" && marketplaceView !== "catalog");
+    || (activeTab === "marketplace" && marketplaceView !== "catalog")
+    || (activeTab === "profile" && settingsSection !== "menu");
   const breadcrumbLabel = activeTab === "home" ? "Overview" : activeTabMeta.title;
 
   const handleGlobalSearchChange = event => {
@@ -6206,7 +6686,12 @@ function renderOpsTab() {
                   key={tab.id}
                   type="button"
                   className={`sidebar-link ${activeTab === tab.id ? "active" : ""}`}
-                  onClick={() => handleTabSelect(tab.id)}
+                  onClick={() => {
+                    if (tab.id === "profile") {
+                      setSettingsSection("menu");
+                    }
+                    handleTabSelect(tab.id);
+                  }}
                 >
                   <UiIcon name={tabIconName(tab.id)} />
                   {tab.label}
@@ -6216,7 +6701,10 @@ function renderOpsTab() {
                 <button
                   type="button"
                   className="sidebar-link"
-                  onClick={() => handleTabSelect("profile")}
+                  onClick={() => {
+                    setSettingsSection("security");
+                    handleTabSelect("profile");
+                  }}
                 >
                   <UiIcon name="shield" />
                   Security
