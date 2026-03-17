@@ -36,6 +36,7 @@ export const DEFAULT_USER_SETTINGS = {
     marketing: false
   },
   ui: {
+    theme: "light",
     compactMode: false,
     language: "en",
     messageDensity: "comfortable"

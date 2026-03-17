@@ -8102,3 +8102,573 @@ body {
     align-items: stretch;
   }
 }
+
+/* --- Refined shell, chat, command center, and theming pass --- */
+.superapp-shell-v5,
+.sidebar-v5,
+.content-stack,
+.panel-card,
+.chat-list-item,
+.command-module-card,
+.settings-menu-card,
+.market-product-card,
+.market-result-card,
+.market-top-card,
+.market-shop-card {
+  transition: background 0.24s ease, color 0.24s ease, border-color 0.24s ease, box-shadow 0.24s ease, transform 0.24s ease;
+}
+
+.superapp-shell-v5 {
+  transition: grid-template-columns 0.24s ease;
+}
+
+.sidebar-v5 {
+  transition: width 0.24s ease, transform 0.24s ease, padding 0.24s ease;
+}
+
+.sidebar-brand {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.sidebar-brand-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.sidebar-collapse-btn {
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border-radius: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  background: rgba(255, 255, 255, 0.06);
+  color: #e5e7eb;
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+}
+
+.sidebar-link {
+  position: relative;
+}
+
+.sidebar-link-label {
+  flex: 1 1 auto;
+  text-align: left;
+}
+
+.superapp-shell-v5.sidebar-collapsed {
+  grid-template-columns: 92px 1fr;
+}
+
+.sidebar-v5.collapsed {
+  padding: 20px 12px;
+}
+
+.sidebar-v5.collapsed .sidebar-brand {
+  justify-content: center;
+}
+
+.sidebar-v5.collapsed .sidebar-brand strong,
+.sidebar-v5.collapsed .sidebar-search,
+.sidebar-v5.collapsed .sidebar-group-title,
+.sidebar-v5.collapsed .sidebar-foot span,
+.sidebar-v5.collapsed .sidebar-link-label {
+  display: none;
+}
+
+.sidebar-v5.collapsed .sidebar-brand-main {
+  justify-content: center;
+}
+
+.sidebar-v5.collapsed .sidebar-links {
+  gap: 10px;
+}
+
+.sidebar-v5.collapsed .sidebar-link {
+  justify-content: center;
+  padding: 12px 0;
+}
+
+.sidebar-v5.collapsed .sidebar-inline-badge {
+  position: absolute;
+  top: 4px;
+  right: 8px;
+  margin-left: 0;
+}
+
+.topbar-actions .icon-btn {
+  min-width: 44px;
+  min-height: 44px;
+}
+
+.chat-sidebar-headline {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.chat-sidebar-headline h3 {
+  margin: 0;
+  font-size: 20px;
+  color: #0f172a;
+}
+
+.chat-sidebar-headline small {
+  color: #64748b;
+}
+
+.whatsapp-sidebar {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.whatsapp-thread {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.whatsapp-chat-list {
+  flex: 1 1 auto;
+  overflow: auto;
+  padding-right: 6px;
+}
+
+.whatsapp-feed {
+  flex: 1 1 auto;
+  overflow: auto;
+}
+
+.whatsapp-list-item {
+  margin-bottom: 8px;
+}
+
+.whatsapp-list-item .chat-list-meta {
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.whatsapp-thread-head {
+  padding: 18px 20px;
+}
+
+.message-row {
+  margin-bottom: 14px;
+}
+
+.message-bubble p {
+  margin: 8px 0 0;
+  line-height: 1.55;
+}
+
+.message-bubble.mine {
+  background: linear-gradient(135deg, #06b6d4, #0891b2);
+}
+
+.message-bubble.theirs {
+  background: #ffffff;
+}
+
+.whatsapp-composer {
+  align-items: center;
+}
+
+.whatsapp-composer input {
+  min-height: 48px;
+}
+
+.service-hero-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.service-requests-modal {
+  width: min(840px, 94vw);
+}
+
+.service-requests-modal-list {
+  display: grid;
+  gap: 14px;
+  max-height: 70dvh;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.service-request-card.modal-card {
+  background: rgba(248, 250, 252, 0.96);
+  border: 1px solid rgba(226, 232, 240, 0.92);
+}
+
+.service-request-card.modal-card p {
+  margin: 0;
+  color: #334155;
+  line-height: 1.55;
+}
+
+.market-rating-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  color: #0f172a;
+  font-size: 12px;
+}
+
+.market-rating-row span {
+  color: #f59e0b;
+  letter-spacing: 0.06em;
+}
+
+.market-rating-row.compact {
+  margin-top: 6px;
+}
+
+.market-grid-commerce {
+  grid-template-columns: minmax(250px, 300px) minmax(0, 1fr) minmax(280px, 320px);
+  align-items: start;
+}
+
+.market-product-grid.commerce-products {
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+}
+
+.market-top-grid,
+.market-search-grid {
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+}
+
+.market-product-card,
+.market-top-card,
+.market-result-card {
+  border-radius: 24px;
+  overflow: hidden;
+}
+
+.market-product-thumb,
+.market-result-thumb {
+  aspect-ratio: 1 / 1;
+  object-fit: cover;
+}
+
+.market-product-body,
+.market-product-actions {
+  display: grid;
+  gap: 8px;
+}
+
+.market-product-actions {
+  margin-top: auto;
+}
+
+.command-service-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.command-service-head small {
+  color: #94abc4;
+}
+
+.command-section-kicker {
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #7dd3fc;
+  font-weight: 700;
+}
+
+.command-module-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 10px;
+}
+
+.command-module-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  border-radius: 18px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: rgba(16, 27, 44, 0.7);
+  color: #eaf4ff;
+  padding: 14px;
+  text-align: left;
+}
+
+.command-module-card:hover {
+  transform: translateY(-1px);
+  border-color: rgba(125, 211, 252, 0.26);
+  box-shadow: 0 16px 28px rgba(2, 8, 23, 0.28);
+}
+
+.command-module-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 14px;
+  background: rgba(14, 165, 233, 0.14);
+  color: #7dd3fc;
+  display: inline-grid;
+  place-items: center;
+}
+
+.command-module-copy {
+  display: grid;
+  gap: 4px;
+}
+
+.command-module-copy small {
+  color: #9fb3c8;
+}
+
+.command-module-badge {
+  min-width: 28px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: rgba(14, 165, 233, 0.16);
+  color: #7dd3fc;
+  font-size: 11px;
+  font-weight: 700;
+  text-align: center;
+}
+
+body[data-lifehub-theme="dark"] {
+  color-scheme: dark;
+  background:
+    radial-gradient(circle at 12% 14%, rgba(14, 165, 233, 0.12) 0%, transparent 32%),
+    radial-gradient(circle at 88% 16%, rgba(16, 185, 129, 0.12) 0%, transparent 36%),
+    linear-gradient(180deg, #040b14, #08131f);
+}
+
+body[data-lifehub-theme="dark"] .app,
+body[data-lifehub-theme="dark"] .superapp-shell-v5,
+body[data-lifehub-theme="dark"] .content-stack,
+body[data-lifehub-theme="dark"] .main-stage {
+  background: #08111d;
+}
+
+body[data-lifehub-theme="dark"] .topbar-v5,
+body[data-lifehub-theme="dark"] .panel-card,
+body[data-lifehub-theme="dark"] .chat-shell,
+body[data-lifehub-theme="dark"] .whatsapp-sidebar,
+body[data-lifehub-theme="dark"] .whatsapp-thread,
+body[data-lifehub-theme="dark"] .settings-menu-card,
+body[data-lifehub-theme="dark"] .market-product-card,
+body[data-lifehub-theme="dark"] .market-top-card,
+body[data-lifehub-theme="dark"] .market-shop-card,
+body[data-lifehub-theme="dark"] .market-result-card,
+body[data-lifehub-theme="dark"] .market-fast-deal-card,
+body[data-lifehub-theme="dark"] .market-shelf-item,
+body[data-lifehub-theme="dark"] .dashboard-notification-item,
+body[data-lifehub-theme="dark"] .dashboard-recent-item,
+body[data-lifehub-theme="dark"] .quick-action-card,
+body[data-lifehub-theme="dark"] .stat-card,
+body[data-lifehub-theme="dark"] .item-card,
+body[data-lifehub-theme="dark"] .wallet-balance-card,
+body[data-lifehub-theme="dark"] .wallet-transactions-card,
+body[data-lifehub-theme="dark"] .wallet-advanced-card {
+  background: linear-gradient(180deg, rgba(12, 20, 33, 0.98), rgba(9, 16, 28, 0.96));
+  border-color: rgba(148, 163, 184, 0.16);
+  color: #e5eef7;
+  box-shadow: 0 24px 40px rgba(2, 8, 23, 0.32);
+}
+
+body[data-lifehub-theme="dark"] .page-intro h1,
+body[data-lifehub-theme="dark"] .page-intro p,
+body[data-lifehub-theme="dark"] .panel-card h2,
+body[data-lifehub-theme="dark"] .panel-card h3,
+body[data-lifehub-theme="dark"] .panel-card h4,
+body[data-lifehub-theme="dark"] .panel-card strong,
+body[data-lifehub-theme="dark"] .market-rating-row,
+body[data-lifehub-theme="dark"] .command-item strong,
+body[data-lifehub-theme="dark"] .command-module-copy strong,
+body[data-lifehub-theme="dark"] .breadcrumb strong,
+body[data-lifehub-theme="dark"] .topbar-profile-copy strong,
+body[data-lifehub-theme="dark"] .chat-sidebar-headline h3,
+body[data-lifehub-theme="dark"] .chat-sidebar-profile strong,
+body[data-lifehub-theme="dark"] .thread-peer-meta h2 {
+  color: #e5eef7;
+}
+
+body[data-lifehub-theme="dark"] .page-intro p,
+body[data-lifehub-theme="dark"] .breadcrumb,
+body[data-lifehub-theme="dark"] .panel-card small,
+body[data-lifehub-theme="dark"] .topbar-profile-copy small,
+body[data-lifehub-theme="dark"] .chat-sidebar-headline small,
+body[data-lifehub-theme="dark"] .chat-sidebar-profile small,
+body[data-lifehub-theme="dark"] .market-price-subline,
+body[data-lifehub-theme="dark"] .item-card small,
+body[data-lifehub-theme="dark"] .wallet-transaction-info small,
+body[data-lifehub-theme="dark"] .command-service-head small {
+  color: #94a3b8;
+}
+
+body[data-lifehub-theme="dark"] .topbar-search,
+body[data-lifehub-theme="dark"] .chat-search-wrap,
+body[data-lifehub-theme="dark"] .whatsapp-thread-tools,
+body[data-lifehub-theme="dark"] .composer,
+body[data-lifehub-theme="dark"] .market-search-bar-hero,
+body[data-lifehub-theme="dark"] .market-filter-grid,
+body[data-lifehub-theme="dark"] .service-filter-grid,
+body[data-lifehub-theme="dark"] .service-provider-self,
+body[data-lifehub-theme="dark"] .chat-contact-launcher,
+body[data-lifehub-theme="dark"] .chat-request-stack,
+body[data-lifehub-theme="dark"] .chat-discovery-grid,
+body[data-lifehub-theme="dark"] .topbar-profile-pill {
+  background: rgba(15, 23, 42, 0.82);
+  border-color: rgba(148, 163, 184, 0.14);
+}
+
+body[data-lifehub-theme="dark"] input,
+body[data-lifehub-theme="dark"] select,
+body[data-lifehub-theme="dark"] textarea,
+body[data-lifehub-theme="dark"] .superapp-shell-v5 input,
+body[data-lifehub-theme="dark"] .superapp-shell-v5 select,
+body[data-lifehub-theme="dark"] .superapp-shell-v5 textarea {
+  background: rgba(15, 23, 42, 0.88);
+  border-color: rgba(148, 163, 184, 0.16);
+  color: #e5eef7;
+}
+
+body[data-lifehub-theme="dark"] input::placeholder,
+body[data-lifehub-theme="dark"] textarea::placeholder {
+  color: #64748b;
+}
+
+body[data-lifehub-theme="dark"] .topbar-v5 .icon-btn,
+body[data-lifehub-theme="dark"] .nav-toggle,
+body[data-lifehub-theme="dark"] .wallet-refresh {
+  background: rgba(15, 23, 42, 0.88);
+  border-color: rgba(148, 163, 184, 0.14);
+  color: #e5eef7;
+}
+
+body[data-lifehub-theme="dark"] .topbar-hotkey,
+body[data-lifehub-theme="dark"] .status-pill,
+body[data-lifehub-theme="dark"] .chart-pill,
+body[data-lifehub-theme="dark"] .dashboard-meta-chip,
+body[data-lifehub-theme="dark"] .chip {
+  background: rgba(30, 41, 59, 0.9);
+  border-color: rgba(148, 163, 184, 0.14);
+  color: #cbd5e1;
+}
+
+body[data-lifehub-theme="dark"] .message-bubble.theirs {
+  background: rgba(15, 23, 42, 0.94);
+  border-color: rgba(148, 163, 184, 0.16);
+  color: #e5eef7;
+}
+
+body[data-lifehub-theme="dark"] .message-bubble.theirs p,
+body[data-lifehub-theme="dark"] .bubble-author {
+  color: #e5eef7;
+}
+
+body[data-lifehub-theme="dark"] .market-thumb-placeholder,
+body[data-lifehub-theme="dark"] .product-detail-image.market-thumb-placeholder {
+  background: rgba(15, 23, 42, 0.9);
+  color: #7dd3fc;
+}
+
+body[data-lifehub-theme="dark"] .sidebar-v5 {
+  background:
+    radial-gradient(circle at top left, rgba(34, 211, 238, 0.12), transparent 30%),
+    linear-gradient(180deg, #020817 0%, #0b1120 100%);
+}
+
+body[data-lifehub-theme="dark"] .sidebar-v5 .sidebar-link.active {
+  background: rgba(15, 23, 42, 0.9);
+  color: #7dd3fc;
+}
+
+body[data-lifehub-theme="dark"] .sidebar-v5 .sidebar-link:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+body[data-lifehub-theme="dark"] .command-modal {
+  background: linear-gradient(180deg, rgba(5, 12, 23, 0.98), rgba(8, 16, 28, 0.98));
+  border-color: rgba(148, 163, 184, 0.16);
+}
+
+body[data-lifehub-theme="dark"] .command-module-card,
+body[data-lifehub-theme="dark"] .command-search,
+body[data-lifehub-theme="dark"] .command-item {
+  background: rgba(15, 23, 42, 0.86);
+  border-color: rgba(148, 163, 184, 0.14);
+  color: #e5eef7;
+}
+
+body[data-lifehub-theme="dark"] .command-item small,
+body[data-lifehub-theme="dark"] .command-module-copy small,
+body[data-lifehub-theme="dark"] .command-empty {
+  color: #94a3b8;
+}
+
+body[data-lifehub-theme="dark"] .dashboard-usage-track,
+body[data-lifehub-theme="dark"] .profile-progress-track,
+body[data-lifehub-theme="dark"] .timeline-row {
+  background-color: transparent;
+}
+
+@media (max-width: 980px) {
+  .superapp-shell-v5.sidebar-collapsed {
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar-v5.collapsed {
+    padding: 20px 18px;
+  }
+
+  .sidebar-v5.collapsed .sidebar-search,
+  .sidebar-v5.collapsed .sidebar-group-title,
+  .sidebar-v5.collapsed .sidebar-link-label,
+  .sidebar-v5.collapsed .sidebar-brand strong,
+  .sidebar-v5.collapsed .sidebar-foot span {
+    display: initial;
+  }
+
+  .sidebar-v5.collapsed .sidebar-link {
+    justify-content: space-between;
+    padding: 10px 12px;
+  }
+
+  .market-grid-commerce {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 720px) {
+  .topbar-actions {
+    gap: 8px;
+  }
+
+  .chat-sidebar-headline,
+  .command-service-head {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .command-module-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .market-top-grid,
+  .market-search-grid,
+  .market-product-grid.commerce-products {
+    grid-template-columns: 1fr;
+  }
+}

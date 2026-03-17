@@ -30,6 +30,7 @@ const DEFAULT_SETTINGS = {
     locationPrecision: "precise"
   },
   ui: {
+    theme: "light",
     compactMode: false,
     language: "en",
     messageDensity: "comfortable"
@@ -368,6 +369,26 @@ function UiIcon({ name, size = 18 }) {
         </>
       );
       break;
+    case "sun":
+      nodes = (
+        <>
+          <circle cx="12" cy="12" r="4" {...style} />
+          <path d="M12 2v3" {...style} />
+          <path d="M12 19v3" {...style} />
+          <path d="M4.9 4.9l2.1 2.1" {...style} />
+          <path d="M17 17l2.1 2.1" {...style} />
+          <path d="M2 12h3" {...style} />
+          <path d="M19 12h3" {...style} />
+          <path d="M4.9 19.1 7 17" {...style} />
+          <path d="M17 7l2.1-2.1" {...style} />
+        </>
+      );
+      break;
+    case "moon":
+      nodes = (
+        <path d="M20 14.5A8.5 8.5 0 1 1 9.5 4 6.8 6.8 0 0 0 20 14.5z" {...style} />
+      );
+      break;
     case "refresh":
       nodes = (
         <>
@@ -474,7 +495,9 @@ export default function SuperAppPage({
   onRefreshSession,
   canInstallApp,
   onInstallApp,
-  appInstalled
+  appInstalled,
+  themeMode = "light",
+  onThemeChange
 }) {
   const token = session?.accessToken || "";
   const [profile, setProfile] = useState(() => session?.user || {});
@@ -523,6 +546,10 @@ export default function SuperAppPage({
   const [commandQuery, setCommandQuery] = useState("");
   const [moduleSearch, setModuleSearch] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    if (typeof localStorage === "undefined") return false;
+    return localStorage.getItem("lifehub_sidebar_collapsed") === "true";
+  });
   const deferredCommandQuery = useDeferredValue(commandQuery);
   const deferredModuleSearch = useDeferredValue(moduleSearch);
 
@@ -642,6 +669,7 @@ export default function SuperAppPage({
     preferredProviderId: ""
   });
   const [serviceRequests, setServiceRequests] = useState([]);
+  const [serviceRequestsModalOpen, setServiceRequestsModalOpen] = useState(false);
 
   const [orders, setOrders] = useState([]);
   const [walletSummary, setWalletSummary] = useState(null);
@@ -720,6 +748,10 @@ export default function SuperAppPage({
 
   const cartTotal = useMemo(
     () => cart.reduce((sum, item) => sum + Number(item.price || 0) * Number(item.quantity || 0), 0),
+    [cart]
+  );
+  const cartItemCount = useMemo(
+    () => cart.reduce((sum, item) => sum + Number(item.quantity || 0), 0),
     [cart]
   );
   const selectedShop = useMemo(
@@ -1168,6 +1200,22 @@ export default function SuperAppPage({
       )
     );
   }, [commandActions, deferredCommandQuery]);
+  const commandServiceCards = useMemo(
+    () =>
+      moduleCards.map(card => ({
+        ...card,
+        run: () => {
+          if (card.id === "marketplace") {
+            setMarketplaceView("catalog");
+          }
+          if (card.id === "profile") {
+            setSettingsSection("menu");
+          }
+          setActiveTab(card.id);
+        }
+      })),
+    [moduleCards]
+  );
   const activeTabMeta = useMemo(() => {
     const firstName = String(user.name || "there").split(" ")[0];
     if (activeTab === "chat") {
@@ -1253,7 +1301,6 @@ export default function SuperAppPage({
   const incomingContactRequests = contactDirectory.incomingRequests || [];
   const outgoingContactRequests = contactDirectory.outgoingRequests || [];
   const walletBalance = Number(walletSummary?.balance || 0);
-  const chatWalletLocked = walletBalance <= 0;
   const marketplaceSubtotal = Number(cartTotal.toFixed(2));
   const marketplaceSavings = Number(
     cart.reduce((sum, item) => sum + (Number(item.price || 0) * 0.12 * Number(item.quantity || 0)), 0).toFixed(2)
@@ -1502,10 +1549,6 @@ export default function SuperAppPage({
     try {
       const text = chatText.trim();
       if (!selectedConversationId || (!text && !pendingAttachments.length)) return;
-      if (chatWalletLocked) {
-        setError("Top up your wallet first to start messaging in LifeHub chat.");
-        return;
-      }
       await api(`/chat/conversations/${selectedConversationId}/messages`, {
         method: "POST",
         body: JSON.stringify({
@@ -2195,6 +2238,13 @@ export default function SuperAppPage({
     setCart([]);
   }
 
+  function openMarketplaceCart() {
+    setActiveTab("marketplace");
+    setMarketplaceView("checkout");
+    setCheckoutValidationError("");
+    setSidebarOpen(false);
+  }
+
   async function openMarketplaceProduct(item, fallbackShop = null) {
     const normalized = normalizeMarketplaceProduct(item, fallbackShop || selectedShop);
     if (!normalized) return;
@@ -2222,8 +2272,7 @@ export default function SuperAppPage({
       setError("Select a shop before checkout.");
       return;
     }
-    setMarketplaceView("checkout");
-    setCheckoutValidationError("");
+    openMarketplaceCart();
   }
 
   async function buyNowMarketplaceProduct(item, fallbackShop = null) {
@@ -2300,8 +2349,7 @@ export default function SuperAppPage({
       setMarketplaceView("catalog");
       await Promise.all([loadHome(), loadOrders()]);
     } catch (err) {
-      setError(`${err.message || "Order failed"}. You can top up wallet and retry.`);
-      setActiveTab("wallet");
+      setError(err.message || "Order failed. Please review the payment status and try again.");
     }
   }
 
@@ -2621,7 +2669,12 @@ export default function SuperAppPage({
 
   async function loadUserSettings() {
     const settings = await api("/users/settings/me");
-    setUserSettings(mergeSettings(settings));
+    const merged = mergeSettings(settings);
+    setUserSettings(merged);
+    const nextTheme = String(merged?.ui?.theme || "").toLowerCase();
+    if ((nextTheme === "light" || nextTheme === "dark") && typeof onThemeChange === "function") {
+      onThemeChange(nextTheme);
+    }
   }
 
   async function saveProfileDetails() {
@@ -2661,8 +2714,27 @@ export default function SuperAppPage({
       method: "PUT",
       body: JSON.stringify(userSettings)
     });
-    setUserSettings(mergeSettings(saved));
+    const merged = mergeSettings(saved);
+    setUserSettings(merged);
+    const nextTheme = String(merged?.ui?.theme || "").toLowerCase();
+    if ((nextTheme === "light" || nextTheme === "dark") && typeof onThemeChange === "function") {
+      onThemeChange(nextTheme);
+    }
     setToast("Profile settings updated.");
+  }
+
+  function applyTheme(nextTheme) {
+    const resolved = nextTheme === "dark" ? "dark" : "light";
+    setUserSettings(prev => ({
+      ...prev,
+      ui: {
+        ...(prev.ui || {}),
+        theme: resolved
+      }
+    }));
+    if (typeof onThemeChange === "function") {
+      onThemeChange(resolved);
+    }
   }
 
   async function loadNotificationPreferences() {
@@ -3257,6 +3329,25 @@ export default function SuperAppPage({
   }, []);
 
   useEffect(() => {
+    if (typeof localStorage === "undefined") return;
+    localStorage.setItem("lifehub_sidebar_collapsed", sidebarCollapsed ? "true" : "false");
+  }, [sidebarCollapsed]);
+
+  useEffect(() => {
+    setUserSettings(prev => {
+      const current = String(prev?.ui?.theme || "").toLowerCase();
+      if (current === themeMode) return prev;
+      return {
+        ...prev,
+        ui: {
+          ...(prev.ui || {}),
+          theme: themeMode
+        }
+      };
+    });
+  }, [themeMode]);
+
+  useEffect(() => {
     const interval = setInterval(() => {
       setTypingUsers(prev => {
         const next = {};
@@ -3342,6 +3433,12 @@ export default function SuperAppPage({
   useEffect(() => {
     if (activeTab !== "profile") {
       setSettingsSection("menu");
+    }
+  }, [activeTab]);
+
+  useEffect(() => {
+    if (activeTab !== "services") {
+      setServiceRequestsModalOpen(false);
     }
   }, [activeTab]);
 
@@ -3712,9 +3809,7 @@ export default function SuperAppPage({
       && activePeer?.userId
       && String(selectedThread?.type || "DIRECT").toUpperCase() !== "GROUP"
     );
-    const chatPlaceholderCopy = chatWalletLocked
-      ? "Top up your wallet once to unlock LifeHub conversations and provider chats."
-      : "Select an accepted contact from the left and start chatting.";
+    const chatPlaceholderCopy = "Select an accepted contact from the left and start chatting.";
 
     return (
       <section className="chat-shell messenger-shell whatsapp-shell">
@@ -3737,28 +3832,19 @@ export default function SuperAppPage({
               </button>
             </div>
 
+            <div className="chat-sidebar-headline">
+              <div>
+                <h3>Messages</h3>
+                <small>Accepted contacts and recent conversations</small>
+              </div>
+              <span className="status-pill">{totalUnreadChats} unread</span>
+            </div>
+
             <div className="chat-sidebar-stats whatsapp-stats">
               <span>{visibleConversations.length} chats</span>
               <span>{totalUnreadChats} unread</span>
               <span>{acceptedContacts.length} contacts</span>
             </div>
-
-            {chatWalletLocked && (
-              <div className="chat-wallet-lock panel-soft-card">
-                <div>
-                  <strong>Wallet top-up required</strong>
-                  <small>Balance {toCurrency(walletBalance)}. Add funds once, then messaging stays unlocked.</small>
-                </div>
-                <div className="chat-wallet-lock-actions">
-                  <input
-                    value={topupAmount}
-                    onChange={event => setTopupAmount(event.target.value)}
-                    placeholder="Top-up amount"
-                  />
-                  <button type="button" onClick={topupWallet}>Pay & Unlock</button>
-                </div>
-              </div>
-            )}
 
             <label className="chat-search-wrap whatsapp-search">
               <UiIcon name="search" />
@@ -4029,9 +4115,9 @@ export default function SuperAppPage({
             </div>
 
             {!selectedConversationId ? (
-              <div className="chat-placeholder whatsapp-placeholder">
-                <h3>Start with an accepted contact</h3>
-                <p>{chatPlaceholderCopy}</p>
+                <div className="chat-placeholder whatsapp-placeholder">
+                  <h3>Start with an accepted contact</h3>
+                  <p>{chatPlaceholderCopy}</p>
                 <div className="chat-placeholder-actions">
                   <button type="button" onClick={loadContactDirectory}>Refresh contacts</button>
                   {!!acceptedContacts[0] && (
@@ -4129,7 +4215,7 @@ export default function SuperAppPage({
                     type="button"
                     title="Attach file"
                     onClick={triggerAttachmentPicker}
-                    disabled={uploadingAttachment || chatWalletLocked}
+                    disabled={uploadingAttachment}
                   >
                     <UiIcon name="attach" />
                   </button>
@@ -4138,7 +4224,6 @@ export default function SuperAppPage({
                     type="button"
                     title="Emoji"
                     onClick={() => handleChatInputChange(`${chatText} :)`)}
-                    disabled={chatWalletLocked}
                   >
                     <UiIcon name="emoji" />
                   </button>
@@ -4146,14 +4231,13 @@ export default function SuperAppPage({
                     value={chatText}
                     onChange={event => handleChatInputChange(event.target.value)}
                     onKeyDown={event => {
-                      if (event.key === "Enter" && userSettings.chat?.enterToSend !== false) {
-                        sendMessage();
-                      }
-                    }}
-                    placeholder={chatWalletLocked ? "Top up wallet to unlock chat" : "Type a message"}
-                    disabled={chatWalletLocked}
+                        if (event.key === "Enter" && userSettings.chat?.enterToSend !== false) {
+                          sendMessage();
+                        }
+                      }}
+                    placeholder="Type a message"
                   />
-                  <button className="send-btn" onClick={sendMessage} type="button" disabled={chatWalletLocked}>
+                  <button className="send-btn" onClick={sendMessage} type="button">
                     <UiIcon name="send" />
                     Send
                   </button>
@@ -4906,6 +4990,10 @@ export default function SuperAppPage({
                         <strong>{item.productName}</strong>
                         <small>{item?.shop?.shopName || "Nearby shop"}</small>
                         <small>{item.recommendationReason}</small>
+                        <div className="market-rating-row">
+                          <span>{ratingStars(item?.rating)}</span>
+                          <small>{ratingSummary(item?.rating, item?.feedbackCount)}</small>
+                        </div>
                       </div>
                       <div className="market-product-foot">
                         <span className="status-pill">Score {Number(item.recommendationScore || 0).toFixed(2)}</span>
@@ -5002,6 +5090,10 @@ export default function SuperAppPage({
                               ? `${item.distanceKm.toFixed(1)} km`
                               : "distance n/a"} | Product {ratingSummary(item?.rating, item?.feedbackCount)}
                           </small>
+                          <div className="market-rating-row compact">
+                            <span>{ratingStars(item?.rating)}</span>
+                            <small>{Number(item?.rating || 0).toFixed(1)}</small>
+                          </div>
                         </div>
                       </button>
                     ))}
@@ -5049,6 +5141,10 @@ export default function SuperAppPage({
                       <strong>{product.name}</strong>
                       <small>{product.company ? `Brand ${product.company}` : "Local inventory"}</small>
                       <small>{product.description || "Fresh stock available from nearby store."}</small>
+                      <div className="market-rating-row">
+                        <span>{ratingStars(product.rating)}</span>
+                        <small>{ratingSummary(product.rating, product.feedbackCount)}</small>
+                      </div>
                       <small className="market-rating-line">
                         Product {ratingSummary(product.rating, product.feedbackCount)}
                       </small>
@@ -5182,7 +5278,10 @@ export default function SuperAppPage({
           available: Boolean(selectedProviderCard?.available)
         };
 
+    const recentServiceRequests = serviceRequests.slice(0, 3);
+
     return (
+      <>
       <section className="service-shell service-app-shell">
         <header className="panel-card service-hero">
           <div className="service-hero-head">
@@ -5197,6 +5296,11 @@ export default function SuperAppPage({
               <span className="status-pill">Providers {providers.length}</span>
               <span className="status-pill">Available {availableProviders}</span>
               <span className="status-pill">Requests {serviceRequests.length}</span>
+            </div>
+            <div className="service-hero-actions">
+              <button type="button" className="ghost-btn" onClick={() => setServiceRequestsModalOpen(true)}>
+                View Order Requests
+              </button>
             </div>
           </div>
           <div className="service-skill-row">
@@ -5411,9 +5515,14 @@ export default function SuperAppPage({
             )}
 
             <div className="divider" />
-            <h3>Request Activity</h3>
+            <div className="market-panel-head">
+              <h3>Latest Requests</h3>
+              <button type="button" className="ghost-btn" onClick={() => setServiceRequestsModalOpen(true)}>
+                View all
+              </button>
+            </div>
             <div className="service-request-list">
-              {serviceRequests.map(request => (
+              {recentServiceRequests.map(request => (
                 <div key={request.id} className="service-request-card">
                   <div className="item-header">
                     <strong>#{request.id} | {request.service_type}</strong>
@@ -5434,20 +5543,71 @@ export default function SuperAppPage({
                   </div>
                 </div>
               ))}
-              {!serviceRequests.length && <div className="empty-line">No service requests yet.</div>}
+              {!recentServiceRequests.length && <div className="empty-line">No service requests yet.</div>}
             </div>
           </aside>
         </div>
       </section>
+      {serviceRequestsModalOpen && (
+        <div className="command-overlay" onClick={() => setServiceRequestsModalOpen(false)}>
+          <div className="command-modal service-requests-modal" onClick={event => event.stopPropagation()}>
+            <div className="command-header">
+              <div>
+                <strong>Service Order Requests</strong>
+                <small>Every service booking placed from LifeHub appears here and in Orders.</small>
+              </div>
+              <button type="button" className="ghost-btn" onClick={() => setServiceRequestsModalOpen(false)}>
+                Close
+              </button>
+            </div>
+            <div className="service-requests-modal-list">
+              {serviceRequests.map(request => (
+                <article key={`modal_request_${request.id}`} className="service-request-card modal-card">
+                  <div className="item-header">
+                    <strong>Request #{request.id}</strong>
+                    <span className="status-pill">{titleCase(request.status || "CREATED")}</span>
+                  </div>
+                  <small>{titleCase(request.service_type || "Service request")}</small>
+                  <p>{request.description || "No description provided."}</p>
+                  <div className="item-actions">
+                    {canCompleteServiceRequest && (
+                      <button type="button" onClick={() => completeServiceRequest(request.id)}>
+                        Complete
+                      </button>
+                    )}
+                    {canCancelServiceRequest && (
+                      <button type="button" className="danger" onClick={() => cancelServiceRequest(request.id)}>
+                        Cancel
+                      </button>
+                    )}
+                  </div>
+                </article>
+              ))}
+              {!serviceRequests.length && <div className="empty-line">No service requests yet.</div>}
+            </div>
+          </div>
+        </div>
+      )}
+      </>
     );
   }
 
   function renderOrdersTab() {
     const steps = ["CREATED", "PAID", "ASSIGNED", "IN_PROGRESS", "OUT_FOR_DELIVERY", "COMPLETED"];
+    const serviceSteps = ["CREATED", "ASSIGNED", "COMPLETED"];
     const buildStepClass = (orderStatus, step) => {
       const normalized = String(orderStatus || "").toUpperCase();
       const currentIndex = steps.indexOf(normalized);
       const stepIndex = steps.indexOf(step);
+      if (normalized === "CANCELLED") return "";
+      if (currentIndex === stepIndex) return "active";
+      if (currentIndex > stepIndex) return "done";
+      return "";
+    };
+    const buildServiceStepClass = (requestStatus, step) => {
+      const normalized = String(requestStatus || "").toUpperCase();
+      const currentIndex = serviceSteps.indexOf(normalized);
+      const stepIndex = serviceSteps.indexOf(step);
       if (normalized === "CANCELLED") return "";
       if (currentIndex === stepIndex) return "active";
       if (currentIndex > stepIndex) return "done";
@@ -5532,6 +5692,51 @@ export default function SuperAppPage({
               </div>
             ))}
             {!orders.length && <div className="empty-line">No orders yet.</div>}
+          </div>
+        </article>
+        <article className="panel-card">
+          <div className="market-panel-head">
+            <h2>Service Orders</h2>
+            <button type="button" className="ghost-btn" onClick={() => setActiveTab("services")}>
+              Open Book Services
+            </button>
+          </div>
+          <div className="stack-list">
+            {serviceRequests.map(request => (
+              <div key={`order_request_${request.id}`} className="item-card service-order-card">
+                <div className="item-header">
+                  <strong>Request #{request.id}</strong>
+                  <span className="status-pill">{titleCase(request.status || "CREATED")}</span>
+                </div>
+                <small>{titleCase(request.service_type || "Service request")}</small>
+                <small>{request.description || "No description added."}</small>
+                {String(request.status || "").toUpperCase() === "CANCELLED" ? (
+                  <div className="status-cancelled">This service request was cancelled.</div>
+                ) : (
+                  <div className="timeline-row compact">
+                    {serviceSteps.map(step => (
+                      <div key={`${request.id}_${step}`} className={`timeline-node ${buildServiceStepClass(request.status, step)}`}>
+                        <span />
+                        <small>{titleCase(step)}</small>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div className="item-actions">
+                  {canCompleteServiceRequest && (
+                    <button type="button" onClick={() => completeServiceRequest(request.id)}>
+                      Complete
+                    </button>
+                  )}
+                  {canCancelServiceRequest && (
+                    <button type="button" className="danger" onClick={() => cancelServiceRequest(request.id)}>
+                      Cancel
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))}
+            {!serviceRequests.length && <div className="empty-line">No service requests yet.</div>}
           </div>
         </article>
       </section>
@@ -6581,6 +6786,16 @@ function renderOpsTab() {
                   </select>
                 </label>
                 <label>
+                  Theme
+                  <select
+                    value={userSettings.ui?.theme || themeMode}
+                    onChange={event => applyTheme(event.target.value)}
+                  >
+                    <option value="light">Light</option>
+                    <option value="dark">Dark</option>
+                  </select>
+                </label>
+                <label>
                   Interface language
                   <select
                     value={userSettings.ui?.language || "en"}
@@ -6645,11 +6860,21 @@ function renderOpsTab() {
   };
 
   return (
-    <div className={`superapp-shell superapp-shell-full superapp-shell-v5 shell-${activeTab} ${sidebarOpen ? "sidebar-open" : ""}`}>
-      <aside className={`sidebar-v5 ${sidebarOpen ? "open" : ""}`}>
+    <div className={`superapp-shell superapp-shell-full superapp-shell-v5 shell-${activeTab} theme-${themeMode} ${sidebarOpen ? "sidebar-open" : ""} ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}>
+      <aside className={`sidebar-v5 ${sidebarOpen ? "open" : ""} ${sidebarCollapsed ? "collapsed" : ""}`}>
         <div className="sidebar-brand">
-          <img className="brand-mark" src="/lh-logo.svg" alt="LifeHub logo" />
-          <strong>LifeHub</strong>
+          <div className="sidebar-brand-main">
+            <img className="brand-mark" src="/lh-logo.svg" alt="LifeHub logo" />
+            <strong>LifeHub</strong>
+          </div>
+          <button
+            type="button"
+            className="sidebar-collapse-btn"
+            onClick={() => setSidebarCollapsed(prev => !prev)}
+            title={sidebarCollapsed ? "Expand navigation" : "Collapse navigation"}
+          >
+            {sidebarCollapsed ? "›" : "‹"}
+          </button>
         </div>
         <div className="sidebar-search">
           <UiIcon name="search" />
@@ -6666,13 +6891,13 @@ function renderOpsTab() {
               <div className="sidebar-links">
                 {group.id === "core" && (
                   <>
-                    <button type="button" className="sidebar-link" onClick={() => setCommandOpen(true)}>
+                    <button type="button" className="sidebar-link" onClick={() => setCommandOpen(true)} title="Search">
                       <UiIcon name="search" />
-                      Search
+                      <span className="sidebar-link-label">Search</span>
                     </button>
-                    <button type="button" className="sidebar-link" onClick={openNotificationCenter}>
+                    <button type="button" className="sidebar-link" onClick={openNotificationCenter} title="Notifications">
                       <UiIcon name="bell" />
-                      Notifications
+                      <span className="sidebar-link-label">Notifications</span>
                       {notificationUnreadCount > 0 && (
                         <span className="sidebar-inline-badge">
                           {notificationUnreadCount > 99 ? "99+" : notificationUnreadCount}
@@ -6686,6 +6911,7 @@ function renderOpsTab() {
                   key={tab.id}
                   type="button"
                   className={`sidebar-link ${activeTab === tab.id ? "active" : ""}`}
+                  title={tab.label}
                   onClick={() => {
                     if (tab.id === "profile") {
                       setSettingsSection("menu");
@@ -6694,20 +6920,21 @@ function renderOpsTab() {
                   }}
                 >
                   <UiIcon name={tabIconName(tab.id)} />
-                  {tab.label}
+                  <span className="sidebar-link-label">{tab.label}</span>
                 </button>
               ))}
               {group.id === "account" && (
                 <button
                   type="button"
                   className="sidebar-link"
+                  title="Security"
                   onClick={() => {
                     setSettingsSection("security");
                     handleTabSelect("profile");
                   }}
                 >
                   <UiIcon name="shield" />
-                  Security
+                  <span className="sidebar-link-label">Security</span>
                 </button>
               )}
             </div>
@@ -6720,7 +6947,7 @@ function renderOpsTab() {
         <div className="sidebar-foot">
           <span>{loading ? "Syncing workspace" : "Live"}</span>
         </div>
-      </aside>
+        </aside>
       {sidebarOpen && <div className="sidebar-overlay" onClick={() => setSidebarOpen(false)} />}
 
       <div className="content-stack">
@@ -6751,6 +6978,25 @@ function renderOpsTab() {
             <span className="topbar-hotkey">⌘ K</span>
           </div>
           <div className="topbar-actions">
+            <button
+              type="button"
+              className="icon-btn badge-btn"
+              onClick={openMarketplaceCart}
+              title="Open cart"
+            >
+              <UiIcon name="cart" />
+              {cartItemCount > 0 && (
+                <span className="mini-badge">{cartItemCount > 99 ? "99+" : cartItemCount}</span>
+              )}
+            </button>
+            <button
+              type="button"
+              className="icon-btn"
+              onClick={() => applyTheme(themeMode === "dark" ? "light" : "dark")}
+              title={themeMode === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+            >
+              <UiIcon name={themeMode === "dark" ? "sun" : "moon"} />
+            </button>
             {canInstallApp && (
               <button type="button" className="ghost-btn topbar-install-btn" onClick={onInstallApp}>
                 Install
@@ -6809,6 +7055,37 @@ function renderOpsTab() {
                 placeholder="Search commands, modules, or actions"
               />
               <span className="command-hint">Ctrl+K</span>
+            </div>
+            <div className="command-service-head">
+              <span className="command-section-kicker">Service Library</span>
+              <small>{commandServiceCards.length} modules ready</small>
+            </div>
+            <div className="command-module-grid">
+              {commandServiceCards.map(card => (
+                <button
+                  key={`module_${card.id}`}
+                  type="button"
+                  className="command-module-card"
+                  onClick={() => {
+                    card.run();
+                    setCommandOpen(false);
+                    setCommandQuery("");
+                  }}
+                >
+                  <span className="command-module-icon">
+                    <UiIcon name={tabIconName(card.id)} />
+                  </span>
+                  <span className="command-module-copy">
+                    <strong>{card.label}</strong>
+                    <small>{card.subtitle}</small>
+                  </span>
+                  {!!card.badge && <span className="command-module-badge">{card.badge}</span>}
+                </button>
+              ))}
+            </div>
+            <div className="command-service-head">
+              <span className="command-section-kicker">Quick Actions</span>
+              <small>{commandResults.length} match(es)</small>
             </div>
             <div className="command-list">
               {commandResults.map(action => (

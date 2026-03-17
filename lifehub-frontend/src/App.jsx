@@ -4,11 +4,18 @@ import SuperAppPage from "./components/SuperAppPage.jsx";
 
 const SESSION_KEY = "lifehub_session_v1";
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:4000/api";
+const THEME_KEY = "lifehub_theme_v1";
 
 export default function App() {
   const [session, setSession] = useState(null);
   const [installPromptEvent, setInstallPromptEvent] = useState(null);
   const [appInstalled, setAppInstalled] = useState(false);
+  const [themeMode, setThemeMode] = useState(() => {
+    if (typeof window === "undefined") return "light";
+    const stored = localStorage.getItem(THEME_KEY);
+    if (stored === "light" || stored === "dark") return stored;
+    return window.matchMedia?.("(prefers-color-scheme: dark)")?.matches ? "dark" : "light";
+  });
 
   useEffect(() => {
     const raw = localStorage.getItem(SESSION_KEY);
@@ -49,6 +56,17 @@ export default function App() {
       window.removeEventListener("appinstalled", handleInstalled);
     };
   }, []);
+
+  useEffect(() => {
+    localStorage.setItem(THEME_KEY, themeMode);
+    document.body.dataset.lifehubTheme = themeMode;
+    document.documentElement.dataset.lifehubTheme = themeMode;
+
+    return () => {
+      delete document.body.dataset.lifehubTheme;
+      delete document.documentElement.dataset.lifehubTheme;
+    };
+  }, [themeMode]);
 
   function handleAuthSuccess(data) {
     const next = {
@@ -102,8 +120,12 @@ export default function App() {
     return outcome?.outcome === "accepted";
   }
 
+  function handleThemeChange(nextTheme) {
+    setThemeMode(nextTheme === "dark" ? "dark" : "light");
+  }
+
   return (
-    <div className="app">
+    <div className={`app app-theme-${themeMode}`}>
       {session?.accessToken ? (
         <SuperAppPage
           session={session}
@@ -112,6 +134,8 @@ export default function App() {
           canInstallApp={Boolean(installPromptEvent) && !appInstalled}
           onInstallApp={handleInstallApp}
           appInstalled={appInstalled}
+          themeMode={themeMode}
+          onThemeChange={handleThemeChange}
         />
       ) : (
         <AuthPage
