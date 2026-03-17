@@ -5755,6 +5755,7 @@ body {
 .sidebar-link {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 12px;
   padding: 10px 12px;
   border-radius: 12px;
@@ -5781,6 +5782,21 @@ body {
 
 .sidebar-link.active .ui-icon {
   color: #22d3ee;
+}
+
+.sidebar-inline-badge {
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: #ef4444;
+  color: #ffffff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  margin-left: auto;
 }
 
 .sidebar-foot {
@@ -6036,6 +6052,19 @@ body {
   border-radius: 14px;
   border: 1px solid #e5e7eb;
   background: #ffffff;
+  width: 100%;
+  text-align: left;
+  transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease;
+}
+
+.activity-item:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 20px rgba(15, 23, 42, 0.06);
+}
+
+.activity-item.unread {
+  border-color: #93c5fd;
+  background: linear-gradient(180deg, #ffffff, #f0f9ff);
 }
 
 .activity-dot {

@@ -137,6 +137,13 @@ function ratingStars(value) {
   return `${"★".repeat(normalized)}${"☆".repeat(5 - normalized)}`;
 }
 
+function ratingSummary(rating, count) {
+  const safeCount = Number(count || 0);
+  const safeRating = Number(rating || 0);
+  if (!safeCount) return "No ratings yet";
+  return `${ratingStars(safeRating)} ${safeRating.toFixed(1)} (${safeCount})`;
+}
+
 function isSameDay(a, b) {
   if (!a || !b) return false;
   return (
@@ -165,6 +172,8 @@ function normalizeMarketplaceProduct(item, fallbackShop = null) {
     category: item.category || "general",
     price: Number(item.price || 0),
     availableQuantity: Number(item.availableQuantity || 0),
+    rating: Number(item.rating || 0),
+    feedbackCount: Number(item.feedbackCount || 0),
     shop: item.shop || fallbackShop || null
   };
 }
@@ -768,10 +777,10 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
             tab.id === "chat"
               ? totalUnreadChats
               : tab.id === "home"
-                ? notifications.length
+                ? notificationUnreadCount
                 : 0
         })),
-    [tabs, totalUnreadChats, notifications.length]
+    [tabs, totalUnreadChats, notificationUnreadCount]
   );
   const activeOrdersCount = useMemo(
     () =>
@@ -805,6 +814,11 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
       notifications.filter(item =>
         /sla/i.test(String(item?.event_type || item?.message || ""))
       ).length,
+    [notifications]
+  );
+  const notificationUnreadCount = useMemo(
+    () =>
+      notifications.filter(item => !item?.read_at && !item?.readAt).length,
     [notifications]
   );
   const homeActions = useMemo(() => {
@@ -2317,6 +2331,46 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
     setToast("Browser push permission enabled.");
   }
 
+  async function markNotificationsAsRead({
+    notificationIds = [],
+    scope = "system"
+  } = {}) {
+    const ids = [...new Set(
+      (Array.isArray(notificationIds) ? notificationIds : [notificationIds])
+        .map(value => String(value || "").trim())
+        .filter(Boolean)
+    )];
+
+    if (!ids.length && scope !== "system" && scope !== "chat" && scope !== "all") {
+      return;
+    }
+
+    await api("/notifications/me/read", {
+      method: "POST",
+      body: JSON.stringify({
+        notificationIds: ids,
+        scope
+      })
+    });
+
+    setNotifications(prev => prev.map(item => {
+      const shouldMark = ids.length
+        ? ids.includes(String(item.id))
+        : scope === "all"
+          ? true
+          : scope === "chat"
+            ? String(item?.event_type || "").startsWith("CHAT.")
+            : !String(item?.event_type || "").startsWith("CHAT.");
+      if (!shouldMark || item?.read_at || item?.readAt) {
+        return item;
+      }
+      return {
+        ...item,
+        read_at: new Date().toISOString()
+      };
+    }));
+  }
+
   async function loadNotifications() {
     const [systemData, chatData] = await Promise.all([
       api("/notifications/me?limit=30&scope=system"),
@@ -2329,6 +2383,7 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
     setChatNotifications(chatRows);
 
     const incoming = systemRows
+      .filter(item => !item?.read_at && !item?.readAt)
       .map(item => String(item.id))
       .filter(id => !seenMessageIds.has(id));
     if (incoming.length) {
@@ -2835,6 +2890,11 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
   }, [messages, activeTab]);
 
   useEffect(() => {
+    if (activeTab !== "home" || !notificationUnreadCount) return;
+    markNotificationsAsRead({ scope: "system" }).catch(() => {});
+  }, [activeTab, notificationUnreadCount]);
+
+  useEffect(() => {
     loadPresence().catch(() => {});
     loadNotifications().catch(() => {});
 
@@ -2980,14 +3040,23 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
             </div>
             <div className="activity-feed">
               {(notifications || []).slice(0, 6).map(item => (
-                <div key={item.id} className="activity-item">
+                <button
+                  key={item.id}
+                  type="button"
+                  className={`activity-item ${!item?.read_at && !item?.readAt ? "unread" : ""}`}
+                  onClick={() => {
+                    if (!item?.read_at && !item?.readAt) {
+                      markNotificationsAsRead({ notificationIds: [item.id] }).catch(() => {});
+                    }
+                  }}
+                >
                   <span className="activity-dot" />
                   <div>
                     <strong>{item.event_type || "New update"}</strong>
-                    <small>{formatClock(item.created_at)} ago</small>
+                    <small>{formatClock(item.created_at)}</small>
                   </div>
                   <span className="activity-arrow">↗</span>
-                </div>
+                </button>
               ))}
               {!notifications.length && <div className="empty-line">No recent activity.</div>}
             </div>
@@ -3783,8 +3852,9 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
                 <div className="product-detail-price-row">
                   <strong className="market-price">{toCurrency(selectedMarketplaceDetail.price)}</strong>
                   <small>
-                    Shop rating {Number(selectedMarketplaceDetail.shop?.rating || 0).toFixed(1)} | Reliability{" "}
-                    {Number(selectedMarketplaceDetail.shop?.reliabilityScore || 0).toFixed(1)}
+                    Product {ratingSummary(selectedMarketplaceDetail.rating, selectedMarketplaceDetail.feedbackCount)}
+                    {" "} | Shop {ratingSummary(selectedMarketplaceDetail.shop?.rating, selectedMarketplaceDetail.shop?.feedbackCount)}
+                    {" "} | Reliability {Number(selectedMarketplaceDetail.shop?.reliabilityScore || 0).toFixed(1)}
                   </small>
                 </div>
               </div>
@@ -4116,7 +4186,7 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
                       <div className="market-product-foot">
                         <span className="status-pill">Score {Number(item.recommendationScore || 0).toFixed(2)}</span>
                         <span className="status-pill">
-                          {ratingStars(item?.shop?.rating)} {Number(item?.shop?.rating || 0).toFixed(1)}
+                          {ratingSummary(item?.rating, item?.feedbackCount)}
                         </span>
                       </div>
                       <div className="market-product-actions">
@@ -4190,7 +4260,7 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
                           <small>
                             {item.distanceKm !== null && item.distanceKm !== undefined
                               ? `${item.distanceKm.toFixed(1)} km`
-                              : "distance n/a"} | Shop rating {Number(item?.shop?.rating || 0).toFixed(1)}
+                              : "distance n/a"} | Product {ratingSummary(item?.rating, item?.feedbackCount)}
                           </small>
                         </div>
                       </button>
@@ -4213,7 +4283,7 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
                   <strong>{selectedShop.shopName}</strong>
                   <small>
                     {selectedShop.address || "Address unavailable"} |{" "}
-                    {ratingStars(selectedShop.rating)} {Number(selectedShop.rating || 0).toFixed(1)} | Reliability{" "}
+                    {ratingSummary(selectedShop.rating, selectedShop.feedbackCount)} | Reliability{" "}
                     {Number(selectedShop.reliabilityScore || 0).toFixed(1)}
                   </small>
                 </div>
@@ -4240,7 +4310,7 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
                       <small>{product.company ? `Brand ${product.company}` : "Local inventory"}</small>
                       <small>{product.description || "Fresh stock available from nearby store."}</small>
                       <small className="market-rating-line">
-                        {ratingStars(selectedShop?.rating || 4)} {Number(selectedShop?.rating || 4).toFixed(1)}
+                        Product {ratingSummary(product.rating, product.feedbackCount)}
                       </small>
                       <small>
                         M.R.P <s>{toCurrency(Number(product.price || 0) * 1.12)}</s>
@@ -5632,6 +5702,12 @@ function renderOpsTab() {
     setSidebarOpen(false);
   }
 
+  function openNotificationCenter() {
+    setActiveTab("home");
+    setSidebarOpen(false);
+    markNotificationsAsRead({ scope: "system" }).catch(() => {});
+  }
+
   const suppressGlobalHeader = activeTab === "chat"
     || (activeTab === "marketplace" && marketplaceView !== "catalog");
   const breadcrumbLabel = activeTab === "home" ? "Overview" : activeTabMeta.title;
@@ -5670,9 +5746,14 @@ function renderOpsTab() {
                       <UiIcon name="search" />
                       Search
                     </button>
-                    <button type="button" className="sidebar-link" onClick={() => handleTabSelect("home")}>
+                    <button type="button" className="sidebar-link" onClick={openNotificationCenter}>
                       <UiIcon name="bell" />
                       Notifications
+                      {notificationUnreadCount > 0 && (
+                        <span className="sidebar-inline-badge">
+                          {notificationUnreadCount > 99 ? "99+" : notificationUnreadCount}
+                        </span>
+                      )}
                     </button>
                   </>
                 )}
@@ -5738,10 +5819,10 @@ function renderOpsTab() {
             <span className="topbar-hotkey">⌘ K</span>
           </div>
           <div className="topbar-actions">
-            <button type="button" className="icon-btn badge-btn" onClick={() => handleTabSelect("home")}>
+            <button type="button" className="icon-btn badge-btn" onClick={openNotificationCenter}>
               <UiIcon name="bell" />
-              {notifications.length > 0 && (
-                <span className="mini-badge">{notifications.length > 99 ? "99+" : notifications.length}</span>
+              {notificationUnreadCount > 0 && (
+                <span className="mini-badge">{notificationUnreadCount > 99 ? "99+" : notificationUnreadCount}</span>
               )}
             </button>
             <div className="topbar-avatar">

@@ -7,12 +7,23 @@ import {
   setUserNotificationPreferences
 } from "./notification.preferences.store.js";
 
+let notificationReadColumnReady = false;
+
 async function ensureChannel(channelName) {
   return prisma.notification_channels.upsert({
     where: { channel_name: channelName },
     update: {},
     create: { channel_name: channelName }
   });
+}
+
+export async function ensureNotificationReadColumn() {
+  if (notificationReadColumnReady) return;
+  await prisma.$executeRawUnsafe(`
+    ALTER TABLE "notifications"
+    ADD COLUMN IF NOT EXISTS "read_at" TIMESTAMP(6)
+  `);
+  notificationReadColumnReady = true;
 }
 
 function normalizePriority(priority = "HIGH") {
@@ -204,6 +215,7 @@ export async function deliverPendingBatch(limit = 100) {
 }
 
 export async function listUserNotifications(userId, limit = 50) {
+  await ensureNotificationReadColumn();
   const normalizedLimit = Math.min(Math.max(Number(limit) || 50, 1), 200);
   return prisma.notifications.findMany({
     where: { user_id: BigInt(userId) },
@@ -224,6 +236,7 @@ export async function listUserNotificationsScoped(userId, {
   limit = 50,
   scope = "all"
 } = {}) {
+  await ensureNotificationReadColumn();
   const normalizedScope = normalizeNotificationScope(scope);
   const where = {
     user_id: BigInt(userId)
@@ -247,6 +260,51 @@ export async function listUserNotificationsScoped(userId, {
     orderBy: { created_at: "desc" },
     take: normalizedLimit
   });
+}
+
+export async function markNotificationsRead(userId, {
+  notificationIds = [],
+  scope = "all"
+} = {}) {
+  await ensureNotificationReadColumn();
+  const normalizedScope = normalizeNotificationScope(scope);
+  const ids = [...new Set(
+    (Array.isArray(notificationIds) ? notificationIds : [notificationIds])
+      .map(value => String(value || "").trim())
+      .filter(Boolean)
+  )];
+
+  const where = {
+    user_id: BigInt(userId),
+    read_at: null
+  };
+
+  if (ids.length) {
+    where.id = {
+      in: ids.map(value => BigInt(value))
+    };
+  } else if (normalizedScope === "system") {
+    where.NOT = {
+      event_type: {
+        startsWith: "CHAT."
+      }
+    };
+  } else if (normalizedScope === "chat") {
+    where.event_type = {
+      startsWith: "CHAT."
+    };
+  }
+
+  const result = await prisma.notifications.updateMany({
+    where,
+    data: {
+      read_at: new Date()
+    }
+  });
+
+  return {
+    updated: Number(result.count || 0)
+  };
 }
 
 export async function getNotificationPreferences(userId) {

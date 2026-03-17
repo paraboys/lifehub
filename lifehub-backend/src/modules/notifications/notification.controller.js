@@ -3,6 +3,7 @@ import {
   createNotification,
   deliverPendingBatch,
   listUserNotificationsScoped,
+  markNotificationsRead,
   getNotificationPreferences,
   updateNotificationPreferences
 } from "./notification.service.js";
@@ -41,6 +42,18 @@ export async function triggerDeliveryScan(req, res) {
     res.json({ message: "Notification delivery scan completed" });
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+}
+
+export async function markMyNotificationsRead(req, res) {
+  try {
+    const payload = await markNotificationsRead(req.user.id, {
+      notificationIds: req.body?.notificationIds || [],
+      scope: req.body?.scope || "all"
+    });
+    res.json(jsonSafe(payload));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
   }
 }
 

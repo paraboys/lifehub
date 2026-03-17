@@ -6,6 +6,10 @@ let shopFeedbackTableAvailability = {
   checkedAt: 0,
   available: null
 };
+let productFeedbackTableAvailability = {
+  checkedAt: 0,
+  available: null
+};
 let productMetadataAvailability = {
   checkedAt: 0,
   hasCompany: false,
@@ -14,7 +18,6 @@ let productMetadataAvailability = {
 };
 
 const SHOP_FEEDBACK_MIGRATION_HINT = "Run migration `20260220101000_marketplace_inventory_feedback` to enable shop feedback features.";
-
 function hasValue(value) {
   return value !== null && value !== undefined && String(value).trim() !== "";
 }
@@ -53,6 +56,62 @@ async function hasShopFeedbackTable() {
     return available;
   } catch {
     shopFeedbackTableAvailability = {
+      checkedAt: now,
+      available: false
+    };
+    return false;
+  }
+}
+
+async function hasProductFeedbackTable() {
+  const now = Date.now();
+  if (
+    productFeedbackTableAvailability.available !== null
+    && (now - productFeedbackTableAvailability.checkedAt) < TABLE_AVAILABILITY_CACHE_TTL_MS
+  ) {
+    return productFeedbackTableAvailability.available;
+  }
+
+  try {
+    await prisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS "product_feedbacks" (
+        "id" BIGSERIAL PRIMARY KEY,
+        "product_id" BIGINT NOT NULL,
+        "user_id" BIGINT NOT NULL,
+        "order_id" BIGINT,
+        "rating" DECIMAL(2,1) NOT NULL,
+        "comment" TEXT,
+        "created_at" TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT "product_feedbacks_product_id_fkey"
+          FOREIGN KEY ("product_id") REFERENCES "products"("id")
+          ON DELETE CASCADE ON UPDATE NO ACTION,
+        CONSTRAINT "product_feedbacks_user_id_fkey"
+          FOREIGN KEY ("user_id") REFERENCES "users"("id")
+          ON DELETE CASCADE ON UPDATE NO ACTION,
+        CONSTRAINT "product_feedbacks_order_id_fkey"
+          FOREIGN KEY ("order_id") REFERENCES "orders"("id")
+          ON DELETE SET NULL ON UPDATE NO ACTION
+      )
+    `);
+    await prisma.$executeRawUnsafe(`
+      CREATE UNIQUE INDEX IF NOT EXISTS "product_feedbacks_product_id_order_id_key"
+      ON "product_feedbacks" ("product_id", "order_id")
+    `);
+    await prisma.$executeRawUnsafe(`
+      CREATE INDEX IF NOT EXISTS "product_feedbacks_product_id_created_at_idx"
+      ON "product_feedbacks" ("product_id", "created_at")
+    `);
+    await prisma.$executeRawUnsafe(`
+      CREATE INDEX IF NOT EXISTS "product_feedbacks_user_id_created_at_idx"
+      ON "product_feedbacks" ("user_id", "created_at")
+    `);
+    productFeedbackTableAvailability = {
+      checkedAt: now,
+      available: true
+    };
+    return true;
+  } catch {
+    productFeedbackTableAvailability = {
       checkedAt: now,
       available: false
     };
@@ -271,7 +330,7 @@ function calculateReliabilityScore({
   return Number(Math.max(0, Math.min(100, score)).toFixed(1));
 }
 
-function mapProductForResponse(product) {
+function mapProductForResponse(product, feedbackSummary = null) {
   return {
     id: product.id,
     shopId: product.shop_id,
@@ -281,7 +340,9 @@ function mapProductForResponse(product) {
     imageUrl: product.image_url || null,
     category: product.category || null,
     price: Number(product.price || 0),
-    availableQuantity: Number(product.inventory?.quantity || 0)
+    availableQuantity: Number(product.inventory?.quantity || 0),
+    rating: Number(feedbackSummary?.avgRating || 0),
+    feedbackCount: Number(feedbackSummary?.feedbackCount || 0)
   };
 }
 
@@ -338,6 +399,45 @@ async function getShopFeedbackSummaryMap(shopIds = []) {
   const summaryMap = new Map();
   for (const row of grouped) {
     summaryMap.set(String(row.shop_id), {
+      avgRating: row._avg.rating === null ? null : Number(row._avg.rating),
+      feedbackCount: Number(row._count?._all || 0)
+    });
+  }
+  return summaryMap;
+}
+
+async function getProductFeedbackSummaryMap(productIds = []) {
+  const seen = new Set();
+  const normalizedIds = [];
+
+  for (const productId of productIds) {
+    if (!hasValue(productId)) continue;
+    const key = String(productId);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    normalizedIds.push(BigInt(key));
+  }
+
+  if (!normalizedIds.length) return new Map();
+  if (!(await hasProductFeedbackTable())) return new Map();
+
+  let grouped = [];
+  try {
+    grouped = await prisma.product_feedbacks.groupBy({
+      by: ["product_id"],
+      where: {
+        product_id: { in: normalizedIds }
+      },
+      _avg: { rating: true },
+      _count: { _all: true }
+    });
+  } catch {
+    return new Map();
+  }
+
+  const summaryMap = new Map();
+  for (const row of grouped) {
+    summaryMap.set(String(row.product_id), {
       avgRating: row._avg.rating === null ? null : Number(row._avg.rating),
       feedbackCount: Number(row._count?._all || 0)
     });
@@ -730,7 +830,10 @@ export async function listShopProducts({
     take: clampLimit(limit, 100)
   });
 
-  return products.map(mapProductForResponse);
+  const feedbackSummaryMap = await getProductFeedbackSummaryMap(products.map(product => product.id));
+  return products.map(product =>
+    mapProductForResponse(product, feedbackSummaryMap.get(String(product.id)))
+  );
 }
 
 function scoreProductForFairSort(item) {
@@ -889,9 +992,12 @@ export async function searchProductsNearby({
     take: clampLimit(limit * 4, 300)
   });
 
-  const summaryMap = await getShopFeedbackSummaryMap(
-    products.map(product => product.shop_profiles?.id).filter(Boolean)
-  );
+  const [summaryMap, productFeedbackSummaryMap] = await Promise.all([
+    getShopFeedbackSummaryMap(
+      products.map(product => product.shop_profiles?.id).filter(Boolean)
+    ),
+    getProductFeedbackSummaryMap(products.map(product => product.id))
+  ]);
 
   const baseLat = hasValue(lat) ? Number(lat) : null;
   const baseLng = hasValue(lng) ? Number(lng) : null;
@@ -907,6 +1013,7 @@ export async function searchProductsNearby({
       const feedbackSummary = summaryMap.get(String(shopId || ""));
       const shopRating = feedbackSummary?.avgRating ?? Number(product.shop_profiles?.rating || 0);
       const feedbackCount = Number(feedbackSummary?.feedbackCount || 0);
+      const productFeedbackSummary = productFeedbackSummaryMap.get(String(product.id));
       const reliabilityScore = calculateReliabilityScore({
         rating: shopRating,
         feedbackCount,
@@ -926,6 +1033,8 @@ export async function searchProductsNearby({
         category: product.category,
         price: Number(product.price || 0),
         availableQuantity,
+        rating: Number(productFeedbackSummary?.avgRating || 0),
+        feedbackCount: Number(productFeedbackSummary?.feedbackCount || 0),
         shop: {
           id: shopId || null,
           shopName: product.shop_profiles?.shop_name || "Unknown shop",
@@ -1051,7 +1160,7 @@ export async function recommendProductsNearby({
   if (!products.length) return [];
 
   const productIds = products.map(product => product.id);
-  const [salesRows, orderRows] = await Promise.all([
+  const [salesRows, orderRows, productFeedbackSummaryMap] = await Promise.all([
     prisma.order_items.groupBy({
       by: ["product_id"],
       where: {
@@ -1087,7 +1196,8 @@ export async function recommendProductsNearby({
           }
         }
       }
-    })
+    }),
+    getProductFeedbackSummaryMap(productIds)
   ]);
 
   const salesMap = new Map(
@@ -1110,6 +1220,7 @@ export async function recommendProductsNearby({
       const shop = nearbyShopMap.get(String(product.shop_id));
       const shopRating = Number(shop?.rating || product.shop_profiles?.rating || 0);
       const reliabilityScore = Number(shop?.reliabilityScore || 0);
+      const productFeedbackSummary = productFeedbackSummaryMap.get(String(product.id));
       const distance = shop?.distanceKm === null || shop?.distanceKm === undefined
         ? null
         : Number(shop.distanceKm);
@@ -1132,6 +1243,8 @@ export async function recommendProductsNearby({
         category: product.category || null,
         price: Number(product.price || 0),
         availableQuantity,
+        rating: Number(productFeedbackSummary?.avgRating || 0),
+        feedbackCount: Number(productFeedbackSummary?.feedbackCount || 0),
         unitsSold: sales.unitsSold,
         orderFrequency: sales.orderFrequency,
         associationScore,

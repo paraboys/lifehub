@@ -4,6 +4,7 @@ import { authorize } from "../../common/middlewares/role.middleware.js";
 import {
   createNotificationApi,
   listMyNotifications,
+  markMyNotificationsRead,
   triggerDeliveryScan,
   getMyPreferences,
   updateMyPreferences,
@@ -14,6 +15,7 @@ const router = Router();
 
 router.post("/", authenticate, authorize("ADMIN", "BUSINESS"), createNotificationApi);
 router.get("/me", authenticate, authorize("CUSTOMER", "PROVIDER", "SHOPKEEPER", "DELIVERY", "BUSINESS", "ADMIN"), listMyNotifications);
+router.post("/me/read", authenticate, authorize("CUSTOMER", "PROVIDER", "SHOPKEEPER", "DELIVERY", "BUSINESS", "ADMIN"), markMyNotificationsRead);
 router.post("/me/test", authenticate, authorize("CUSTOMER", "PROVIDER", "SHOPKEEPER", "DELIVERY", "BUSINESS", "ADMIN"), sendMyTestNotification);
 router.get("/preferences/me", authenticate, authorize("CUSTOMER", "PROVIDER", "SHOPKEEPER", "DELIVERY", "BUSINESS", "ADMIN"), getMyPreferences);
 router.put("/preferences/me", authenticate, authorize("CUSTOMER", "PROVIDER", "SHOPKEEPER", "DELIVERY", "BUSINESS", "ADMIN"), updateMyPreferences);

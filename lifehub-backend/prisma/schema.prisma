@@ -196,6 +196,7 @@ model notifications {
   content                 String?
   priority                String?                   @db.VarChar(10)
   created_at              DateTime?                 @default(now()) @db.Timestamp(6)
+  read_at                 DateTime?                 @db.Timestamp(6)
   notification_deliveries notification_deliveries[]
   users                   users?                    @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 }
@@ -221,6 +222,7 @@ model orders {
   delivery_tracking delivery_tracking?
   order_delivery_details order_delivery_details?
   order_items       order_items[]
+  product_feedbacks product_feedbacks[]
   shop_feedbacks    shop_feedbacks[]
   shop_profiles     shop_profiles?     @relation(fields: [shop_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   users             users?             @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
@@ -261,6 +263,7 @@ model products {
   category      String?        @db.VarChar(50)
   inventory     inventory?
   order_items   order_items[]
+  product_feedbacks product_feedbacks[]
   shop_profiles shop_profiles? @relation(fields: [shop_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 }
 
@@ -352,6 +355,23 @@ model shop_feedbacks {
   @@index([user_id, created_at])
 }
 
+model product_feedbacks {
+  id         BigInt    @id @default(autoincrement())
+  product_id BigInt
+  user_id    BigInt
+  order_id   BigInt?
+  rating     Decimal   @db.Decimal(2, 1)
+  comment    String?
+  created_at DateTime  @default(now()) @db.Timestamp(6)
+  orders     orders?   @relation(fields: [order_id], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  products   products  @relation(fields: [product_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users      users     @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([product_id, order_id])
+  @@index([product_id, created_at])
+  @@index([user_id, created_at])
+}
+
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 model transactions {
   id                                        BigInt    @id @default(autoincrement())
@@ -390,6 +410,7 @@ model users {
   messages                  messages[]
   notifications             notifications[]
   orders                    orders[]
+  product_feedbacks         product_feedbacks[]
   provider_profiles         provider_profiles[]
   service_requests          service_requests[]
   shop_feedbacks            shop_feedbacks[]

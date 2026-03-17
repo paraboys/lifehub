@@ -1,8 +1,10 @@
 import prisma from "../../config/db.js";
 import { searchProviders } from "../marketplace/marketplace.service.js";
+import { ensureNotificationReadColumn } from "../notifications/notification.service.js";
 
 export async function getHomeData(userId) {
   const uid = BigInt(userId);
+  await ensureNotificationReadColumn();
 
   const [user, orders, serviceRequests, conversations, notifications, providers] =
     await Promise.all([
@@ -52,7 +54,7 @@ export async function getHomeData(userId) {
       activeServiceRequests: serviceRequests.filter(
         req => !["CANCELLED", "COMPLETED"].includes(req.status)
       ).length,
-      unreadNotifications: notifications.length,
+      unreadNotifications: notifications.filter(item => !item?.read_at).length,
       conversations: conversations.length
     },
     recentOrders: orders,

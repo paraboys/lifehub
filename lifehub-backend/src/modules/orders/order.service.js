@@ -23,6 +23,10 @@ let shopFeedbackTableAvailability = {
   checkedAt: 0,
   available: null
 };
+let productFeedbackTableAvailability = {
+  checkedAt: 0,
+  available: null
+};
 const redis = getSharedRedisClient();
 
 function toBigInt(id) {
@@ -67,6 +71,98 @@ async function hasShopFeedbackTable() {
       available: false
     };
     return false;
+  }
+}
+
+async function hasProductFeedbackTable() {
+  const now = Date.now();
+  if (
+    productFeedbackTableAvailability.available !== null
+    && (now - productFeedbackTableAvailability.checkedAt) < TABLE_AVAILABILITY_CACHE_TTL_MS
+  ) {
+    return productFeedbackTableAvailability.available;
+  }
+
+  try {
+    await prisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS "product_feedbacks" (
+        "id" BIGSERIAL PRIMARY KEY,
+        "product_id" BIGINT NOT NULL,
+        "user_id" BIGINT NOT NULL,
+        "order_id" BIGINT,
+        "rating" DECIMAL(2,1) NOT NULL,
+        "comment" TEXT,
+        "created_at" TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT "product_feedbacks_product_id_fkey"
+          FOREIGN KEY ("product_id") REFERENCES "products"("id")
+          ON DELETE CASCADE ON UPDATE NO ACTION,
+        CONSTRAINT "product_feedbacks_user_id_fkey"
+          FOREIGN KEY ("user_id") REFERENCES "users"("id")
+          ON DELETE CASCADE ON UPDATE NO ACTION,
+        CONSTRAINT "product_feedbacks_order_id_fkey"
+          FOREIGN KEY ("order_id") REFERENCES "orders"("id")
+          ON DELETE SET NULL ON UPDATE NO ACTION
+      )
+    `);
+    await prisma.$executeRawUnsafe(`
+      CREATE UNIQUE INDEX IF NOT EXISTS "product_feedbacks_product_id_order_id_key"
+      ON "product_feedbacks" ("product_id", "order_id")
+    `);
+    productFeedbackTableAvailability = {
+      checkedAt: now,
+      available: true
+    };
+    return true;
+  } catch {
+    productFeedbackTableAvailability = {
+      checkedAt: now,
+      available: false
+    };
+    return false;
+  }
+}
+
+async function upsertProductFeedbackForOrder({
+  orderId,
+  actorId,
+  rating,
+  feedback
+}) {
+  if (!(await hasProductFeedbackTable())) {
+    return;
+  }
+
+  const orderItems = await prisma.order_items.findMany({
+    where: { order_id: toBigInt(orderId) },
+    select: { product_id: true }
+  });
+  const productIds = [...new Set(
+    orderItems
+      .map(item => item.product_id)
+      .filter(Boolean)
+      .map(value => String(value))
+  )];
+
+  for (const productId of productIds) {
+    await prisma.product_feedbacks.upsert({
+      where: {
+        product_id_order_id: {
+          product_id: BigInt(productId),
+          order_id: toBigInt(orderId)
+        }
+      },
+      update: {
+        rating: Number(Number(rating).toFixed(1)),
+        comment: feedback
+      },
+      create: {
+        product_id: BigInt(productId),
+        user_id: toBigInt(actorId),
+        order_id: toBigInt(orderId),
+        rating: Number(Number(rating).toFixed(1)),
+        comment: feedback
+      }
+    });
   }
 }
 
@@ -616,6 +712,15 @@ export async function confirmDelivery({
         throw error;
       }
     }
+  }
+
+  if (hasRating) {
+    await upsertProductFeedbackForOrder({
+      orderId: order.id,
+      actorId,
+      rating: numericRating,
+      feedback: normalizedFeedback
+    });
   }
 
   eventBus.emit("ORDER.DELIVERED", {
