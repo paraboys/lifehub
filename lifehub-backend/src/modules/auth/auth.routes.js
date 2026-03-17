@@ -9,6 +9,7 @@ import {
   requestSignupOtp,
   requestPasswordResetOtp,
   resetPassword,
+  changePassword,
   sessions,
   revokeSession
 } from "./auth.controller.js";
@@ -27,6 +28,7 @@ router.post("/otp/verify", authLimiter, abuseGuard("auth"), loginWithOtp);
 router.post("/signup/otp/request", authLimiter, abuseGuard("auth"), requestSignupOtp);
 router.post("/password/otp/request", authLimiter, abuseGuard("auth"), requestPasswordResetOtp);
 router.post("/password/reset", authLimiter, abuseGuard("auth"), resetPassword);
+router.post("/password/change", authenticate, abuseGuard("auth"), changePassword);
 router.get("/sessions", authenticate, abuseGuard("auth"), sessions);
 router.delete("/sessions/:sessionId", authenticate, abuseGuard("auth"), revokeSession);
 

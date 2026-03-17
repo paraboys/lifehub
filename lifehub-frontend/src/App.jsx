@@ -7,6 +7,8 @@ const API_URL = import.meta.env.VITE_API_URL || "http://localhost:4000/api";
 
 export default function App() {
   const [session, setSession] = useState(null);
+  const [installPromptEvent, setInstallPromptEvent] = useState(null);
+  const [appInstalled, setAppInstalled] = useState(false);
 
   useEffect(() => {
     const raw = localStorage.getItem(SESSION_KEY);
@@ -17,6 +19,35 @@ export default function App() {
     } catch {
       localStorage.removeItem(SESSION_KEY);
     }
+  }, []);
+
+  useEffect(() => {
+    const isStandalone = window.matchMedia?.("(display-mode: standalone)")?.matches
+      || window.navigator?.standalone
+      || localStorage.getItem("lifehub_pwa_installed") === "true";
+
+    if (isStandalone) {
+      setAppInstalled(true);
+    }
+
+    const handleBeforeInstallPrompt = event => {
+      event.preventDefault();
+      setInstallPromptEvent(event);
+    };
+
+    const handleInstalled = () => {
+      localStorage.setItem("lifehub_pwa_installed", "true");
+      setAppInstalled(true);
+      setInstallPromptEvent(null);
+    };
+
+    window.addEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
+    window.addEventListener("appinstalled", handleInstalled);
+
+    return () => {
+      window.removeEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
+      window.removeEventListener("appinstalled", handleInstalled);
+    };
   }, []);
 
   function handleAuthSuccess(data) {
@@ -60,6 +91,17 @@ export default function App() {
     }
   }
 
+  async function handleInstallApp() {
+    if (!installPromptEvent) return false;
+    installPromptEvent.prompt();
+    const outcome = await installPromptEvent.userChoice.catch(() => null);
+    if (outcome?.outcome === "accepted") {
+      setAppInstalled(true);
+    }
+    setInstallPromptEvent(null);
+    return outcome?.outcome === "accepted";
+  }
+
   return (
     <div className="app">
       {session?.accessToken ? (
@@ -67,9 +109,17 @@ export default function App() {
           session={session}
           onLogout={handleLogout}
           onRefreshSession={handleRefreshSession}
+          canInstallApp={Boolean(installPromptEvent) && !appInstalled}
+          onInstallApp={handleInstallApp}
+          appInstalled={appInstalled}
         />
       ) : (
-        <AuthPage onAuthSuccess={handleAuthSuccess} />
+        <AuthPage
+          onAuthSuccess={handleAuthSuccess}
+          canInstallApp={Boolean(installPromptEvent) && !appInstalled}
+          onInstallApp={handleInstallApp}
+          appInstalled={appInstalled}
+        />
       )}
     </div>
   );

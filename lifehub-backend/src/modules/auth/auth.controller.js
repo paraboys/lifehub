@@ -202,6 +202,22 @@ export const resetPassword = async (req, res) => {
   }
 };
 
+export const changePassword = async (req, res) => {
+  try {
+    await service.changePassword({
+      userId: req.user.id,
+      currentPassword: req.body?.currentPassword,
+      newPassword: req.body?.newPassword
+    });
+
+    res.json({
+      message: "Password changed successfully. Please login again on your devices."
+    });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+};
+
 export const sessions = async (req, res) => {
   try {
     const items = await service.listSessions(req.user.id);

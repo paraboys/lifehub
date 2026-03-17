@@ -42,6 +42,54 @@ export async function getProfile(req, res) {
   }
 }
 
+export async function updateProfile(req, res) {
+  try {
+    const nextName = String(req.body?.name || "").trim();
+    const nextEmailRaw = req.body?.email;
+    const nextEmail = nextEmailRaw ? String(nextEmailRaw).trim().toLowerCase() : null;
+
+    if (!nextName) {
+      throw new Error("name is required");
+    }
+
+    const updated = await prisma.users.update({
+      where: { id: BigInt(req.user.id) },
+      data: {
+        name: nextName,
+        email: nextEmail || null
+      },
+      select: {
+        id: true,
+        name: true,
+        phone: true,
+        email: true,
+        created_at: true,
+        user_roles: {
+          include: {
+            roles: {
+              select: {
+                role_name: true
+              }
+            }
+          }
+        }
+      }
+    });
+
+    res.json(
+      jsonSafe({
+        ...updated,
+        roles: (updated.user_roles || [])
+          .map(item => item.roles?.role_name)
+          .filter(Boolean)
+          .map(role => String(role).toUpperCase())
+      })
+    );
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+}
+
 export async function getSettings(req, res) {
   try {
     const settings = await getUserSettings(req.user.id);

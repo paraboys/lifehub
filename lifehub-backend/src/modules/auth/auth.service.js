@@ -188,6 +188,49 @@ export async function resetPasswordByPhone({ phone, newPassword }) {
   };
 }
 
+export async function changePassword({ userId, currentPassword, newPassword }) {
+  const current = String(currentPassword || "");
+  const next = String(newPassword || "");
+
+  if (!current) {
+    throw new Error("Current password is required");
+  }
+  if (next.length < 6) {
+    throw new Error("New password must be at least 6 characters");
+  }
+  if (current === next) {
+    throw new Error("New password must be different from current password");
+  }
+
+  const user = await prisma.users.findUnique({
+    where: { id: BigInt(userId) }
+  });
+
+  if (!user) {
+    throw new Error("User not found");
+  }
+
+  const valid = await comparePassword(current, user.password_hash);
+  if (!valid) {
+    throw new Error("Current password is incorrect");
+  }
+
+  await prisma.users.update({
+    where: { id: user.id },
+    data: {
+      password_hash: await hashPassword(next)
+    }
+  });
+
+  await prisma.user_sessions.deleteMany({
+    where: { user_id: user.id }
+  });
+
+  return {
+    userId: user.id.toString()
+  };
+}
+
 export const rotateRefreshToken = async (oldToken) => {
   const session = await prisma.user_sessions.findUnique({
     where: { refresh_token: oldToken }

@@ -109,6 +109,27 @@ function formatClock(value) {
   return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
+function formatShortDate(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleDateString([], { month: "short", day: "numeric" });
+}
+
+function formatRelativeTime(value) {
+  if (!value) return "Just now";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Just now";
+  const diff = Date.now() - date.getTime();
+  const minutes = Math.max(0, Math.round(diff / 60000));
+  if (minutes < 1) return "Just now";
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.round(hours / 24);
+  return `${days}d ago`;
+}
+
 function deliveryMarker(status) {
   const normalized = String(status || "SENT").toUpperCase();
   if (normalized === "READ") return "Seen";
@@ -142,6 +163,53 @@ function ratingSummary(rating, count) {
   const safeRating = Number(rating || 0);
   if (!safeCount) return "No ratings yet";
   return `${ratingStars(safeRating)} ${safeRating.toFixed(1)} (${safeCount})`;
+}
+
+function buildDailySeries(rows, dateAccessor, valueAccessor = () => 1, days = 7) {
+  const today = new Date();
+  const buckets = Array.from({ length: days }, (_, index) => {
+    const date = new Date(today);
+    date.setHours(0, 0, 0, 0);
+    date.setDate(today.getDate() - (days - index - 1));
+    return {
+      key: date.toISOString().slice(0, 10),
+      label: date.toLocaleDateString([], { weekday: "short" }),
+      value: 0
+    };
+  });
+
+  const indexMap = new Map(buckets.map((bucket, index) => [bucket.key, index]));
+
+  for (const row of rows || []) {
+    const raw = dateAccessor(row);
+    if (!raw) continue;
+    const date = new Date(raw);
+    if (Number.isNaN(date.getTime())) continue;
+    const key = new Date(date.getFullYear(), date.getMonth(), date.getDate()).toISOString().slice(0, 10);
+    const bucketIndex = indexMap.get(key);
+    if (bucketIndex === undefined) continue;
+    buckets[bucketIndex].value += Number(valueAccessor(row) || 0);
+  }
+
+  return buckets;
+}
+
+function buildSparklinePoints(values, width = 320, height = 96) {
+  const safe = (values || []).map(value => Number(value || 0));
+  const max = Math.max(...safe, 1);
+  return safe
+    .map((value, index) => {
+      const x = safe.length === 1 ? width / 2 : (index / (safe.length - 1)) * width;
+      const y = height - (value / max) * (height - 12) - 6;
+      return `${x},${y}`;
+    })
+    .join(" ");
+}
+
+function getInitialTab() {
+  if (typeof window === "undefined") return "home";
+  const value = new URLSearchParams(window.location.search).get("tab");
+  return value || "home";
 }
 
 function isSameDay(a, b) {
@@ -400,9 +468,17 @@ function loadRazorpayScript() {
   return razorpayScriptPromise;
 }
 
-export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
+export default function SuperAppPage({
+  session,
+  onLogout,
+  onRefreshSession,
+  canInstallApp,
+  onInstallApp,
+  appInstalled
+}) {
   const token = session?.accessToken || "";
-  const user = session?.user || {};
+  const [profile, setProfile] = useState(() => session?.user || {});
+  const user = profile || session?.user || {};
   const userRoles = user?.roles || [];
   const hasRole = role => userRoles.includes(role);
   const canAccess = useMemo(
@@ -438,7 +514,7 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
   }, [canAccess]);
   const tabMap = useMemo(() => Object.fromEntries(tabs.map(tab => [tab.id, tab])), [tabs]);
 
-  const [activeTab, setActiveTab] = useState("home");
+  const [activeTab, setActiveTab] = useState(() => getInitialTab());
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -595,6 +671,17 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
   });
   const [workflowId, setWorkflowId] = useState("1");
   const [userSettings, setUserSettings] = useState(DEFAULT_SETTINGS);
+  const [profileDraft, setProfileDraft] = useState(() => ({
+    name: session?.user?.name || "",
+    email: session?.user?.email || ""
+  }));
+  const [passwordDraft, setPasswordDraft] = useState({
+    currentPassword: "",
+    newPassword: "",
+    confirmPassword: ""
+  });
+  const [savingProfile, setSavingProfile] = useState(false);
+  const [changingPassword, setChangingPassword] = useState(false);
   const profilePhotoStorageKey = useMemo(
     () => `lifehub_profile_photo_${user.id || "anonymous"}`,
     [user.id]
@@ -766,6 +853,11 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
     () => conversations.reduce((sum, conv) => sum + Number(conv.unreadCount || 0), 0),
     [conversations]
   );
+  const notificationUnreadCount = useMemo(
+    () =>
+      notifications.filter(item => !item?.read_at && !item?.readAt).length,
+    [notifications]
+  );
   const moduleCards = useMemo(
     () =>
       tabs
@@ -816,11 +908,94 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
       ).length,
     [notifications]
   );
-  const notificationUnreadCount = useMemo(
+  const ordersSeries = useMemo(
     () =>
-      notifications.filter(item => !item?.read_at && !item?.readAt).length,
-    [notifications]
+      buildDailySeries(
+        orders,
+        row => row?.created_at || row?.createdAt,
+        () => 1
+      ),
+    [orders]
   );
+  const revenueSeries = useMemo(
+    () =>
+      buildDailySeries(
+        transactions,
+        row => row?.created_at || row?.createdAt || row?.timestamp,
+        row => {
+          const amount = Number(row?.amount ?? row?.value ?? 0);
+          return amount > 0 ? amount : 0;
+        }
+      ),
+    [transactions]
+  );
+  const dashboardModuleUsage = useMemo(
+    () => [
+      { label: "Commerce", value: activeOrdersCount, tone: "commerce" },
+      { label: "Messages", value: totalUnreadChats + conversations.length, tone: "chat" },
+      { label: "Services", value: pendingServiceCount, tone: "service" },
+      { label: "Alerts", value: notificationUnreadCount, tone: "alert" }
+    ],
+    [activeOrdersCount, conversations.length, notificationUnreadCount, pendingServiceCount, totalUnreadChats]
+  );
+  const notificationPreview = useMemo(() => {
+    return [...notifications]
+      .sort((a, b) => {
+        const aUnread = !a?.read_at && !a?.readAt ? 1 : 0;
+        const bUnread = !b?.read_at && !b?.readAt ? 1 : 0;
+        if (aUnread !== bUnread) return bUnread - aUnread;
+        return new Date(b?.created_at || 0).getTime() - new Date(a?.created_at || 0).getTime();
+      })
+      .slice(0, 4);
+  }, [notifications]);
+  const recentMoments = useMemo(() => {
+    const moments = [
+      ...orders.slice(0, 6).map(order => ({
+        id: `order_${order.id}`,
+        title: `Order #${order.id}`,
+        meta: String(order.status || "Created").replace(/_/g, " "),
+        time: order.created_at || order.createdAt,
+        type: "order"
+      })),
+      ...serviceRequests.slice(0, 6).map(request => ({
+        id: `service_${request.id}`,
+        title: request.issue_type || "Service request",
+        meta: String(request.status || "Open").replace(/_/g, " "),
+        time: request.created_at || request.createdAt,
+        type: "service"
+      })),
+      ...notifications.slice(0, 6).map(item => ({
+        id: `notification_${item.id}`,
+        title: item.event_type || "System notification",
+        meta: item.message || "New update available",
+        time: item.created_at || item.createdAt,
+        type: "notification"
+      }))
+    ];
+
+    return moments
+      .filter(item => item.time)
+      .sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime())
+      .slice(0, 6);
+  }, [notifications, orders, serviceRequests]);
+  const profileCompletion = useMemo(() => {
+    const checks = [
+      Boolean(user?.name),
+      Boolean(user?.phone),
+      Boolean(user?.email),
+      Boolean(profilePhoto),
+      Boolean(userSettings?.payments?.upiId),
+      Boolean(notificationPrefs?.quietHours?.enabled)
+    ];
+    const completed = checks.filter(Boolean).length;
+    return Math.round((completed / checks.length) * 100);
+  }, [notificationPrefs?.quietHours?.enabled, profilePhoto, user?.email, user?.name, user?.phone, userSettings?.payments?.upiId]);
+  const walletHealthLabel = useMemo(() => {
+    const balance = Number(walletSummary?.balance || 0);
+    if (balance >= 1000) return "Healthy balance";
+    if (balance > 0) return "Monitor balance";
+    return "Needs top up";
+  }, [walletSummary?.balance]);
   const homeActions = useMemo(() => {
     const actions = [
       {
@@ -2216,6 +2391,20 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
     setReceiveProfile(receive);
   }
 
+  async function loadUserProfile() {
+    const data = await api("/users/me");
+    const nextProfile = {
+      ...session?.user,
+      ...data,
+      roles: data?.roles || session?.user?.roles || []
+    };
+    setProfile(nextProfile);
+    setProfileDraft({
+      name: nextProfile.name || "",
+      email: nextProfile.email || ""
+    });
+  }
+
   async function transferWalletBalance() {
     const amount = Number(transferForm.amount || 0);
     if (!Number.isFinite(amount) || amount <= 0) {
@@ -2266,6 +2455,38 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
     setUserSettings(mergeSettings(settings));
   }
 
+  async function saveProfileDetails() {
+    const name = String(profileDraft.name || "").trim();
+    const email = String(profileDraft.email || "").trim();
+
+    if (!name) {
+      setError("Name is required.");
+      return;
+    }
+
+    setSavingProfile(true);
+    setError("");
+    try {
+      const saved = await api("/users/me", {
+        method: "PUT",
+        body: JSON.stringify({
+          name,
+          email: email || null
+        })
+      });
+      setProfile(saved);
+      setProfileDraft({
+        name: saved.name || "",
+        email: saved.email || ""
+      });
+      setToast("Profile details updated.");
+    } catch (err) {
+      setError(err.message || "Unable to update profile.");
+    } finally {
+      setSavingProfile(false);
+    }
+  }
+
   async function saveUserSettings() {
     const saved = await api("/users/settings/me", {
       method: "PUT",
@@ -2305,6 +2526,39 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
       channelPriority: saved?.channelPriority || ["PUSH", "IN_APP", "EMAIL", "SMS"]
     });
     setToast("Notification preferences saved.");
+  }
+
+  async function changePasswordAction() {
+    if (!passwordDraft.currentPassword || !passwordDraft.newPassword) {
+      setError("Enter current and new password.");
+      return;
+    }
+    if (passwordDraft.newPassword !== passwordDraft.confirmPassword) {
+      setError("New password and confirm password must match.");
+      return;
+    }
+
+    setChangingPassword(true);
+    setError("");
+    try {
+      const result = await api("/auth/password/change", {
+        method: "POST",
+        body: JSON.stringify({
+          currentPassword: passwordDraft.currentPassword,
+          newPassword: passwordDraft.newPassword
+        })
+      });
+      setPasswordDraft({
+        currentPassword: "",
+        newPassword: "",
+        confirmPassword: ""
+      });
+      setToast(result?.message || "Password updated successfully.");
+    } catch (err) {
+      setError(err.message || "Unable to change password.");
+    } finally {
+      setChangingPassword(false);
+    }
   }
 
   async function sendNotificationTest() {
@@ -2640,6 +2894,7 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
     try {
       const tasks = [
         loadHome(),
+        loadUserProfile(),
         loadConversations(),
         searchShops(),
         loadProviders(),
@@ -2665,7 +2920,7 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
 
   useEffect(() => {
     bootstrap();
-  }, [canAccess.services, canAccess.seller]);
+  }, [canAccess.orders, canAccess.services, canAccess.seller]);
 
   useEffect(() => {
     const raw = localStorage.getItem(seenStoreKey);
@@ -2846,6 +3101,17 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
   }, [tabs, activeTab]);
 
   useEffect(() => {
+    if (typeof window === "undefined") return;
+    const url = new URL(window.location.href);
+    if (activeTab === "home") {
+      url.searchParams.delete("tab");
+    } else {
+      url.searchParams.set("tab", activeTab);
+    }
+    window.history.replaceState({}, "", url.toString());
+  }, [activeTab]);
+
+  useEffect(() => {
     const handleKeydown = event => {
       const key = String(event.key || "").toLowerCase();
       if ((event.ctrlKey || event.metaKey) && key === "k") {
@@ -2976,46 +3242,206 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
   }, [paymentIntent?.intentId, pendingOrderAfterPayment]);
 
   function renderHomeTab() {
+    const orderLinePoints = buildSparklinePoints(ordersSeries.map(item => item.value), 340, 100);
+    const revenueLinePoints = buildSparklinePoints(revenueSeries.map(item => item.value), 340, 100);
+    const maxModuleUsage = Math.max(...dashboardModuleUsage.map(item => item.value), 1);
+    const dashboardCards = [
+      {
+        id: "orders",
+        icon: "cart",
+        label: "Active orders",
+        value: activeOrdersCount,
+        trend: `${ordersSeries.reduce((sum, item) => sum + item.value, 0)} this week`,
+        accent: "blue"
+      },
+      {
+        id: "wallet",
+        icon: "wallet",
+        label: "Revenue today",
+        value: `$${toCurrency(revenueToday)}`,
+        trend: walletHealthLabel,
+        accent: "emerald"
+      },
+      {
+        id: "chat",
+        icon: "chat",
+        label: "Unread chats",
+        value: totalUnreadChats,
+        trend: `${conversations.length} live threads`,
+        accent: "violet"
+      },
+      {
+        id: "alerts",
+        icon: "bell",
+        label: "Unread alerts",
+        value: notificationUnreadCount,
+        trend: slaBreaches ? `${slaBreaches} SLA watch items` : "All stable",
+        accent: "amber"
+      }
+    ];
+
     return (
-      <section className="home-shell">
+      <section className="home-shell dashboard-shell">
+        <article className="dashboard-hero-card">
+          <div className="dashboard-hero-copy">
+            <span className="dashboard-kicker">LifeHub Command Center</span>
+            <h2>Good to see you, {String(user.name || "there").split(" ")[0]}.</h2>
+            <p>
+              Track commerce, services, messages, and operations from one clean workspace with realtime
+              activity and installable access.
+            </p>
+            <div className="dashboard-hero-meta">
+              <span className="dashboard-meta-chip">Profile completion {profileCompletion}%</span>
+              <span className="dashboard-meta-chip">
+                {home?.dashboard?.conversations || conversations.length} conversations connected
+              </span>
+              <span className="dashboard-meta-chip">{walletHealthLabel}</span>
+            </div>
+          </div>
+          <div className="dashboard-hero-actions">
+            {canInstallApp && (
+              <button type="button" className="ghost-btn dashboard-install-btn" onClick={onInstallApp}>
+                Install App
+              </button>
+            )}
+            <button type="button" className="dashboard-primary-btn" onClick={() => setCommandOpen(true)}>
+              Open Command Center
+            </button>
+            <div className="dashboard-hero-glance">
+              <strong>{home?.workflowSnapshots?.length || 0}</strong>
+              <small>workflow snapshots monitored</small>
+            </div>
+          </div>
+        </article>
+
         <div className="home-stat-grid">
-          <div className="stat-card">
-            <div className="stat-icon">📦</div>
-            <div>
-              <strong>{activeOrdersCount}</strong>
-              <small>Active Orders</small>
-            </div>
-          </div>
-          <div className="stat-card">
-            <div className="stat-icon">💰</div>
-            <div>
-              <strong>${toCurrency(revenueToday)}</strong>
-              <small>Revenue Today</small>
-            </div>
-          </div>
-          <div className="stat-card">
-            <div className="stat-icon">💬</div>
-            <div>
-              <strong>{conversations.length}</strong>
-              <small>Active Chats</small>
-            </div>
-          </div>
-          <div className="stat-card">
-            <div className="stat-icon warning">⚠️</div>
-            <div>
-              <strong>{slaBreaches}</strong>
-              <small>SLA Breaches</small>
-            </div>
-          </div>
+          {dashboardCards.map(card => (
+            <article key={card.id} className={`stat-card stat-card-${card.accent}`}>
+              <div className="stat-icon">
+                <UiIcon name={card.icon} />
+              </div>
+              <div>
+                <small>{card.label}</small>
+                <strong>{card.value}</strong>
+              </div>
+              <span className="stat-trend">{card.trend}</span>
+            </article>
+          ))}
         </div>
 
-        <div className="home-main-grid">
-          <article className="panel-card home-quick">
+        <div className="dashboard-analytics-grid">
+          <article className="panel-card dashboard-chart-card">
             <div className="panel-title-row">
-              <h3>Quick Actions</h3>
+              <div>
+                <h3>Order activity</h3>
+                <small>Last 7 days fulfillment momentum</small>
+              </div>
+              <span className="chart-pill">{ordersSeries.reduce((sum, item) => sum + item.value, 0)} orders</span>
+            </div>
+            <svg className="dashboard-line-chart" viewBox="0 0 340 110" preserveAspectRatio="none">
+              <polyline points={orderLinePoints} />
+            </svg>
+            <div className="dashboard-axis-row">
+              {ordersSeries.map(item => (
+                <span key={item.label}>
+                  <strong>{item.value}</strong>
+                  <small>{item.label}</small>
+                </span>
+              ))}
+            </div>
+          </article>
+
+          <article className="panel-card dashboard-chart-card">
+            <div className="panel-title-row">
+              <div>
+                <h3>Revenue trend</h3>
+                <small>Positive wallet inflow for the last week</small>
+              </div>
+              <span className="chart-pill accent">${toCurrency(revenueSeries.reduce((sum, item) => sum + item.value, 0))}</span>
+            </div>
+            <svg className="dashboard-line-chart revenue" viewBox="0 0 340 110" preserveAspectRatio="none">
+              <polyline points={revenueLinePoints} />
+            </svg>
+            <div className="dashboard-axis-row">
+              {revenueSeries.map(item => (
+                <span key={item.label}>
+                  <strong>${toCurrency(item.value)}</strong>
+                  <small>{item.label}</small>
+                </span>
+              ))}
+            </div>
+          </article>
+
+          <article className="panel-card dashboard-usage-card">
+            <div className="panel-title-row">
+              <div>
+                <h3>Workspace usage</h3>
+                <small>Where users are active right now</small>
+              </div>
+            </div>
+            <div className="dashboard-usage-list">
+              {dashboardModuleUsage.map(item => (
+                <div key={item.label} className="dashboard-usage-row">
+                  <div className="dashboard-usage-head">
+                    <span>{item.label}</span>
+                    <strong>{item.value}</strong>
+                  </div>
+                  <div className="dashboard-usage-track">
+                    <span
+                      className={`dashboard-usage-fill ${item.tone}`}
+                      style={{ width: `${Math.max(12, (item.value / maxModuleUsage) * 100)}%` }}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </article>
+
+          <article className="panel-card dashboard-notification-card">
+            <div className="panel-title-row">
+              <div>
+                <h3>Notification preview</h3>
+                <small>Unread items are surfaced first</small>
+              </div>
+              <button type="button" className="ghost-btn" onClick={openNotificationCenter}>
+                Open all
+              </button>
+            </div>
+            <div className="dashboard-notification-list">
+              {notificationPreview.map(item => (
+                <button
+                  key={item.id}
+                  type="button"
+                  className={`dashboard-notification-item ${!item?.read_at && !item?.readAt ? "unread" : ""}`}
+                  onClick={() => {
+                    if (!item?.read_at && !item?.readAt) {
+                      markNotificationsAsRead({ notificationIds: [item.id] }).catch(() => {});
+                    }
+                    setActiveTab("home");
+                  }}
+                >
+                  <span className="dashboard-notification-dot" />
+                  <div>
+                    <strong>{item.event_type || "Update"}</strong>
+                    <small>{formatRelativeTime(item.created_at)}</small>
+                  </div>
+                </button>
+              ))}
+              {!notificationPreview.length && <div className="empty-line">No notifications right now.</div>}
+            </div>
+          </article>
+        </div>
+
+        <div className="home-main-grid dashboard-lower-grid">
+          <article className="panel-card home-quick dashboard-actions-card">
+            <div className="panel-title-row">
+              <div>
+                <h3>Quick Actions</h3>
+                <small>Jump into the workflows you use most</small>
+              </div>
             </div>
             <div className="quick-action-grid">
-              {homeActions.slice(0, 4).map(action => (
+              {homeActions.slice(0, 6).map(action => (
                 <button
                   key={action.id}
                   type="button"
@@ -3034,31 +3460,25 @@ export default function SuperAppPage({ session, onLogout, onRefreshSession }) {
             </div>
           </article>
 
-          <article className="panel-card home-activity">
+          <article className="panel-card home-activity dashboard-recent-card">
             <div className="panel-title-row">
-              <h3>Activity Feed</h3>
+              <div>
+                <h3>Recent Activity</h3>
+                <small>Orders, services, and system events in one timeline</small>
+              </div>
             </div>
-            <div className="activity-feed">
-              {(notifications || []).slice(0, 6).map(item => (
-                <button
-                  key={item.id}
-                  type="button"
-                  className={`activity-item ${!item?.read_at && !item?.readAt ? "unread" : ""}`}
-                  onClick={() => {
-                    if (!item?.read_at && !item?.readAt) {
-                      markNotificationsAsRead({ notificationIds: [item.id] }).catch(() => {});
-                    }
-                  }}
-                >
+            <div className="activity-feed dashboard-recent-feed">
+              {recentMoments.map(item => (
+                <article key={item.id} className={`activity-item dashboard-recent-item ${item.type}`}>
                   <span className="activity-dot" />
                   <div>
-                    <strong>{item.event_type || "New update"}</strong>
-                    <small>{formatClock(item.created_at)}</small>
+                    <strong>{item.title}</strong>
+                    <small>{item.meta}</small>
                   </div>
-                  <span className="activity-arrow">↗</span>
-                </button>
+                  <span className="activity-arrow">{formatRelativeTime(item.time)}</span>
+                </article>
               ))}
-              {!notifications.length && <div className="empty-line">No recent activity.</div>}
+              {!recentMoments.length && <div className="empty-line">No recent activity.</div>}
             </div>
           </article>
         </div>
@@ -5310,35 +5730,143 @@ function renderOpsTab() {
 
   function renderProfileTab() {
     return (
-      <section className="workspace-grid single">
-        <article className="panel-card">
-          <h2>Account and Preferences</h2>
-          <div className="stack-list">
-            <div className="item-card">
-              <div className="profile-head">
-                <div className="profile-avatar-wrap">
-                  {profilePhoto ? (
-                    <img src={profilePhoto} alt="Profile" className="profile-avatar" />
-                  ) : (
-                    <div className="profile-avatar">{String(user.name || "U").slice(0, 1)}</div>
-                  )}
-                </div>
-                <div>
-                  <strong>{user.name}</strong>
-                  <small>Phone: {user.phone}</small>
-                  <small>Email: {user.email || "n/a"}</small>
-                  <small>Roles: {userRoles.join(", ") || "CUSTOMER"}</small>
+      <section className="profile-shell">
+        <div className="profile-top-grid">
+          <article className="panel-card profile-summary-card">
+            <div className="profile-head profile-head-modern">
+              <div className="profile-avatar-wrap large">
+                {profilePhoto ? (
+                  <img src={profilePhoto} alt="Profile" className="profile-avatar" />
+                ) : (
+                  <div className="profile-avatar">{String(user.name || "U").slice(0, 1)}</div>
+                )}
+              </div>
+              <div className="profile-summary-copy">
+                <span className="dashboard-kicker">Profile center</span>
+                <strong>{user.name}</strong>
+                <small>{user.phone}</small>
+                <small>{user.email || "Add your email to complete account setup"}</small>
+                <div className="profile-role-chips">
+                  {(userRoles.length ? userRoles : ["CUSTOMER"]).map(role => (
+                    <span key={role} className="dashboard-meta-chip">{role}</span>
+                  ))}
                 </div>
               </div>
+            </div>
+            <div className="profile-completion-card">
+              <div>
+                <strong>{profileCompletion}% complete</strong>
+                <small>Profile, payment, and notification readiness</small>
+              </div>
+              <div className="profile-progress-track">
+                <span style={{ width: `${profileCompletion}%` }} />
+              </div>
+            </div>
+            <label className="profile-photo-input">
+              <span>Profile photo</span>
+              <input type="file" accept="image/*" onChange={handleProfilePhotoChange} />
+            </label>
+          </article>
+
+          <article className="panel-card profile-editor-card">
+            <div className="panel-title-row">
+              <div>
+                <h3>Personal information</h3>
+                <small>Update identity details used across orders, chats, and wallet receipts.</small>
+              </div>
+            </div>
+            <div className="profile-form-grid">
               <label>
-                Profile Photo
-                <input type="file" accept="image/*" onChange={handleProfilePhotoChange} />
+                Full name
+                <input
+                  value={profileDraft.name}
+                  onChange={event => setProfileDraft(prev => ({ ...prev, name: event.target.value }))}
+                  placeholder="Your name"
+                />
+              </label>
+              <label>
+                Email address
+                <input
+                  type="email"
+                  value={profileDraft.email}
+                  onChange={event => setProfileDraft(prev => ({ ...prev, email: event.target.value }))}
+                  placeholder="you@lifehub.app"
+                />
+              </label>
+              <label>
+                Mobile number
+                <input value={user.phone || ""} readOnly placeholder="Phone number" />
+              </label>
+              <label>
+                Roles
+                <input value={(userRoles.length ? userRoles : ["CUSTOMER"]).join(", ")} readOnly />
               </label>
             </div>
+            <div className="profile-form-actions">
+              <button type="button" onClick={saveProfileDetails} disabled={savingProfile}>
+                {savingProfile ? "Saving..." : "Save personal info"}
+              </button>
+              <button type="button" className="ghost-btn" onClick={loadUserProfile}>
+                Refresh profile
+              </button>
+            </div>
+          </article>
+        </div>
 
-            <div className="item-card">
-              <strong>Payment Settings</strong>
-              <div className="field-row">
+        <div className="profile-settings-grid">
+          <article className="panel-card profile-password-card">
+            <div className="panel-title-row">
+              <div>
+                <h3>Password and access</h3>
+                <small>Change password securely and keep account sessions protected.</small>
+              </div>
+            </div>
+            <div className="profile-form-grid compact">
+              <label>
+                Current password
+                <input
+                  type="password"
+                  value={passwordDraft.currentPassword}
+                  onChange={event => setPasswordDraft(prev => ({ ...prev, currentPassword: event.target.value }))}
+                  placeholder="Current password"
+                />
+              </label>
+              <label>
+                New password
+                <input
+                  type="password"
+                  value={passwordDraft.newPassword}
+                  onChange={event => setPasswordDraft(prev => ({ ...prev, newPassword: event.target.value }))}
+                  placeholder="Minimum 6 characters"
+                />
+              </label>
+              <label>
+                Confirm password
+                <input
+                  type="password"
+                  value={passwordDraft.confirmPassword}
+                  onChange={event => setPasswordDraft(prev => ({ ...prev, confirmPassword: event.target.value }))}
+                  placeholder="Confirm new password"
+                />
+              </label>
+            </div>
+            <div className="profile-form-actions">
+              <button type="button" onClick={changePasswordAction} disabled={changingPassword}>
+                {changingPassword ? "Updating..." : "Change password"}
+              </button>
+            </div>
+          </article>
+
+          <article className="panel-card profile-settings-card">
+            <div className="panel-title-row">
+              <div>
+                <h3>Payments</h3>
+                <small>Wallet top-up preferences and payout identity.</small>
+              </div>
+            </div>
+            <div className="profile-form-grid compact">
+              <label>
+                UPI ID
                 <input
                   value={userSettings.payments?.upiId || ""}
                   onChange={event =>
@@ -5350,10 +5878,11 @@ function renderOpsTab() {
                       }
                     }))
                   }
-                  placeholder="Your UPI ID (example@bank)"
+                  placeholder="example@bank"
                 />
-              </div>
-              <div className="field-row">
+              </label>
+              <label>
+                Auto top-up threshold
                 <input
                   value={userSettings.payments?.autoTopupThreshold || ""}
                   onChange={event =>
@@ -5365,8 +5894,11 @@ function renderOpsTab() {
                       }
                     }))
                   }
-                  placeholder="Auto topup threshold"
+                  placeholder="500"
                 />
+              </label>
+              <label>
+                Auto top-up amount
                 <input
                   value={userSettings.payments?.autoTopupAmount || ""}
                   onChange={event =>
@@ -5378,122 +5910,77 @@ function renderOpsTab() {
                       }
                     }))
                   }
-                  placeholder="Auto topup amount"
+                  placeholder="1000"
                 />
+              </label>
+            </div>
+          </article>
+
+          <article className="panel-card profile-settings-card">
+            <div className="panel-title-row">
+              <div>
+                <h3>Notifications</h3>
+                <small>Control alert channels and trigger a live test.</small>
               </div>
             </div>
+            <div className="profile-toggle-grid">
+              <label><input type="checkbox" checked={Boolean(userSettings.notifications?.inApp)} onChange={event => setUserSettings(prev => ({ ...prev, notifications: { ...(prev.notifications || {}), inApp: event.target.checked } }))} />In-app</label>
+              <label><input type="checkbox" checked={Boolean(userSettings.notifications?.push)} onChange={event => setUserSettings(prev => ({ ...prev, notifications: { ...(prev.notifications || {}), push: event.target.checked } }))} />Push</label>
+              <label><input type="checkbox" checked={Boolean(userSettings.notifications?.sms)} onChange={event => setUserSettings(prev => ({ ...prev, notifications: { ...(prev.notifications || {}), sms: event.target.checked } }))} />SMS</label>
+              <label><input type="checkbox" checked={Boolean(userSettings.notifications?.email)} onChange={event => setUserSettings(prev => ({ ...prev, notifications: { ...(prev.notifications || {}), email: event.target.checked } }))} />Email</label>
+              <label><input type="checkbox" checked={Boolean(userSettings.notifications?.orderAlerts)} onChange={event => setUserSettings(prev => ({ ...prev, notifications: { ...(prev.notifications || {}), orderAlerts: event.target.checked } }))} />Order alerts</label>
+            </div>
+            <div className="profile-form-actions wrap">
+              <button type="button" className="ghost-btn" onClick={requestBrowserPushPermission}>Push: {browserPushPermission}</button>
+              <button type="button" className="ghost-btn" onClick={sendNotificationTest}>Send test notification</button>
+              <button type="button" onClick={saveNotificationPreferences}>Save notification rules</button>
+            </div>
+          </article>
 
-            <div className="item-card">
-              <strong>Notification Channels</strong>
-              <div className="field-row">
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={Boolean(userSettings.notifications?.inApp)}
-                    onChange={event =>
-                      setUserSettings(prev => ({
-                        ...prev,
-                        notifications: {
-                          ...(prev.notifications || {}),
-                          inApp: event.target.checked
-                        }
-                      }))
-                    }
-                  />
-                  In-App
-                </label>
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={Boolean(userSettings.notifications?.push)}
-                    onChange={event =>
-                      setUserSettings(prev => ({
-                        ...prev,
-                        notifications: {
-                          ...(prev.notifications || {}),
-                          push: event.target.checked
-                        }
-                      }))
-                    }
-                  />
-                  Push
-                </label>
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={Boolean(userSettings.notifications?.sms)}
-                    onChange={event =>
-                      setUserSettings(prev => ({
-                        ...prev,
-                        notifications: {
-                          ...(prev.notifications || {}),
-                          sms: event.target.checked
-                        }
-                      }))
-                    }
-                  />
-                  SMS
-                </label>
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={Boolean(userSettings.notifications?.email)}
-                    onChange={event =>
-                      setUserSettings(prev => ({
-                        ...prev,
-                        notifications: {
-                          ...(prev.notifications || {}),
-                          email: event.target.checked
-                        }
-                      }))
-                    }
-                  />
-                  Email
-                </label>
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={Boolean(userSettings.notifications?.orderAlerts)}
-                    onChange={event =>
-                      setUserSettings(prev => ({
-                        ...prev,
-                        notifications: {
-                          ...(prev.notifications || {}),
-                          orderAlerts: event.target.checked
-                        }
-                      }))
-                    }
-                  />
-                  Order Alerts
-                </label>
-              </div>
-              <div className="field-row">
-                <button type="button" onClick={requestBrowserPushPermission}>
-                  Browser Push: {browserPushPermission}
-                </button>
-                <button type="button" onClick={sendNotificationTest}>Send Test Notification</button>
+          <article className="panel-card profile-settings-card">
+            <div className="panel-title-row">
+              <div>
+                <h3>Quiet hours and location</h3>
+                <small>Choose how LifeHub behaves when you are unavailable.</small>
               </div>
             </div>
-
-            <div className="item-card">
-              <strong>Quiet Hours and Location</strong>
-              <div className="field-row">
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={Boolean(notificationPrefs.quietHours?.enabled)}
-                    onChange={event =>
-                      setNotificationPrefs(prev => ({
-                        ...prev,
-                        quietHours: {
-                          ...(prev.quietHours || {}),
-                          enabled: event.target.checked
-                        }
-                      }))
-                    }
-                  />
-                  Quiet Hours
-                </label>
+            <div className="profile-toggle-grid">
+              <label>
+                <input
+                  type="checkbox"
+                  checked={Boolean(notificationPrefs.quietHours?.enabled)}
+                  onChange={event =>
+                    setNotificationPrefs(prev => ({
+                      ...prev,
+                      quietHours: {
+                        ...(prev.quietHours || {}),
+                        enabled: event.target.checked
+                      }
+                    }))
+                  }
+                />
+                Quiet hours
+              </label>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={Boolean(userSettings.location?.shareLiveLocation)}
+                  onChange={event =>
+                    setUserSettings(prev => ({
+                      ...prev,
+                      location: {
+                        ...(prev.location || {}),
+                        shareLiveLocation: event.target.checked
+                      }
+                    }))
+                  }
+                />
+                Share live location
+              </label>
+            </div>
+            <div className="profile-form-grid compact">
+              <label>
+                Quiet hours start
                 <input
                   value={notificationPrefs.quietHours?.startHour ?? 22}
                   onChange={event =>
@@ -5505,8 +5992,11 @@ function renderOpsTab() {
                       }
                     }))
                   }
-                  placeholder="Start hour (0-23)"
+                  placeholder="22"
                 />
+              </label>
+              <label>
+                Quiet hours end
                 <input
                   value={notificationPrefs.quietHours?.endHour ?? 7}
                   onChange={event =>
@@ -5518,26 +6008,11 @@ function renderOpsTab() {
                       }
                     }))
                   }
-                  placeholder="End hour (0-23)"
+                  placeholder="7"
                 />
-              </div>
-              <div className="field-row">
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={Boolean(userSettings.location?.shareLiveLocation)}
-                    onChange={event =>
-                      setUserSettings(prev => ({
-                        ...prev,
-                        location: {
-                          ...(prev.location || {}),
-                          shareLiveLocation: event.target.checked
-                        }
-                      }))
-                    }
-                  />
-                  Share live location
-                </label>
+              </label>
+              <label>
+                Location precision
                 <select
                   value={userSettings.location?.locationPrecision || "precise"}
                   onChange={event =>
@@ -5553,12 +6028,25 @@ function renderOpsTab() {
                   <option value="precise">Precise</option>
                   <option value="approximate">Approximate</option>
                 </select>
+              </label>
+            </div>
+          </article>
+
+          <article className="panel-card profile-settings-card">
+            <div className="panel-title-row">
+              <div>
+                <h3>Privacy and chat</h3>
+                <small>Set visibility, read receipts, and media behavior.</small>
               </div>
             </div>
-
-            <div className="item-card">
-              <strong>Privacy, Security and Chat</strong>
-              <div className="field-row">
+            <div className="profile-toggle-grid">
+              <label><input type="checkbox" checked={Boolean(userSettings.privacy?.readReceipts)} onChange={event => setUserSettings(prev => ({ ...prev, privacy: { ...(prev.privacy || {}), readReceipts: event.target.checked } }))} />Read receipts</label>
+              <label><input type="checkbox" checked={Boolean(userSettings.security?.loginAlerts)} onChange={event => setUserSettings(prev => ({ ...prev, security: { ...(prev.security || {}), loginAlerts: event.target.checked } }))} />Login alerts</label>
+              <label><input type="checkbox" checked={Boolean(userSettings.chat?.enterToSend)} onChange={event => setUserSettings(prev => ({ ...prev, chat: { ...(prev.chat || {}), enterToSend: event.target.checked } }))} />Enter to send</label>
+            </div>
+            <div className="profile-form-grid compact">
+              <label>
+                Last seen visibility
                 <select
                   value={userSettings.privacy?.lastSeenVisibility || "contacts"}
                   onChange={event =>
@@ -5571,60 +6059,13 @@ function renderOpsTab() {
                     }))
                   }
                 >
-                  <option value="everyone">Last seen: Everyone</option>
-                  <option value="contacts">Last seen: Contacts</option>
-                  <option value="nobody">Last seen: Nobody</option>
+                  <option value="everyone">Everyone</option>
+                  <option value="contacts">Contacts</option>
+                  <option value="nobody">Nobody</option>
                 </select>
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={Boolean(userSettings.privacy?.readReceipts)}
-                    onChange={event =>
-                      setUserSettings(prev => ({
-                        ...prev,
-                        privacy: {
-                          ...(prev.privacy || {}),
-                          readReceipts: event.target.checked
-                        }
-                      }))
-                    }
-                  />
-                  Read receipts
-                </label>
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={Boolean(userSettings.security?.loginAlerts)}
-                    onChange={event =>
-                      setUserSettings(prev => ({
-                        ...prev,
-                        security: {
-                          ...(prev.security || {}),
-                          loginAlerts: event.target.checked
-                        }
-                      }))
-                    }
-                  />
-                  Login alerts
-                </label>
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={Boolean(userSettings.chat?.enterToSend)}
-                    onChange={event =>
-                      setUserSettings(prev => ({
-                        ...prev,
-                        chat: {
-                          ...(prev.chat || {}),
-                          enterToSend: event.target.checked
-                        }
-                      }))
-                    }
-                  />
-                  Enter to send
-                </label>
-              </div>
-              <div className="field-row">
+              </label>
+              <label>
+                Default call type
                 <select
                   value={userSettings.chat?.defaultCallType || "video"}
                   onChange={event =>
@@ -5637,9 +6078,12 @@ function renderOpsTab() {
                     }))
                   }
                 >
-                  <option value="video">Default call: Video</option>
-                  <option value="audio">Default call: Audio</option>
+                  <option value="video">Video</option>
+                  <option value="audio">Audio</option>
                 </select>
+              </label>
+              <label>
+                Auto-download media
                 <select
                   value={userSettings.chat?.autoDownloadMedia || "wifi"}
                   onChange={event =>
@@ -5652,10 +6096,13 @@ function renderOpsTab() {
                     }))
                   }
                 >
-                  <option value="always">Auto-download: Always</option>
-                  <option value="wifi">Auto-download: Wifi only</option>
-                  <option value="never">Auto-download: Never</option>
+                  <option value="always">Always</option>
+                  <option value="wifi">Wifi only</option>
+                  <option value="never">Never</option>
                 </select>
+              </label>
+              <label>
+                Session timeout (minutes)
                 <input
                   value={userSettings.security?.sessionTimeoutMinutes || 120}
                   onChange={event =>
@@ -5667,20 +6114,17 @@ function renderOpsTab() {
                       }
                     }))
                   }
-                  placeholder="Session timeout minutes"
+                  placeholder="120"
                 />
-              </div>
+              </label>
             </div>
+          </article>
+        </div>
 
-            <div className="field-row">
-              <button type="button" onClick={saveUserSettings}>Save Profile Settings</button>
-              <button type="button" onClick={saveNotificationPreferences}>Save Notification Rules</button>
-              <button type="button" className="danger" onClick={onLogout}>
-                Logout
-              </button>
-            </div>
-          </div>
-        </article>
+        <div className="profile-footer-actions">
+          <button type="button" onClick={saveUserSettings}>Save preferences</button>
+          <button type="button" className="danger" onClick={onLogout}>Logout</button>
+        </div>
       </section>
     );
   }
@@ -5819,14 +6263,25 @@ function renderOpsTab() {
             <span className="topbar-hotkey">⌘ K</span>
           </div>
           <div className="topbar-actions">
+            {canInstallApp && (
+              <button type="button" className="ghost-btn topbar-install-btn" onClick={onInstallApp}>
+                Install
+              </button>
+            )}
             <button type="button" className="icon-btn badge-btn" onClick={openNotificationCenter}>
               <UiIcon name="bell" />
               {notificationUnreadCount > 0 && (
                 <span className="mini-badge">{notificationUnreadCount > 99 ? "99+" : notificationUnreadCount}</span>
               )}
             </button>
-            <div className="topbar-avatar">
-              {String(user.name || "A").slice(0, 1)}
+            <div className="topbar-profile-pill">
+              <div className="topbar-avatar">
+                {String(user.name || "A").slice(0, 1)}
+              </div>
+              <div className="topbar-profile-copy">
+                <strong>{String(user.name || "Account").split(" ")[0]}</strong>
+                <small>{appInstalled ? "App ready" : "Web workspace"}</small>
+              </div>
             </div>
           </div>
         </header>

@@ -23,7 +23,7 @@ const ROLE_OPTIONS = [
   { value: "business", label: "Business Partner" }
 ];
 
-export default function AuthPage({ onAuthSuccess }) {
+export default function AuthPage({ onAuthSuccess, canInstallApp, onInstallApp, appInstalled }) {
   const [mode, setMode] = useState("login");
   const [loginMethod, setLoginMethod] = useState("password");
   const [loading, setLoading] = useState(false);
@@ -230,6 +230,7 @@ export default function AuthPage({ onAuthSuccess }) {
   return (
     <div className="auth-shell auth-shell-modern">
       <div className="auth-hero auth-hero-modern">
+        <span className="auth-eyebrow">Unified Super App</span>
         <div className="auth-brand">
           <img src="/lh-logo.svg" alt="LifeHub logo" />
           <h1>LifeHub</h1>
@@ -237,6 +238,18 @@ export default function AuthPage({ onAuthSuccess }) {
         <p>
           Marketplace, services, chat, secure wallet, and realtime operations in one software.
         </p>
+        <div className="auth-hero-actions">
+          {canInstallApp ? (
+            <button type="button" className="auth-install-btn" onClick={onInstallApp}>
+              Install LifeHub
+            </button>
+          ) : (
+            <span className="auth-install-state">
+              {appInstalled ? "Installed on this device" : "Works beautifully on mobile and desktop"}
+            </span>
+          )}
+          <span className="auth-security-note">OTP-secured onboarding and verified sessions</span>
+        </div>
         <div className="auth-pill-row">
           <span className="auth-pill">Verified Signup OTP</span>
           <span className="auth-pill">Secure Password Reset</span>
@@ -256,9 +269,26 @@ export default function AuthPage({ onAuthSuccess }) {
             <small>Designed for easy touch usage</small>
           </div>
         </div>
+        <div className="auth-feature-list">
+          <div className="auth-feature-item">
+            <strong>Operations Dashboard</strong>
+            <small>Track orders, chats, wallet flow, and alerts from one space.</small>
+          </div>
+          <div className="auth-feature-item">
+            <strong>Installable Experience</strong>
+            <small>Add LifeHub to home screen and keep the workflow one tap away.</small>
+          </div>
+        </div>
       </div>
 
       <div className="auth-card auth-card-modern">
+        <div className="auth-card-header">
+          <div>
+            <span className="auth-card-kicker">Secure access</span>
+            <h2>{title}</h2>
+          </div>
+          <div className="auth-card-badge">{mode === "login" ? "Live access" : "Protected flow"}</div>
+        </div>
         <div className="auth-tabs auth-tabs-modern">
           <button
             type="button"
@@ -283,7 +313,6 @@ export default function AuthPage({ onAuthSuccess }) {
           </button>
         </div>
 
-        <h2>{title}</h2>
         {!!error && <div className="auth-error">{error}</div>}
         {!!status && <div className="auth-success">{status}</div>}
 
