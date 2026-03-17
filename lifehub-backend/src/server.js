@@ -78,8 +78,26 @@ const app = express();
 const server = http.createServer(app);
 const localMediaRoot = path.resolve(process.cwd(), "storage");
 
-// Respect forwarded protocol/host headers in hosted deployments.
-app.set("trust proxy", true);
+function resolveTrustProxySetting() {
+  const raw = String(process.env.TRUST_PROXY || process.env.TRUST_PROXY_HOPS || "").trim();
+  if (!raw) {
+    return process.env.NODE_ENV === "production" ? 1 : false;
+  }
+
+  const lower = raw.toLowerCase();
+  if (lower === "false" || lower === "0" || lower === "off") return false;
+  if (lower === "true") return 1;
+
+  const hops = Number(raw);
+  if (Number.isFinite(hops) && hops >= 0) {
+    return hops;
+  }
+
+  return 1;
+}
+
+// Use a bounded trust-proxy value so IP-based rate limiting stays safe behind Render.
+app.set("trust proxy", resolveTrustProxySetting());
 
 function resolveLocalMediaPath(rawKey = "") {
   const key = String(rawKey || "")
