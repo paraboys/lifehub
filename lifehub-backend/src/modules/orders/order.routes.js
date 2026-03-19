@@ -9,7 +9,8 @@ import {
   cancelOrder,
   startDelivery,
   issueDeliveryOtp,
-  confirmDelivery
+  confirmDelivery,
+  generateInvoice
 } from "./order.controller.js";
 
 const router = Router();
@@ -21,5 +22,6 @@ router.post("/:orderId/cancel", authenticate, authorize("CUSTOMER", "ADMIN"), ab
 router.post("/:orderId/delivery/start", authenticate, authorize("SHOPKEEPER", "DELIVERY", "ADMIN", "BUSINESS"), abuseGuard("orders"), startDelivery);
 router.post("/:orderId/delivery/otp", authenticate, authorize("SHOPKEEPER", "DELIVERY", "ADMIN", "BUSINESS"), abuseGuard("orders"), issueDeliveryOtp);
 router.post("/:orderId/delivery/confirm", authenticate, authorize("CUSTOMER", "ADMIN"), abuseGuard("orders"), confirmDelivery);
+router.post("/:orderId/invoice", authenticate, authorize("CUSTOMER", "SHOPKEEPER", "PROVIDER", "ADMIN"), abuseGuard("orders"), generateInvoice);
 
 export default router;

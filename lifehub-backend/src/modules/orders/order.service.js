@@ -229,9 +229,11 @@ function normalizeDeliveryDetails(input = {}, fallbackUser = {}) {
 export async function createOrder({
   userId,
   shopId,
+  providerId,
   total,
   items = [],
   deliveryDetails = {},
+  paymentMethod = "wallet",
   idempotencyKey
 }) {
   const scope = `orders:create:${userId}`;
@@ -248,9 +250,10 @@ export async function createOrder({
     }
   }
 
-  const parsedShopId = toBigInt(shopId);
-  if (!shopId) {
-    throw new Error("shopId is required");
+  const parsedShopId = shopId ? toBigInt(shopId) : null;
+  const parsedProviderId = providerId ? toBigInt(providerId) : null;
+  if (!shopId && !providerId) {
+    throw new Error("shopId or providerId is required");
   }
   const customer = await prisma.users.findUnique({
     where: { id: toBigInt(userId) },
@@ -332,16 +335,28 @@ export async function createOrder({
       }
     }
 
-    const finalTotal = Number(total || computedTotal || 0);
-    if (!Number.isFinite(finalTotal) || finalTotal <= 0) {
+    const finalItemPrice = computedTotal > 0 ? computedTotal : Number(total || 0);
+    if (!Number.isFinite(finalItemPrice) || finalItemPrice <= 0) {
       throw new Error("Order total must be a positive number");
     }
+
+    const taxRate = 0.05; // 5% GST
+    const platformFeeRate = 0.02; // 2% fee
+    const computedTax = Number((finalItemPrice * taxRate).toFixed(2));
+    const computedPlatformFee = Number((finalItemPrice * platformFeeRate).toFixed(2));
+    const finalTotal = finalItemPrice + computedTax + computedPlatformFee;
 
     const createdOrder = await tx.orders.create({
       data: {
         user_id: toBigInt(userId),
         shop_id: parsedShopId,
+        provider_id: parsedProviderId,
+        item_price: finalItemPrice,
+        tax: computedTax,
+        platform_fee: computedPlatformFee,
         total: finalTotal,
+        payment_method: paymentMethod,
+        payment_status: paymentMethod === 'wallet' ? 'PAID' : 'PENDING',
         status: "CREATED",
         order_delivery_details: {
           create: {
@@ -372,12 +387,14 @@ export async function createOrder({
       });
     }
 
-    await reserveFundsForOrder({
-      userId,
-      orderId: createdOrder.id,
-      amount: createdOrder.total,
-      tx
-    });
+    if (paymentMethod === 'wallet') {
+      await reserveFundsForOrder({
+        userId,
+        orderId: createdOrder.id,
+        amount: createdOrder.total,
+        tx
+      });
+    }
 
     return createdOrder;
   });
@@ -404,23 +421,44 @@ export async function createOrder({
 
 export async function listOrders({ userId, roles = [], limit = 20, status }) {
   const normalized = roles.map(role => String(role).toUpperCase());
-  const where = {
-    ...(status ? { status } : {})
-  };
+  let where = {};
+  
+  if (status && status !== 'ALL') {
+    if (status === 'ACTIVE') {
+      where.status = { notIn: ['COMPLETED', 'CANCELLED', 'DELIVERED'] };
+    } else {
+      where.status = status.toUpperCase();
+    }
+  }
+
   if (normalized.includes("ADMIN") || normalized.includes("BUSINESS")) {
     // all orders
   } else if (normalized.includes("SHOPKEEPER")) {
     where.shop_profiles = {
       user_id: toBigInt(userId)
     };
+  } else if (normalized.includes("PROVIDER")) {
+    where.provider_profiles = {
+      user_id: toBigInt(userId)
+    };
   } else {
-    where.user_id = toBigInt(userId);
+    where.OR = [
+      { user_id: toBigInt(userId) },
+      { shop_profiles: { user_id: toBigInt(userId) } },
+      { provider_profiles: { user_id: toBigInt(userId) } }
+    ];
   }
 
   return prisma.orders.findMany({
     where,
     include: {
-      order_delivery_details: true
+      order_delivery_details: true,
+      shop_profiles: true,
+      provider_profiles: true,
+      invoices: true,
+      order_items: {
+        include: { products: true }
+      }
     },
     orderBy: { created_at: "desc" },
     take: Math.min(Math.max(Number(limit) || 20, 1), 100)
@@ -796,4 +834,31 @@ async function ensureCancellationTransition(instance) {
   }
 
   return cancelState;
+}
+
+export async function generateInvoice(orderId) {
+  const parsedId = toBigInt(orderId);
+  const order = await prisma.orders.findUnique({
+    where: { id: parsedId },
+    include: { invoices: true }
+  });
+
+  if (!order) throw new Error("Order not found");
+  if (order.invoices) return order.invoices;
+
+  const invoiceNumber = `INV-${Date.now()}-${String(order.id)}`;
+  
+  const created = await prisma.invoices.create({
+    data: {
+      order_id: order.id,
+      invoice_number: invoiceNumber
+    }
+  });
+
+  eventBus.emit("INVOICE.GENERATED", {
+    orderId: String(order.id),
+    invoiceId: String(created.id)
+  });
+
+  return created;
 }

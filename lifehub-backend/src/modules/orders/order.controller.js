@@ -99,3 +99,12 @@ export async function confirmDelivery(req, res) {
     res.status(400).json({ error: err.message });
   }
 }
+
+export async function generateInvoice(req, res) {
+  try {
+    const invoice = await orderService.generateInvoice(req.params.orderId);
+    res.json(jsonSafe(invoice));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+}
