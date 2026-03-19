@@ -8672,3 +8672,563 @@ body[data-lifehub-theme="dark"] .timeline-row {
     grid-template-columns: 1fr;
   }
 }
+
+/* ============================================================
+   LifeHub Premium UI Upgrade v2 — Final Polish Pass
+   Appended layer: elevates all key visual elements
+   ============================================================ */
+
+/* Global font smoothing & rendering */
+*, *::before, *::after {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ─── Extra micro-animation keyframes ─── */
+@keyframes fadeUpIn {
+  from { opacity: 0; transform: translateY(14px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes pulseDot {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.5); }
+  50%       { box-shadow: 0 0 0 5px rgba(16, 185, 129, 0); }
+}
+
+@keyframes shimmerSlide {
+  from { background-position: -200% center; }
+  to   { background-position: 200% center; }
+}
+
+@keyframes popIn {
+  0%   { transform: scale(0.8); opacity: 0; }
+  60%  { transform: scale(1.06); }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+/* ─── Page intro — staggered fade-up ─── */
+.page-intro {
+  animation: fadeUpIn 380ms cubic-bezier(0.22, 0.9, 0.36, 1) both;
+}
+
+/* ─── Sidebar v5 — premium active state with left-border accent ─── */
+.sidebar-v5 .sidebar-link {
+  position: relative;
+  border-left: 2px solid transparent;
+  transition: background 180ms ease, border-color 180ms ease, color 180ms ease, transform 140ms ease;
+}
+
+.sidebar-v5 .sidebar-link:hover {
+  background: rgba(255, 255, 255, 0.07);
+  transform: translateX(2px);
+}
+
+.sidebar-v5 .sidebar-link.active {
+  background: linear-gradient(135deg, rgba(34, 211, 238, 0.16), rgba(14, 165, 233, 0.08));
+  border-left-color: #22d3ee;
+  color: #e0f7ff;
+}
+
+.sidebar-v5 .sidebar-link.active .ui-icon {
+  color: #22d3ee;
+  filter: drop-shadow(0 0 4px rgba(34, 211, 238, 0.5));
+}
+
+/* sidebar group title caps */
+.sidebar-group-title {
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  color: rgba(148, 163, 184, 0.7);
+  margin-bottom: 2px;
+}
+
+/* brand mark shine */
+.sidebar-brand {
+  position: relative;
+}
+.sidebar-v5 .brand-mark {
+  background: linear-gradient(135deg, #06b6d4, #0ea5e9 50%, #22d3ee);
+  box-shadow: 0 6px 18px rgba(6, 182, 212, 0.45);
+  border-radius: 14px;
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  font-weight: 800;
+  color: #fff;
+  font-size: 18px;
+}
+
+/* ─── Topbar v5 — subtle border glow on search focus ─── */
+.topbar-v5 {
+  backdrop-filter: blur(20px) saturate(1.4);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+  box-shadow: 0 2px 18px rgba(15, 23, 42, 0.06);
+}
+
+.topbar-search {
+  transition: box-shadow 200ms ease, border-color 200ms ease;
+}
+
+.topbar-search:focus-within {
+  border-color: rgba(14, 165, 233, 0.45);
+  box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.12), inset 0 1px 0 rgba(255,255,255,0.9);
+}
+
+.topbar-avatar {
+  background: linear-gradient(135deg, #06b6d4, #0ea5e9);
+  box-shadow: 0 4px 12px rgba(6, 182, 212, 0.4);
+  font-size: 15px;
+  font-weight: 800;
+}
+
+/* icon-btn premium hover */
+.icon-btn {
+  transition: background 160ms ease, transform 120ms ease, box-shadow 160ms ease;
+}
+
+.icon-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 16px rgba(15, 23, 42, 0.12);
+}
+
+/* ─── Auth hero — entry animation + glow orbs ─── */
+.auth-hero-modern {
+  animation: fadeUpIn 420ms cubic-bezier(0.22, 0.9, 0.36, 1) both;
+}
+
+.auth-card-modern {
+  animation: fadeUpIn 500ms cubic-bezier(0.22, 0.9, 0.36, 1) 80ms both;
+  border: 1px solid rgba(14, 165, 233, 0.18);
+  box-shadow: 0 28px 60px rgba(15, 23, 42, 0.12), 0 0 0 1px rgba(255,255,255,0.6) inset;
+}
+
+.auth-feature-item {
+  transition: background 160ms ease, transform 160ms ease;
+  cursor: default;
+}
+
+.auth-feature-item:hover {
+  background: rgba(255, 255, 255, 0.18);
+  transform: translateX(4px);
+}
+
+/* auth submit button — gradient + lift */
+.auth-form-modern button[type="submit"],
+.auth-form-modern button:not(.auth-secondary-btn) {
+  background: linear-gradient(125deg, #0ea5e9, #0284c7 60%, #0369a1);
+  box-shadow: 0 16px 30px rgba(14, 165, 233, 0.35);
+  transition: transform 160ms ease, box-shadow 160ms ease, filter 160ms ease;
+}
+
+.auth-form-modern button[type="submit"]:hover,
+.auth-form-modern button:not(.auth-secondary-btn):hover {
+  transform: translateY(-2px);
+  box-shadow: 0 22px 38px rgba(14, 165, 233, 0.45);
+  filter: brightness(1.06);
+}
+
+/* ─── Dashboard hero card — richer gradient ─── */
+.dashboard-hero-card {
+  background:
+    radial-gradient(circle at 78% 18%, rgba(34, 211, 238, 0.24), transparent 32%),
+    radial-gradient(circle at 12% 80%, rgba(14, 165, 233, 0.18), transparent 38%),
+    linear-gradient(135deg, #0b1429, #0f2040 55%, #122d50);
+  box-shadow: 0 28px 64px rgba(11, 20, 41, 0.28);
+}
+
+/* glance card inside hero */
+.dashboard-hero-glance {
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  backdrop-filter: blur(8px);
+}
+
+/* ─── Stat cards — colored icons + lift animation ─── */
+.stat-card {
+  transition: transform 180ms cubic-bezier(0.22, 0.9, 0.36, 1), box-shadow 180ms ease, border-color 180ms ease;
+  animation: fadeUpIn 300ms ease both;
+}
+
+.stat-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 24px 48px rgba(15, 23, 42, 0.12);
+  border-color: rgba(14, 165, 233, 0.28);
+}
+
+.stat-icon {
+  transition: box-shadow 180ms ease;
+}
+
+.stat-card:hover .stat-icon {
+  box-shadow: 0 6px 18px rgba(14, 165, 233, 0.25);
+}
+
+/* Staggered animation for stat grid */
+.home-stat-grid > *:nth-child(1) { animation-delay: 0ms; }
+.home-stat-grid > *:nth-child(2) { animation-delay: 60ms; }
+.home-stat-grid > *:nth-child(3) { animation-delay: 120ms; }
+.home-stat-grid > *:nth-child(4) { animation-delay: 180ms; }
+
+/* ─── Activity feed — pulse dot + row lift ─── */
+.activity-dot {
+  animation: pulseDot 2.2s ease-in-out infinite;
+}
+
+.activity-item {
+  transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease;
+}
+
+.activity-item:hover {
+  transform: translateX(3px);
+  border-color: rgba(14, 165, 233, 0.32);
+}
+
+/* ─── Quick action cards — icon color-coded ─── */
+.quick-action-card {
+  transition: transform 160ms cubic-bezier(0.22, 0.9, 0.36, 1), box-shadow 160ms ease, border-color 160ms ease;
+}
+
+.quick-action-card:hover {
+  transform: translateY(-3px) scale(1.01);
+  box-shadow: 0 22px 44px rgba(15, 23, 42, 0.14);
+}
+
+/* ─── Market product cards — stronger hover ─── */
+.market-product-card,
+.market-top-card,
+.market-result-card {
+  transition: transform 200ms cubic-bezier(0.22, 0.9, 0.36, 1), box-shadow 200ms ease, border-color 200ms ease;
+}
+
+.market-product-card:hover,
+.market-top-card:hover,
+.market-result-card:hover {
+  transform: translateY(-4px) scale(1.01);
+  box-shadow: 0 28px 56px rgba(15, 23, 42, 0.16);
+  border-color: rgba(14, 165, 233, 0.32);
+}
+
+.market-product-thumb,
+.market-result-thumb {
+  transition: transform 300ms ease;
+}
+
+.market-product-card:hover .market-product-thumb,
+.market-top-card:hover .market-result-thumb {
+  transform: scale(1.04);
+}
+
+/* product rating stars highlight */
+.market-rating-row span {
+  color: #f59e0b;
+  letter-spacing: 0.04em;
+  text-shadow: 0 2px 6px rgba(245, 158, 11, 0.35);
+}
+
+/* ─── Wallet balance card — vibrant premium look ─── */
+.wallet-balance-card {
+  background:
+    radial-gradient(circle at 85% 20%, rgba(14, 165, 233, 0.18), transparent 40%),
+    radial-gradient(circle at 10% 80%, rgba(6, 182, 212, 0.12), transparent 36%),
+    linear-gradient(145deg, #f0f9ff, #e0f4fe);
+  border: 1px solid rgba(14, 165, 233, 0.2);
+  box-shadow: 0 22px 44px rgba(14, 165, 233, 0.14);
+}
+
+.wallet-balance-meta strong {
+  background: linear-gradient(135deg, #0369a1, #0ea5e9);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  font-size: clamp(30px, 3.2vw, 38px);
+}
+
+.wallet-action.primary {
+  background: linear-gradient(125deg, #0ea5e9, #0284c7);
+  box-shadow: 0 12px 24px rgba(14, 165, 233, 0.35);
+  transition: transform 160ms ease, box-shadow 160ms ease;
+}
+
+.wallet-action.primary:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 18px 32px rgba(14, 165, 233, 0.45);
+}
+
+.wallet-transaction-row {
+  transition: background 140ms ease;
+}
+
+.wallet-transaction-row:hover {
+  background: #f8fbff;
+}
+
+/* ─── Seller stats — icon accent + lift ─── */
+.seller-stat-card {
+  transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.seller-stat-card::before {
+  content: "";
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 3px;
+  background: linear-gradient(90deg, #0ea5e9, #06b6d4);
+  border-radius: 999px 999px 0 0;
+}
+
+.seller-stat-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 20px 38px rgba(15, 23, 42, 0.1);
+  border-color: rgba(14, 165, 233, 0.24);
+}
+
+.seller-table-row {
+  transition: background 140ms ease, border-color 140ms ease;
+}
+
+.seller-table-row:not(.seller-table-header):hover {
+  background: #f0f9ff;
+  border-color: rgba(14, 165, 233, 0.2);
+}
+
+.seller-status {
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+/* ─── Settings menu cards — diverse icon colors ─── */
+.settings-menu-card {
+  transition: transform 180ms cubic-bezier(0.22, 0.9, 0.36, 1), box-shadow 180ms ease, border-color 180ms ease;
+  box-shadow: 0 14px 32px rgba(15, 23, 42, 0.07);
+}
+
+.settings-menu-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 24px 48px rgba(15, 23, 42, 0.12);
+  border-color: rgba(14, 165, 233, 0.24);
+}
+
+.settings-menu-card:hover .settings-menu-arrow {
+  transform: translateX(4px);
+}
+
+.settings-menu-arrow {
+  transition: transform 180ms ease;
+}
+
+/* ─── Chat — online indicator pulse + list item hover ─── */
+.online-dot {
+  animation: pulseDot 2s ease-in-out infinite;
+}
+
+.whatsapp-list-item {
+  transition: background 160ms ease, border-color 160ms ease, transform 140ms ease;
+}
+
+.whatsapp-list-item:hover {
+  background: rgba(14, 165, 233, 0.07);
+  transform: translateX(2px);
+}
+
+/* composer input focus ring */
+.whatsapp-composer input:focus,
+.composer input:focus {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(14, 165, 233, 0.2);
+}
+
+/* message bubble — subtle entry animation */
+.message-bubble {
+  animation: fadeUpIn 280ms cubic-bezier(0.22, 0.9, 0.36, 1) both;
+}
+
+.message-bubble.mine {
+  background: linear-gradient(135deg, #0ea5e9, #0284c7);
+  box-shadow: 0 10px 22px rgba(14, 165, 233, 0.3);
+}
+
+/* ─── Module launch cards — hover lift ─── */
+.module-launch-card.interactive {
+  transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease, background 160ms ease;
+}
+
+.module-launch-card.interactive:hover {
+  transform: translateY(-2px) scale(1.005);
+}
+
+/* ─── Mini badge pop animation ─── */
+.mini-badge {
+  animation: popIn 300ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+/* ─── Command center — module card micro ─── */
+.command-module-card {
+  transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease, background 160ms ease;
+}
+
+.command-module-card:hover {
+  transform: translateY(-2px);
+  background: rgba(14, 165, 233, 0.12);
+  border-color: rgba(125, 211, 252, 0.35);
+  box-shadow: 0 18px 32px rgba(2, 8, 23, 0.32);
+}
+
+.command-item {
+  transition: transform 140ms ease, background 140ms ease, border-color 140ms ease;
+}
+
+.command-item:hover {
+  transform: translateX(3px);
+  background: rgba(14, 165, 233, 0.09);
+  border-color: rgba(125, 211, 252, 0.3);
+}
+
+/* ─── Panel card — enter animation ─── */
+.panel-card,
+.context-card {
+  animation: liftIn 300ms cubic-bezier(0.22, 0.9, 0.36, 1) both;
+}
+
+/* ─── Module item sidebar — animated active left accent ─── */
+.module-item.active {
+  border-left: 3px solid rgba(31, 107, 255, 0.7);
+  background: linear-gradient(120deg, rgba(31, 107, 255, 0.12), rgba(34, 195, 166, 0.1));
+}
+
+/* ─── Global primary button — gradient + transform ─── */
+.superapp-shell-v5 button:not(.icon-btn):not(.ghost-btn):not(.btn-secondary):not(.sidebar-link):not(.nav-toggle):not(.sidebar-collapse-btn):not([class*="chip"]):not([class*="tab"]):not([class*="filter"]):not([class*="market-nav"]):not([class*="market-department"]) {
+  transition: transform 160ms ease, box-shadow 160ms ease, filter 160ms ease;
+}
+
+.superapp-shell-v5 button:not(.icon-btn):not(.ghost-btn):not(.btn-secondary):not(.sidebar-link):not(.nav-toggle):not(.sidebar-collapse-btn):hover {
+  transform: translateY(-1px);
+  filter: brightness(1.06);
+  box-shadow: 0 12px 22px rgba(0, 0, 0, 0.2);
+}
+
+/* ─── Ghost btn — cleaner look ─── */
+.superapp-shell-v5 .ghost-btn {
+  transition: background 160ms ease, border-color 160ms ease, transform 120ms ease;
+}
+
+.superapp-shell-v5 .ghost-btn:hover {
+  transform: translateY(-1px);
+  background: #eaf4fd;
+  border-color: rgba(14, 165, 233, 0.3);
+  color: #0284c7;
+}
+
+/* ─── Category / filter chips — pop on active ─── */
+.category-chip.active,
+.market-department-chip.active,
+.service-skill-chip.active,
+.market-head-actions button.active {
+  box-shadow: 0 8px 18px rgba(14, 165, 233, 0.28);
+}
+
+/* ─── Scroll bar — slim branded ─── */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.4);
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(14, 165, 233, 0.5);
+}
+
+/* ─── Dark mode premium overrides ─── */
+body[data-lifehub-theme="dark"] .wallet-balance-card {
+  background:
+    radial-gradient(circle at 82% 18%, rgba(14, 165, 233, 0.22), transparent 38%),
+    linear-gradient(145deg, #0b1829, #0c2038);
+  border-color: rgba(14, 165, 233, 0.22);
+  box-shadow: 0 24px 50px rgba(2, 8, 23, 0.38);
+}
+
+body[data-lifehub-theme="dark"] .wallet-balance-meta strong {
+  background: linear-gradient(135deg, #38bdf8, #7dd3fc);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+body[data-lifehub-theme="dark"] .dashboard-hero-card {
+  background:
+    radial-gradient(circle at 76% 16%, rgba(34, 211, 238, 0.2), transparent 30%),
+    radial-gradient(circle at 12% 82%, rgba(14, 165, 233, 0.14), transparent 36%),
+    linear-gradient(135deg, #020c1b, #071428 55%, #081c3a);
+}
+
+body[data-lifehub-theme="dark"] .stat-card:hover {
+  border-color: rgba(34, 211, 238, 0.3);
+}
+
+body[data-lifehub-theme="dark"] .seller-stat-card::before {
+  background: linear-gradient(90deg, #06b6d4, #22d3ee);
+}
+
+body[data-lifehub-theme="dark"] .settings-menu-card {
+  background: linear-gradient(180deg, rgba(12, 20, 33, 0.98), rgba(9, 16, 28, 0.96));
+  border-color: rgba(148, 163, 184, 0.14);
+}
+
+body[data-lifehub-theme="dark"] .activity-item:hover {
+  border-color: rgba(34, 211, 238, 0.3);
+  background: rgba(14, 165, 233, 0.06);
+}
+
+body[data-lifehub-theme="dark"] .whatsapp-list-item:hover {
+  background: rgba(34, 211, 238, 0.07);
+}
+
+body[data-lifehub-theme="dark"] .topbar-search:focus-within {
+  border-color: rgba(34, 211, 238, 0.4);
+  box-shadow: 0 0 0 3px rgba(34, 211, 238, 0.1);
+}
+
+body[data-lifehub-theme="dark"] .topbar-v5 {
+  background: rgba(8, 17, 29, 0.9);
+  border-bottom-color: rgba(148, 163, 184, 0.1);
+}
+
+body[data-lifehub-theme="dark"] .auth-card-modern {
+  background: linear-gradient(165deg, rgba(10, 18, 32, 0.96), rgba(14, 25, 42, 0.96));
+  border-color: rgba(34, 211, 238, 0.2);
+  box-shadow: 0 32px 64px rgba(2, 8, 23, 0.4);
+}
+
+body[data-lifehub-theme="dark"] .auth-form-modern button[type="submit"],
+body[data-lifehub-theme="dark"] .auth-form-modern button:not(.auth-secondary-btn) {
+  background: linear-gradient(125deg, #0ea5e9, #06b6d4 60%, #0284c7);
+  box-shadow: 0 16px 30px rgba(6, 182, 212, 0.4);
+}
+
+/* ─── Reduce motion respect ─── */
+@media (prefers-reduced-motion: reduce) {
+  .message-bubble,
+  .page-intro,
+  .auth-hero-modern,
+  .auth-card-modern,
+  .stat-card,
+  .panel-card,
+  .context-card {
+    animation: none !important;
+  }
+
+  .activity-dot,
+  .online-dot {
+    animation: none !important;
+  }
+}
