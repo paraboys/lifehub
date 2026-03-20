@@ -12,9 +12,15 @@ export async function createOrder(req, res) {
       deliveryDetails: req.body.deliveryDetails || {},
       idempotencyKey
     });
-    res.status(201).json(jsonSafe(payload));
+
+    if (!res.headersSent) {
+      return res.status(201).json(jsonSafe(payload));
+    }
   } catch (err) {
-    res.status(400).json({ error: err.message });
+    if (!res.headersSent) {
+      return res.status(400).json({ error: err.message });
+    }
+    console.error("Order creation failed after headers sent", err);
   }
 }
 
@@ -103,8 +109,12 @@ export async function confirmDelivery(req, res) {
 export async function generateInvoice(req, res) {
   try {
     const invoice = await orderService.generateInvoice(req.params.orderId);
-    res.json(jsonSafe(invoice));
+    if (!res.headersSent) {
+      return res.json(jsonSafe(invoice));
+    }
   } catch (err) {
-    res.status(400).json({ error: err.message });
+    if (!res.headersSent) {
+      return res.status(400).json({ error: err.message });
+    }
   }
 }

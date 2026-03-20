@@ -1,4 +1,5 @@
 import { useState, useRef } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -221,95 +222,112 @@ export function FilterDrawer({ open, onClose, categories, filters, onFiltersChan
   }
 
   return (
-    <>
-      <div className={`mp-filter-overlay ${open ? "open" : ""}`} onClick={onClose} />
-      <aside className={`mp-filter-drawer ${open ? "open" : ""}`}>
-        <div className="mp-filter-header">
-          <strong>Filters</strong>
-          <button type="button" className="mp-filter-close-btn" onClick={onClose}>✕</button>
-        </div>
+    <AnimatePresence>
+      {open && (
+        <>
+          <motion.div
+            className="mp-filter-overlay open"
+            onClick={onClose}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+          />
+          <motion.aside
+            className="mp-filter-drawer open"
+            initial={{ x: "100%" }}
+            animate={{ x: 0 }}
+            exit={{ x: "100%" }}
+            transition={{ type: "tween", ease: "easeInOut", duration: 0.3 }}
+          >
+            <div className="mp-filter-header">
+              <strong>Filters</strong>
+              <button type="button" className="mp-filter-close-btn" onClick={onClose}>✕</button>
+            </div>
 
-        <div className="mp-filter-body">
-          {/* Category */}
-          {categories?.length > 1 && (
-            <div className="mp-filter-group">
-              <label className="mp-filter-label">Category</label>
-              <div className="mp-filter-chips">
-                {categories.map(cat => (
-                  <button
-                    key={cat}
-                    type="button"
-                    className={`mp-filter-chip ${localFilters.category === cat ? "active" : ""}`}
-                    onClick={() => handleChange("category", cat)}
-                  >
-                    {cat === "all" ? "All" : cat.charAt(0).toUpperCase() + cat.slice(1)}
-                  </button>
-                ))}
+            <div className="mp-filter-body">
+              {/* Category */}
+              {categories?.length > 1 && (
+                <div className="mp-filter-group">
+                  <label className="mp-filter-label">Category</label>
+                  <div className="mp-filter-chips">
+                    {categories.map(cat => (
+                      <button
+                        key={cat}
+                        type="button"
+                        className={`mp-filter-chip ${localFilters.category === cat ? "active" : ""}`}
+                        onClick={() => handleChange("category", cat)}
+                      >
+                        {cat === "all" ? "All" : cat.charAt(0).toUpperCase() + cat.slice(1)}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Price Range */}
+              <div className="mp-filter-group">
+                <label className="mp-filter-label">Price Range</label>
+                <div className="mp-filter-range-row">
+                  <input
+                    type="number"
+                    className="mp-filter-input"
+                    placeholder="Min ₹"
+                    value={localFilters.minPrice || ""}
+                    onChange={e => handleChange("minPrice", e.target.value)}
+                    min="0"
+                  />
+                  <span className="mp-filter-range-sep">—</span>
+                  <input
+                    type="number"
+                    className="mp-filter-input"
+                    placeholder="Max ₹"
+                    value={localFilters.maxPrice || ""}
+                    onChange={e => handleChange("maxPrice", e.target.value)}
+                    min="0"
+                  />
+                </div>
+              </div>
+
+              {/* Minimum Rating */}
+              <div className="mp-filter-group">
+                <label className="mp-filter-label">Minimum Rating</label>
+                <div className="mp-filter-chips">
+                  {[0, 3, 3.5, 4, 4.5].map(r => (
+                    <button
+                      key={r}
+                      type="button"
+                      className={`mp-filter-chip ${Number(localFilters.minRating || 0) === r ? "active" : ""}`}
+                      onClick={() => handleChange("minRating", r)}
+                    >
+                      {r === 0 ? "Any" : `${r}★ & up`}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Availability */}
+              <div className="mp-filter-group">
+                <label className="mp-filter-label">Availability</label>
+                <label className="mp-filter-toggle-row">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(localFilters.inStockOnly)}
+                    onChange={e => handleChange("inStockOnly", e.target.checked)}
+                  />
+                  <span>In stock only</span>
+                </label>
               </div>
             </div>
-          )}
 
-          {/* Price Range */}
-          <div className="mp-filter-group">
-            <label className="mp-filter-label">Price Range</label>
-            <div className="mp-filter-range-row">
-              <input
-                type="number"
-                className="mp-filter-input"
-                placeholder="Min ₹"
-                value={localFilters.minPrice || ""}
-                onChange={e => handleChange("minPrice", e.target.value)}
-                min="0"
-              />
-              <span className="mp-filter-range-sep">—</span>
-              <input
-                type="number"
-                className="mp-filter-input"
-                placeholder="Max ₹"
-                value={localFilters.maxPrice || ""}
-                onChange={e => handleChange("maxPrice", e.target.value)}
-                min="0"
-              />
+            <div className="mp-filter-footer">
+              <button type="button" className="mp-filter-reset-btn" onClick={handleReset}>Reset</button>
+              <button type="button" className="mp-filter-apply-btn" onClick={handleApply}>Apply Filters</button>
             </div>
-          </div>
-
-          {/* Minimum Rating */}
-          <div className="mp-filter-group">
-            <label className="mp-filter-label">Minimum Rating</label>
-            <div className="mp-filter-chips">
-              {[0, 3, 3.5, 4, 4.5].map(r => (
-                <button
-                  key={r}
-                  type="button"
-                  className={`mp-filter-chip ${Number(localFilters.minRating || 0) === r ? "active" : ""}`}
-                  onClick={() => handleChange("minRating", r)}
-                >
-                  {r === 0 ? "Any" : `${r}★ & up`}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Availability */}
-          <div className="mp-filter-group">
-            <label className="mp-filter-label">Availability</label>
-            <label className="mp-filter-toggle-row">
-              <input
-                type="checkbox"
-                checked={Boolean(localFilters.inStockOnly)}
-                onChange={e => handleChange("inStockOnly", e.target.checked)}
-              />
-              <span>In stock only</span>
-            </label>
-          </div>
-        </div>
-
-        <div className="mp-filter-footer">
-          <button type="button" className="mp-filter-reset-btn" onClick={handleReset}>Reset</button>
-          <button type="button" className="mp-filter-apply-btn" onClick={handleApply}>Apply Filters</button>
-        </div>
-      </aside>
-    </>
+          </motion.aside>
+        </>
+      )}
+    </AnimatePresence>
   );
 }
 
@@ -319,79 +337,96 @@ export function CartDrawer({ open, onClose, cart, onIncrement, onDecrement, onRe
   const safeCart = cart || [];
   const savings = safeCart.reduce((sum, item) => {
     const price = Number(item.price || 0);
-    const discPct = discountPercent(price);
+    const discPct = Math.floor(8 + (Number(price || 0) % 13)); // same discount logic
     const originalPrice = price / (1 - discPct / 100);
     return sum + (originalPrice - price) * Number(item.quantity || 1);
   }, 0);
 
   return (
-    <>
-      <div className={`mp-cart-overlay ${open ? "open" : ""}`} onClick={onClose} />
-      <aside className={`mp-cart-drawer ${open ? "open" : ""}`}>
-        <div className="mp-cart-header">
-          <div className="mp-cart-header-left">
-            <span className="mp-cart-header-icon">🛒</span>
-            <strong>Your Cart</strong>
-            <span className="mp-cart-item-count">{safeCart.reduce((s, i) => s + Number(i.quantity || 1), 0)} items</span>
-          </div>
-          <button type="button" className="mp-cart-close-btn" onClick={onClose}>✕</button>
-        </div>
-
-        <div className="mp-cart-body">
-          {safeCart.length === 0 && (
-            <div className="mp-cart-empty">
-              <div className="mp-cart-empty-icon">🛒</div>
-              <p>Your cart is empty</p>
-              <small>Add products from the marketplace to get started.</small>
-            </div>
-          )}
-          {safeCart.map(item => {
-            const imageSrc = resolveMediaUrl(item.imageUrl, mediaBaseUrl);
-            return (
-              <div key={item.productId} className="mp-cart-item">
-                <div className="mp-cart-item-img">
-                  {imageSrc ? (
-                    <img src={imageSrc} alt={item.name} />
-                  ) : (
-                    <div className="mp-cart-item-img-placeholder">{initials(item.name)}</div>
-                  )}
-                </div>
-                <div className="mp-cart-item-info">
-                  <strong className="mp-cart-item-name">{item.name}</strong>
-                  {item.company && <small className="mp-cart-item-brand">{item.company}</small>}
-                  <span className="mp-cart-item-price">{toCurrency(item.price)}</span>
-                </div>
-                <div className="mp-cart-item-controls">
-                  <button type="button" className="mp-cart-qty-btn" onClick={() => onDecrement && onDecrement(item.productId)}>−</button>
-                  <span className="mp-cart-qty">{item.quantity}</span>
-                  <button type="button" className="mp-cart-qty-btn" onClick={() => onIncrement && onIncrement(item.productId)}>+</button>
-                  <button type="button" className="mp-cart-remove-btn" onClick={() => onRemove && onRemove(item.productId)} title="Remove">✕</button>
-                </div>
+    <AnimatePresence>
+      {open && (
+        <>
+          <motion.div
+            className="mp-cart-overlay open"
+            onClick={onClose}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+          />
+          <motion.aside
+            className="mp-cart-drawer open"
+            initial={{ x: "100%" }}
+            animate={{ x: 0 }}
+            exit={{ x: "100%" }}
+            transition={{ type: "tween", ease: "easeInOut", duration: 0.3 }}
+          >
+            <div className="mp-cart-header">
+              <div className="mp-cart-header-left">
+                <span className="mp-cart-header-icon">🛒</span>
+                <strong>Your Cart</strong>
+                <span className="mp-cart-item-count">{safeCart.reduce((s, i) => s + Number(i.quantity || 1), 0)} items</span>
               </div>
-            );
-          })}
-        </div>
+              <button type="button" className="mp-cart-close-btn" onClick={onClose}>✕</button>
+            </div>
 
-        {safeCart.length > 0 && (
-          <div className="mp-cart-footer">
-            <div className="mp-cart-savings">
-              <span>You save</span>
-              <span className="mp-cart-savings-amount">{toCurrency(savings)}</span>
+            <div className="mp-cart-body">
+              {safeCart.length === 0 && (
+                <div className="mp-cart-empty">
+                  <div className="mp-cart-empty-icon">🛒</div>
+                  <p>Your cart is empty</p>
+                  <small>Add products from the marketplace to get started.</small>
+                </div>
+              )}
+              {safeCart.map(item => {
+                const imageSrc = resolveMediaUrl(item.imageUrl, mediaBaseUrl);
+                return (
+                  <div key={item.productId} className="mp-cart-item">
+                    <div className="mp-cart-item-img">
+                      {imageSrc ? (
+                        <img src={imageSrc} alt={item.name} />
+                      ) : (
+                        <div className="mp-cart-item-img-placeholder">{initials(item.name)}</div>
+                      )}
+                    </div>
+                    <div className="mp-cart-item-info">
+                      <strong className="mp-cart-item-name">{item.name}</strong>
+                      {item.company && <small className="mp-cart-item-brand">{item.company}</small>}
+                      <span className="mp-cart-item-price">{toCurrency(item.price)}</span>
+                    </div>
+                    <div className="mp-cart-item-controls">
+                      <button type="button" className="mp-cart-qty-btn" onClick={() => onDecrement && onDecrement(item.productId)}>−</button>
+                      <span className="mp-cart-qty">{item.quantity}</span>
+                      <button type="button" className="mp-cart-qty-btn" onClick={() => onIncrement && onIncrement(item.productId)}>+</button>
+                      <button type="button" className="mp-cart-remove-btn" onClick={() => onRemove && onRemove(item.productId)} title="Remove">✕</button>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
-            <div className="mp-cart-total-row">
-              <span>Total</span>
-              <strong className="mp-cart-total">{toCurrency(cartTotal || 0)}</strong>
-            </div>
-            <button type="button" className="mp-cart-checkout-btn" onClick={() => { onCheckout && onCheckout(); onClose && onClose(); }}>
-              Proceed to Checkout →
-            </button>
-            <button type="button" className="mp-cart-clear-btn" onClick={() => onClearCart && onClearCart()}>
-              Clear Cart
-            </button>
-          </div>
-        )}
-      </aside>
-    </>
+
+            {safeCart.length > 0 && (
+              <div className="mp-cart-footer">
+                <div className="mp-cart-savings">
+                  <span>You save</span>
+                  <span className="mp-cart-savings-amount">{toCurrency(savings)}</span>
+                </div>
+                <div className="mp-cart-total-row">
+                  <span>Total</span>
+                  <strong className="mp-cart-total">{toCurrency(cartTotal || 0)}</strong>
+                </div>
+                <button type="button" className="mp-cart-checkout-btn" onClick={() => { onCheckout && onCheckout(); onClose && onClose(); }}>
+                  Proceed to Checkout →
+                </button>
+                <button type="button" className="mp-cart-clear-btn" onClick={() => onClearCart && onClearCart()}>
+                  Clear Cart
+                </button>
+              </div>
+            )}
+          </motion.aside>
+        </>
+      )}
+    </AnimatePresence>
   );
 }
 

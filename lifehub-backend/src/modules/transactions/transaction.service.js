@@ -39,6 +39,27 @@ async function ensureWalletTx(tx, userId) {
   });
 }
 
+async function ensurePlatformWallet(tx) {
+  let platformUser = await tx.users.findFirst({
+    where: { phone: "0000000000" }
+  });
+  if (!platformUser) {
+    platformUser = await tx.users.create({
+      data: {
+        name: "LifeHub Platform",
+        phone: "0000000000",
+        email: "platform@lifehub.com",
+        password_hash: "SYSTEM"
+      }
+    });
+  }
+  const found = await tx.wallets.findUnique({ where: { user_id: platformUser.id } });
+  if (found) return found;
+  return tx.wallets.create({
+    data: { user_id: platformUser.id, balance: 0 }
+  });
+}
+
 export async function getWalletSummary(userId) {
   const uid = toBigInt(userId);
   const [wallet, locks, recentTransactions] = await Promise.all([
@@ -518,13 +539,27 @@ export async function releaseOrderEscrow({ orderId }) {
     });
     if (!hold) throw new Error("No escrow hold found for order");
 
+    const totalAmount = Number(hold.amount || 0);
+    const platformCommission = Number((totalAmount * 0.10).toFixed(2));
+    const sellerAmount = totalAmount - platformCommission;
+
     await ensureWalletTx(tx, order.shop_profiles.user_id);
+    const platformWallet = await ensurePlatformWallet(tx);
 
     await tx.wallets.update({
       where: { user_id: order.shop_profiles.user_id },
       data: {
         balance: {
-          increment: Number(hold.amount || 0)
+          increment: sellerAmount
+        }
+      }
+    });
+
+    await tx.wallets.update({
+      where: { user_id: platformWallet.user_id },
+      data: {
+        balance: {
+          increment: platformCommission
         }
       }
     });
@@ -540,8 +575,19 @@ export async function releaseOrderEscrow({ orderId }) {
       data: {
         from_wallet: order.user_id,
         to_wallet: order.shop_profiles.user_id,
-        amount: hold.amount,
+        amount: sellerAmount,
         transaction_type: "ESCROW_RELEASE",
+        status: "SUCCESS",
+        reference_id: oid
+      }
+    });
+
+    await tx.transactions.create({
+      data: {
+        from_wallet: order.user_id,
+        to_wallet: platformWallet.user_id,
+        amount: platformCommission,
+        transaction_type: "PLATFORM_COMMISSION",
         status: "SUCCESS",
         reference_id: oid
       }

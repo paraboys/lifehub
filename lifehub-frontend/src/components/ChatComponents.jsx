@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -147,12 +148,28 @@ export function AddContactModal({
   if (!open) return null;
 
   return (
-    <div className="chat-add-contact-overlay" onClick={onClose}>
-      <div className="chat-add-contact-modal" onClick={e => e.stopPropagation()}>
-        <div className="chat-modal-header">
-          <strong>Add Contact</strong>
-          <button type="button" className="chat-modal-close-btn" onClick={onClose}>✕</button>
-        </div>
+    <AnimatePresence>
+      {open && (
+        <motion.div
+          className="chat-add-contact-overlay"
+          onClick={onClose}
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.2 }}
+        >
+          <motion.div
+            className="chat-add-contact-modal"
+            onClick={e => e.stopPropagation()}
+            initial={{ scale: 0.95, opacity: 0, y: 20 }}
+            animate={{ scale: 1, opacity: 1, y: 0 }}
+            exit={{ scale: 0.95, opacity: 0, y: 20 }}
+            transition={{ type: "spring", bounce: 0.3, duration: 0.4 }}
+          >
+            <div className="chat-modal-header">
+              <strong>Add Contact</strong>
+              <button type="button" className="chat-modal-close-btn" onClick={onClose}>✕</button>
+            </div>
 
         <div className="chat-modal-tabs">
           <button
@@ -279,8 +296,10 @@ export function AddContactModal({
             )}
           </div>
         )}
-      </div>
-    </div>
+      </motion.div>
+    </motion.div>
+      )}
+    </AnimatePresence>
   );
 }
 
@@ -407,12 +426,28 @@ function UploadStoryModal({ open, onClose, onSubmit }) {
   if (!open) return null;
 
   return (
-    <div className="story-upload-overlay" onClick={onClose}>
-      <div className="story-upload-modal" onClick={e => e.stopPropagation()}>
-        <div className="chat-modal-header">
-          <strong>Add to Your Story</strong>
-          <button type="button" className="chat-modal-close-btn" onClick={onClose}>✕</button>
-        </div>
+    <AnimatePresence>
+      {open && (
+        <motion.div
+          className="story-upload-overlay"
+          onClick={onClose}
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.2 }}
+        >
+          <motion.div
+            className="story-upload-modal"
+            onClick={e => e.stopPropagation()}
+            initial={{ scale: 0.95, opacity: 0, y: 20 }}
+            animate={{ scale: 1, opacity: 1, y: 0 }}
+            exit={{ scale: 0.95, opacity: 0, y: 20 }}
+            transition={{ type: "spring", bounce: 0.3, duration: 0.4 }}
+          >
+            <div className="chat-modal-header">
+              <strong>Add to Your Story</strong>
+              <button type="button" className="chat-modal-close-btn" onClick={onClose}>✕</button>
+            </div>
         <div className="story-upload-body">
           {imagePreview ? (
             <div className="story-upload-preview-wrap">
@@ -445,8 +480,10 @@ function UploadStoryModal({ open, onClose, onSubmit }) {
             {submitting ? "Sharing..." : "Share Story"}
           </button>
         </div>
-      </div>
-    </div>
+      </motion.div>
+    </motion.div>
+      )}
+    </AnimatePresence>
   );
 }
 

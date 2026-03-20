@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import AuthPage from "./components/AuthPage.jsx";
 import SuperAppPage from "./components/SuperAppPage.jsx";
+import "./premium-ui.css";
 
 const SESSION_KEY = "lifehub_session_v1";
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:4000/api";
