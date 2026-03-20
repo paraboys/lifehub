@@ -437,15 +437,10 @@ export async function listOrders({ userId, roles = [], limit = 20, status }) {
     where.shop_profiles = {
       user_id: toBigInt(userId)
     };
-  } else if (normalized.includes("PROVIDER")) {
-    where.provider_profiles = {
-      user_id: toBigInt(userId)
-    };
   } else {
     where.OR = [
       { user_id: toBigInt(userId) },
-      { shop_profiles: { user_id: toBigInt(userId) } },
-      { provider_profiles: { user_id: toBigInt(userId) } }
+      { shop_profiles: { user_id: toBigInt(userId) } }
     ];
   }
 
@@ -454,8 +449,6 @@ export async function listOrders({ userId, roles = [], limit = 20, status }) {
     include: {
       order_delivery_details: true,
       shop_profiles: true,
-      provider_profiles: true,
-      invoices: true,
       order_items: {
         include: { products: true }
       }

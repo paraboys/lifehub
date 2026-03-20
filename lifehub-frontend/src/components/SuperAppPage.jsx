@@ -3,6 +3,8 @@ import { UiIcon } from "./UiElements.jsx";
 import { io } from "socket.io-client";
 import WorkflowGraph from "./WorkflowGraph.jsx";
 import OrdersPage from "./OrdersPage.jsx";
+import { ProductRow, FilterDrawer, CartDrawer, ProductDetailPage } from "./MarketplaceComponents.jsx";
+import { StoryBar, AddContactModal, TypingIndicator, MessageBubble } from "./ChatComponents.jsx";
 
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:4000/api";
 const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || API_URL.replace(/\/api$/, "");
@@ -441,6 +443,13 @@ export default function SuperAppPage({
   const [loadingShopFeedback, setLoadingShopFeedback] = useState(false);
   const [shopFeedbackError, setShopFeedbackError] = useState("");
   const [cart, setCart] = useState([]);
+  // New premium UI state
+  const [filterPanelOpen, setFilterPanelOpen] = useState(false);
+  const [cartDrawerOpen, setCartDrawerOpen] = useState(false);
+  const [marketFilters, setMarketFilters] = useState({ minPrice: "", maxPrice: "", minRating: "", category: "all", inStockOnly: false });
+  const [productReviews, setProductReviews] = useState([]);
+  const [stories, setStories] = useState([]);
+  const [addContactModalOpen, setAddContactModalOpen] = useState(false);
   const [deliveryDetails, setDeliveryDetails] = useState({
     recipientName: user.name || "",
     recipientPhone: user.phone || "",
@@ -6585,7 +6594,9 @@ function renderOpsTab() {
                   type="button"
                   className="sidebar-link"
                   title="Security"
-                  onClick={() => {
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setCommandOpen(false);
                     setSettingsSection("security");
                     handleTabSelect("profile");
                   }}
