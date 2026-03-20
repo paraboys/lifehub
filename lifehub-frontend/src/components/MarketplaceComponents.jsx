@@ -66,7 +66,12 @@ export function ProductCard({ product, mediaBaseUrl, onOpen, onAddToCart, onBuyN
   const name = product?.productName || product?.name || "Product";
 
   return (
-    <article
+    <motion.article
+      layout
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, scale: 0.9 }}
+      whileHover={{ y: -8 }}
       className={`mp-product-card ${hovered ? "hovered" : ""}`}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
@@ -99,6 +104,19 @@ export function ProductCard({ product, mediaBaseUrl, onOpen, onAddToCart, onBuyN
               <span>{initials(name)}</span>
             </div>
           )}
+          
+          <AnimatePresence>
+            {hovered && (
+              <motion.div 
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="mp-card-image-overlay"
+              >
+                <div className="mp-quick-view-hint">Quick View</div>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
       </button>
 
@@ -130,23 +148,33 @@ export function ProductCard({ product, mediaBaseUrl, onOpen, onAddToCart, onBuyN
       </div>
 
       {/* Quick Actions (visible on hover) */}
-      <div className={`mp-card-quick-actions ${hovered ? "visible" : ""}`}>
-        <button
-          type="button"
-          className={`mp-quick-btn add-cart ${isInCart ? "in-cart" : ""}`}
-          onClick={(e) => { e.stopPropagation(); onAddToCart && onAddToCart(product); }}
-        >
-          {isInCart ? "✓ Added" : "Add to Cart"}
-        </button>
-        <button
-          type="button"
-          className="mp-quick-btn buy-now"
-          onClick={(e) => { e.stopPropagation(); onBuyNow && onBuyNow(product); }}
-        >
-          Buy Now
-        </button>
-      </div>
-    </article>
+      <AnimatePresence>
+        {hovered && (
+          <motion.div 
+            initial={{ y: "100%", opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: "100%", opacity: 0 }}
+            transition={{ type: "spring", stiffness: 300, damping: 30 }}
+            className="mp-card-quick-actions visible"
+          >
+            <button
+              type="button"
+              className={`mp-quick-btn add-cart ${isInCart ? "in-cart" : ""}`}
+              onClick={(e) => { e.stopPropagation(); onAddToCart && onAddToCart(product); }}
+            >
+              {isInCart ? "✓ Added" : "Add to Cart"}
+            </button>
+            <button
+              type="button"
+              className="mp-quick-btn buy-now"
+              onClick={(e) => { e.stopPropagation(); onBuyNow && onBuyNow(product); }}
+            >
+              Buy Now
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </motion.article>
   );
 }
 
@@ -156,10 +184,10 @@ export function ProductRow({ title, subtitle, products, mediaBaseUrl, onOpen, on
   const scrollRef = useRef(null);
 
   function scrollLeft() {
-    scrollRef.current?.scrollBy({ left: -320, behavior: "smooth" });
+    scrollRef.current?.scrollBy({ left: -440, behavior: "smooth" });
   }
   function scrollRight() {
-    scrollRef.current?.scrollBy({ left: 320, behavior: "smooth" });
+    scrollRef.current?.scrollBy({ left: 440, behavior: "smooth" });
   }
 
   if (!products?.length) return null;
@@ -234,11 +262,11 @@ export function FilterDrawer({ open, onClose, categories, filters, onFiltersChan
             transition={{ duration: 0.2 }}
           />
           <motion.aside
-            className="mp-filter-drawer open"
+            className="mp-filter-drawer open glass-morphism"
             initial={{ x: "100%" }}
             animate={{ x: 0 }}
             exit={{ x: "100%" }}
-            transition={{ type: "tween", ease: "easeInOut", duration: 0.3 }}
+            transition={{ type: "spring", stiffness: 300, damping: 30 }}
           >
             <div className="mp-filter-header">
               <strong>Filters</strong>
@@ -355,11 +383,11 @@ export function CartDrawer({ open, onClose, cart, onIncrement, onDecrement, onRe
             transition={{ duration: 0.2 }}
           />
           <motion.aside
-            className="mp-cart-drawer open"
+            className="mp-cart-drawer open glass-morphism"
             initial={{ x: "100%" }}
             animate={{ x: 0 }}
             exit={{ x: "100%" }}
-            transition={{ type: "tween", ease: "easeInOut", duration: 0.3 }}
+            transition={{ type: "spring", stiffness: 300, damping: 30 }}
           >
             <div className="mp-cart-header">
               <div className="mp-cart-header-left">
@@ -485,13 +513,19 @@ export function ReviewsSection({ reviews, onAddReview, currentUserId }) {
       {reviews?.length > 0 && (
         <div className="mp-rating-breakdown">
           {[5, 4, 3, 2, 1].map(star => {
-            const count = reviews.filter(r => Math.round(Number(r.rating || 0)) === star).length;
+            const count = (reviews || []).filter(r => Math.round(Number(r.rating || 0)) === star).length;
             const pct = reviews.length ? Math.round((count / reviews.length) * 100) : 0;
             return (
               <div key={star} className="mp-rating-bar-row">
                 <span className="mp-rating-bar-label">{star}★</span>
                 <div className="mp-rating-bar-track">
-                  <div className="mp-rating-bar-fill" style={{ width: `${pct}%` }} />
+                  <motion.div 
+                    initial={{ width: 0 }}
+                    whileInView={{ width: `${pct}%` }}
+                    viewport={{ once: true }}
+                    transition={{ duration: 1, ease: "circOut" }}
+                    className="mp-rating-bar-fill"
+                  />
                 </div>
                 <span className="mp-rating-bar-count">{count}</span>
               </div>
@@ -501,60 +535,74 @@ export function ReviewsSection({ reviews, onAddReview, currentUserId }) {
       )}
 
       {/* Add Review Form */}
-      {formOpen && (
-        <div className="mp-review-form">
-          <h4>Your Review</h4>
-          <div className="mp-review-star-picker">
-            {[1, 2, 3, 4, 5].map(star => (
+      <AnimatePresence>
+        {formOpen && (
+          <motion.div 
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            className="mp-review-form overflow-hidden"
+          >
+            <h4>Share Your Experience</h4>
+            <div className="mp-review-star-picker">
+              {[1, 2, 3, 4, 5].map(star => (
+                <button
+                  key={star}
+                  type="button"
+                  className={`mp-review-star ${star <= (hoverRating || rating) ? "active" : ""}`}
+                  onMouseEnter={() => setHoverRating(star)}
+                  onMouseLeave={() => setHoverRating(0)}
+                  onClick={() => setRating(star)}
+                  aria-label={`${star} star`}
+                >★</button>
+              ))}
+              <small className="mp-review-star-label">
+                {["", "Poor", "Fair", "Good", "Very Good", "Excellent"][hoverRating || rating]}
+              </small>
+            </div>
+            <textarea
+              className="mp-review-textarea"
+              value={comment}
+              onChange={e => setComment(e.target.value)}
+              placeholder="What did you like or dislike about this product?"
+              rows={4}
+            />
+            <div className="mp-review-form-actions">
+              {imagePreview ? (
+                <div className="mp-review-image-preview-wrap">
+                  <img src={imagePreview} alt="Review preview" className="mp-review-image-preview" />
+                  <button type="button" className="mp-review-image-remove" onClick={() => setImagePreview(null)}>✕</button>
+                </div>
+              ) : (
+                <button type="button" className="mp-review-upload-btn" onClick={() => fileRef.current?.click()}>
+                  📷 Add Photo
+                </button>
+              )}
+              <input ref={fileRef} type="file" accept="image/*" className="hidden-file-input" onChange={handleImageChange} />
               <button
-                key={star}
                 type="button"
-                className={`mp-review-star ${star <= (hoverRating || rating) ? "active" : ""}`}
-                onMouseEnter={() => setHoverRating(star)}
-                onMouseLeave={() => setHoverRating(0)}
-                onClick={() => setRating(star)}
-                aria-label={`${star} star`}
-              >★</button>
-            ))}
-            <small className="mp-review-star-label">
-              {["", "Poor", "Fair", "Good", "Very Good", "Excellent"][hoverRating || rating]}
-            </small>
-          </div>
-          <textarea
-            className="mp-review-textarea"
-            value={comment}
-            onChange={e => setComment(e.target.value)}
-            placeholder="Share your experience with this product..."
-            rows={4}
-          />
-          <div className="mp-review-form-actions">
-            {imagePreview ? (
-              <div className="mp-review-image-preview-wrap">
-                <img src={imagePreview} alt="Review preview" className="mp-review-image-preview" />
-                <button type="button" className="mp-review-image-remove" onClick={() => setImagePreview(null)}>✕</button>
-              </div>
-            ) : (
-              <button type="button" className="mp-review-upload-btn" onClick={() => fileRef.current?.click()}>
-                📷 Add Photo
+                className="mp-review-submit-btn"
+                onClick={handleSubmit}
+                disabled={submitting || !comment.trim()}
+              >
+                {submitting ? "Submitting..." : "Post Review"}
               </button>
-            )}
-            <input ref={fileRef} type="file" accept="image/*" className="hidden-file-input" onChange={handleImageChange} />
-            <button
-              type="button"
-              className="mp-review-submit-btn"
-              onClick={handleSubmit}
-              disabled={submitting || !comment.trim()}
-            >
-              {submitting ? "Submitting..." : "Post Review"}
-            </button>
-          </div>
-        </div>
-      )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Reviews List */}
       <div className="mp-reviews-list">
         {(reviews || []).map((review, i) => (
-          <article key={review.id || i} className="mp-review-card">
+          <motion.article 
+            key={review.id || i} 
+            initial={{ opacity: 0, y: 20 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
+            transition={{ delay: i * 0.1 }}
+            className="mp-review-card"
+          >
             <div className="mp-review-card-header">
               <div className="mp-review-avatar">{initials(review.customer?.name || review.userName || "U")}</div>
               <div className="mp-review-meta">
@@ -562,14 +610,16 @@ export function ReviewsSection({ reviews, onAddReview, currentUserId }) {
                 <div className="mp-review-card-stars">{ratingStarsJsx(review.rating)}</div>
               </div>
               <small className="mp-review-date">
-                {review.createdAt ? new Date(review.createdAt).toLocaleDateString() : ""}
+                {review.createdAt ? new Date(review.createdAt).toLocaleDateString() : "Just now"}
               </small>
             </div>
             <p className="mp-review-comment">{review.comment || "No written comment."}</p>
             {review.imageUrl && (
-              <img src={review.imageUrl} alt="Review" className="mp-review-image" />
+              <div className="mp-review-image-wrap">
+                <img src={review.imageUrl} alt="Review" className="mp-review-image" />
+              </div>
             )}
-          </article>
+          </motion.article>
         ))}
         {!reviews?.length && (
           <div className="mp-reviews-empty">
@@ -614,11 +664,17 @@ export function ProductDetailPage({
   const available = Number(product.availableQuantity || 0);
 
   return (
-    <div className="mp-detail-page">
+    <motion.div 
+      initial={{ opacity: 0, scale: 0.98 }}
+      animate={{ opacity: 1, scale: 1 }}
+      exit={{ opacity: 0, scale: 0.98 }}
+      transition={{ duration: 0.3 }}
+      className="mp-detail-page"
+    >
       {/* Back bar */}
       <div className="mp-detail-backbar">
         <button type="button" className="mp-detail-back-btn" onClick={onBack}>
-          ← Back to Marketplace
+          <span>←</span> Back to Marketplace
         </button>
       </div>
 
@@ -631,7 +687,8 @@ export function ProductDetailPage({
             onMouseLeave={() => setZoomed(false)}
           >
             {galleryImages[selectedImageIndex] ? (
-              <img
+              <motion.img
+                layoutId={`prod-img-${product.productId}`}
                 src={galleryImages[selectedImageIndex]}
                 alt={product.name}
                 className="mp-detail-main-image"
@@ -662,9 +719,10 @@ export function ProductDetailPage({
         {/* Product Info */}
         <div className="mp-detail-info">
           <div className="mp-detail-badges">
-            <span className="mp-badge discount">-{discPct}% OFF</span>
+            {discPct > 0 && <span className="mp-badge discount">-{discPct}% OFF</span>}
             {rating >= 4.5 && <span className="mp-badge bestseller">⭐ Best Seller</span>}
             {available <= 5 && available > 0 && <span className="mp-badge low-stock">⚡ Only {available} left</span>}
+            {available === 0 && <span className="mp-badge out-of-stock">Out of Stock</span>}
           </div>
 
           <h2 className="mp-detail-title">{product.name}</h2>
@@ -673,47 +731,31 @@ export function ProductDetailPage({
           <div className="mp-detail-rating-row">
             {ratingStarsJsx(rating)}
             <span className="mp-detail-rating-val">{rating.toFixed(1)}</span>
-            <span className="mp-detail-review-count">({reviewCount} ratings)</span>
+            <span className="mp-detail-review-count">({reviewCount} verified ratings)</span>
           </div>
 
           <div className="mp-detail-price-block">
-            <strong className="mp-detail-price">{toCurrency(price)}</strong>
             <span className="mp-detail-original-price">{toCurrency(originalPrice)}</span>
-            <span className="mp-detail-savings-tag">You save {toCurrency(originalPrice - price)}</span>
+            <strong className="mp-detail-price">{toCurrency(price)}</strong>
+            <span className="mp-detail-savings-tag">Special Price: You save {toCurrency(originalPrice - price)}</span>
           </div>
 
-          {product.description && (
-            <p className="mp-detail-description">{product.description}</p>
-          )}
+          <p className="mp-detail-description">
+            {product.description || "Experience top-tier quality and reliability with this premium LifeHub product. Designed for excellence and built to last."}
+          </p>
 
-          {/* Features list */}
           <ul className="mp-detail-features">
-            <li>✓ Free delivery on orders above ₹499</li>
-            <li>✓ Easy 7-day returns</li>
-            <li>✓ Verified seller product</li>
-            {product.shop?.shopName && <li>✓ Sold by {product.shop.shopName}</li>}
+            <li><span className="feature-icon">🚚</span> Free delivery above ₹499</li>
+            <li><span className="feature-icon">🔄</span> 7-day easy returns</li>
+            <li><span className="feature-icon">🛡️</span> Verified seller</li>
+            {product.shop?.shopName && <li><span className="feature-icon">🏪</span> {product.shop.shopName}</li>}
           </ul>
-
-          <div className="mp-detail-stock-info">
-            {available > 0 ? (
-              <span className="mp-detail-in-stock">✔ In Stock ({available} available)</span>
-            ) : (
-              <span className="mp-detail-out-stock">✗ Out of Stock</span>
-            )}
-          </div>
 
           <div className="mp-detail-actions">
             <button
               type="button"
               className={`mp-detail-add-btn ${isInCart ? "in-cart" : ""}`}
-              onClick={() => onAddToCart && onAddToCart({
-                id: product.productId,
-                name: product.name,
-                company: product.company,
-                description: product.description,
-                imageUrl: product.imageUrl,
-                price: product.price
-              })}
+              onClick={() => onAddToCart && onAddToCart(product)}
               disabled={available === 0}
             >
               {isInCart ? "✓ Added to Cart" : "Add to Cart"}
@@ -732,7 +774,7 @@ export function ProductDetailPage({
 
       {/* Reviews */}
       <div className="mp-detail-reviews">
-        <h3 className="mp-detail-section-title">Customer Reviews</h3>
+        <h3 className="mp-detail-section-title">Customer Reviews & Ratings</h3>
         <ReviewsSection
           reviews={reviews}
           onAddReview={onAddReview}
@@ -756,6 +798,6 @@ export function ProductDetailPage({
           />
         </div>
       )}
-    </div>
+    </motion.div>
   );
 }

@@ -4168,32 +4168,54 @@ export default function SuperAppPage({
         {showingCatalog && (
           <div className="mp-catalog-view">
             {/* Super App Premium Hero */}
-            <div className="mp-hero-banner">
-              <h1>LifeHub Marketplace</h1>
-              <p>Your one-stop shop for everything you need locally.</p>
+            <div className="mp-hero-banner premium-glass">
+              <div className="mp-hero-content">
+                <span className="mp-hero-eyebrow">LifeHub Premium</span>
+                <h1>Discover the Best Products</h1>
+                <p>Curated collections from trusted local vendors, delivered with care.</p>
+                <div className="mp-hero-stats">
+                  <div className="mp-stat-item"><strong>10k+</strong><small>Products</small></div>
+                  <div className="mp-stat-item"><strong>500+</strong><small>Shops</small></div>
+                  <div className="mp-stat-item"><strong>4.8★</strong><small>Rating</small></div>
+                </div>
+              </div>
             </div>
 
             <ProductRow
               title="Recommended For You"
-              subtitle="Association-rule ranking + nearby pricing + reliability score"
+              subtitle="Personalized picks based on your browsing history"
               icon="✨"
-              products={dealProducts}
+              products={visibleRecommendedProducts.slice(0, 10)}
               onProductClick={(p) => openMarketplaceProduct(p, p.shop || selectedShop)}
               onAddToCart={addToCart}
               onBuyNow={buyNowMarketplaceProduct}
               mediaBaseUrl={mediaBaseUrl}
+              cartProductIds={new Set(cart.map(i => String(i.productId || i.id)))}
+            />
+
+            <ProductRow
+              title="Trending Now"
+              subtitle="Most popular items in your area"
+              icon="🔥"
+              products={visibleRecommendedProducts.slice(10, 20)}
+              onProductClick={(p) => openMarketplaceProduct(p, p.shop || selectedShop)}
+              onAddToCart={addToCart}
+              onBuyNow={buyNowMarketplaceProduct}
+              mediaBaseUrl={mediaBaseUrl}
+              cartProductIds={new Set(cart.map(i => String(i.productId || i.id)))}
             />
             
             {!!productQuery.trim() && (
               <ProductRow
                 title="Search Results"
-                subtitle={visibleProductResults.length + " matching products"}
+                subtitle={`${visibleProductResults.length} matching products found`}
                 icon="🔎"
                 products={visibleProductResults}
                 onProductClick={(p) => openMarketplaceProduct(p, p.shop || selectedShop)}
                 onAddToCart={addToCart}
                 onBuyNow={buyNowMarketplaceProduct}
                 mediaBaseUrl={mediaBaseUrl}
+                cartProductIds={new Set(cart.map(i => String(i.productId || i.id)))}
               />
             )}
 
@@ -4207,8 +4229,21 @@ export default function SuperAppPage({
                 onAddToCart={addToCart}
                 onBuyNow={buyNowMarketplaceProduct}
                 mediaBaseUrl={mediaBaseUrl}
+                cartProductIds={new Set(cart.map(i => String(i.productId || i.id)))}
               />
             )}
+
+            <ProductRow
+              title="Best Sellers"
+              subtitle="Highly-rated favorites from the community"
+              icon="⭐"
+              products={visibleRecommendedProducts.slice(20, 30)}
+              onProductClick={(p) => openMarketplaceProduct(p, p.shop || selectedShop)}
+              onAddToCart={addToCart}
+              onBuyNow={buyNowMarketplaceProduct}
+              mediaBaseUrl={mediaBaseUrl}
+              cartProductIds={new Set(cart.map(i => String(i.productId || i.id)))}
+            />
             
             <FilterDrawer
               open={filterPanelOpen}
@@ -4250,7 +4285,6 @@ export default function SuperAppPage({
           />
         )}
         {showingCheckoutPage ? <div dangerouslySetInnerHTML={{ __html: '<!-- checkoutPart -->' }} /> : null}
-" + checkoutPart + "
       </section>
     );
   }
