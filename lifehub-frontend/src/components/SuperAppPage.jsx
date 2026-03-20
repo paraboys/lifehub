@@ -5413,6 +5413,7 @@ export default function SuperAppPage({
   }
 
   function renderWalletTab() {
+    const balanceValue = walletSummary?.availableBalance || walletSummary?.wallet?.balance || 0;
     const safeBalance = Number.isFinite(balanceValue) ? balanceValue : 0;
     const formatMoney = value => {
       const amount = Number(value || 0);
