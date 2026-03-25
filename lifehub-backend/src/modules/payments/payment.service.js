@@ -5,7 +5,8 @@ import {
   verifyPaymentSignature,
   verifyWebhookSignature
 } from "./payment.gateway.js";
-import { topupWallet } from "../transactions/transaction.service.js";
+import { topupWallet, reserveFundsForOrder } from "../transactions/transaction.service.js";
+import prisma from "../../config/db.js";
 import { eventBus } from "../../common/events/eventBus.js";
 import { getSharedRedisClient } from "../../config/redis.js";
 
@@ -140,17 +141,39 @@ async function settleIntent({
     return { duplicate: true, intentId: intent.intentId };
   }
 
-  if (intent.status !== "SUCCEEDED" && intent.purpose === "TOPUP") {
-    await topupWallet({
-      userId: intent.userId,
-      amount: intent.amount,
-      referenceId: undefined
-    });
+  if (intent.status !== "SUCCEEDED") {
+    if (intent.purpose === "TOPUP") {
+      await topupWallet({
+        userId: intent.userId,
+        amount: intent.amount,
+        referenceId: undefined
+      });
+    } else if (intent.purpose === "ORDER") {
+      // 1. Credit wallet temporarily with gateway funds
+      await topupWallet({
+        userId: intent.userId,
+        amount: intent.amount,
+        referenceId: undefined
+      });
+      // 2. Lock it in escrow to pay the shopkeeper
+      await reserveFundsForOrder({
+        userId: intent.userId,
+        orderId: intent.metadata.orderId,
+        amount: intent.amount
+      });
+      // 3. Mark the order as paid properly
+      await prisma.orders.update({
+        where: { id: BigInt(intent.metadata.orderId) },
+        data: { payment_status: 'PAID' }
+      });
+    }
+
     eventBus.emit("PAYMENT.INTENT_SETTLED", {
       intentId: intent.intentId,
       provider: intent.provider,
       userId: intent.userId,
-      amount: intent.amount
+      amount: intent.amount,
+      purpose: intent.purpose
     });
   }
 
@@ -181,8 +204,8 @@ export async function createPaymentIntent({
   if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
     throw new Error("Amount must be a positive number");
   }
-  if (normalizedPurpose !== "TOPUP") {
-    throw new Error("Only TOPUP purpose is supported in current gateway flow");
+  if (normalizedPurpose !== "TOPUP" && normalizedPurpose !== "ORDER") {
+    throw new Error("Only TOPUP and ORDER purposes are supported");
   }
 
   const intentId = newIntentId();

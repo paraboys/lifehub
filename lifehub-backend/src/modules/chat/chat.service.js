@@ -915,3 +915,79 @@ export async function publishTyping({ conversationId, userId, isTyping }) {
 export async function syncEvents({ userId, deviceId, cursor, limit }) {
   return replayOfflineEvents(userId, deviceId, { cursor, limit });
 }
+
+// ======= NEW STORIES LOGIC =======
+const STORY_TABLE = "chat_stories";
+let chatStoriesEnsured = false;
+
+async function ensureChatStoriesTable() {
+  if (chatStoriesEnsured) return;
+  await prisma.$executeRawUnsafe(`
+    CREATE TABLE IF NOT EXISTS "${STORY_TABLE}" (
+      "id" BIGSERIAL PRIMARY KEY,
+      "user_id" BIGINT NOT NULL REFERENCES "users"("id") ON DELETE CASCADE,
+      "content" TEXT,
+      "media_url" TEXT,
+      "created_at" TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "expires_at" TIMESTAMP(6) NOT NULL
+    )
+  `);
+  chatStoriesEnsured = true;
+}
+
+export async function createStory(userId, { content = "", mediaUrl = null }) {
+  await ensureChatStoriesTable();
+  const uid = String(BigInt(userId));
+  
+  // 24 hours from now
+  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+  
+  const c = content ? `'${content.replace(/'/g, "''")}'` : "NULL";
+  const m = mediaUrl ? `'${mediaUrl.replace(/'/g, "''")}'` : "NULL";
+  
+  const res = await prisma.$queryRawUnsafe(`
+    INSERT INTO "${STORY_TABLE}" ("user_id", "content", "media_url", "expires_at")
+    VALUES (${uid}, ${c}, ${m}, '${expiresAt}')
+    RETURNING "id", "user_id" AS "userId", "content", "media_url" AS "mediaUrl", "created_at" AS "createdAt"
+  `);
+  return res[0];
+}
+
+export async function listStories(userId) {
+  await ensureChatStoriesTable();
+  const uid = String(BigInt(userId));
+  
+  // First, gather all friends
+  const friendsRows = await prisma.$queryRawUnsafe(`
+    SELECT CASE WHEN "requester_user_id" = ${uid} THEN "addressee_user_id" ELSE "requester_user_id" END AS "contact_id"
+    FROM "chat_contacts"
+    WHERE ("requester_user_id" = ${uid} OR "addressee_user_id" = ${uid}) AND "status" = 'ACCEPTED'
+  `);
+  const friends = friendsRows.map(f => String(f.contact_id));
+  friends.push(uid); // Include own stories
+
+  if (friends.length === 0) return [];
+
+  const inClause = friends.join(",");
+  
+  const stories = await prisma.$queryRawUnsafe(`
+    SELECT 
+      s."id", s."user_id" AS "userId", s."content", s."media_url" AS "mediaUrl", s."created_at" AS "createdAt",
+      u."name", u."avatar_url" AS "avatarUrl"
+    FROM "${STORY_TABLE}" s
+    JOIN "users" u ON u."id" = s."user_id"
+    WHERE s."user_id" IN (${inClause})
+      AND s."expires_at" > CURRENT_TIMESTAMP
+    ORDER BY s."created_at" DESC
+  `);
+  
+  return stories.map(s => ({
+    id: String(s.id),
+    userId: String(s.userId),
+    userName: s.name,
+    userAvatar: s.avatarUrl,
+    content: s.content,
+    mediaUrl: s.mediaUrl,
+    createdAt: s.createdAt
+  }));
+}

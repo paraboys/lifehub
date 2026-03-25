@@ -188,3 +188,23 @@ export async function sync(req, res) {
     res.status(400).json({ error: err.message });
   }
 }
+
+import { createStory as svcCreateStory, listStories as svcListStories } from "./chat.service.js";
+
+export const createStory = async (req, res, next) => {
+  try {
+    const story = await svcCreateStory(req.user.id, req.body);
+    res.status(201).json({ success: true, story });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const listStories = async (req, res, next) => {
+  try {
+    const stories = await svcListStories(req.user.id);
+    res.json({ success: true, stories });
+  } catch (error) {
+    next(error);
+  }
+};

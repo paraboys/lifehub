@@ -19,6 +19,8 @@ import {
   presence,
   presenceList,
   sync
+  createStory,
+  listStories
 } from "./chat.controller.js";
 import { getBundle, publishBundle } from "./e2ee.controller.js";
 
@@ -44,4 +46,7 @@ router.get("/sync", authenticate, allowChatRole, abuseGuard("chat"), sync);
 router.post("/e2ee/bundles/me", authenticate, allowChatRole, abuseGuard("chat"), publishBundle);
 router.get("/e2ee/bundles/:userId/:deviceId", authenticate, allowChatRole, abuseGuard("chat"), getBundle);
 
+
+router.get("/stories", authenticate, allowChatRole, abuseGuard("chat"), listStories);
+router.post("/stories", authenticate, allowChatRole, abuseGuard("chat"), createStory);
 export default router;

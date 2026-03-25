@@ -5,6 +5,7 @@ import WorkflowGraph from "./WorkflowGraph.jsx";
 import OrdersPage from "./OrdersPage.jsx";
 import { ProductRow, FilterDrawer, CartDrawer, ProductDetailPage } from "./MarketplaceComponents.jsx";
 import { StoryBar, AddContactModal, TypingIndicator, MessageBubble } from "./ChatComponents.jsx";
+import WhatsAppChat from "./WhatsAppChat.jsx";
 
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:4000/api";
 const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || API_URL.replace(/\/api$/, "");
@@ -2139,15 +2140,13 @@ export default function SuperAppPage({
 
   async function placeOrder() {
     if (!selectedShopId || !cart.length) return;
-    const deliveryError = validateDeliveryDetails();
-    if (deliveryError) {
-      setCheckoutValidationError(deliveryError);
-      setError(deliveryError);
-      return;
+  async function placeOrder(skipCartClear = false) {
+    if (!selectedShopId || !cart.length) {
+      throw new Error("Shop not selected or cart is empty.");
     }
     try {
       setCheckoutValidationError("");
-      await api("/orders", {
+      const orderData = await api("/orders", {
         method: "POST",
         headers: { "x-idempotency-key": `order_${Date.now()}` },
         body: JSON.stringify({
@@ -2157,15 +2156,20 @@ export default function SuperAppPage({
             productId: item.productId,
             quantity: item.quantity
           })),
+          paymentMethod: String(checkoutMode || "RAZORPAY").toUpperCase(),
           deliveryDetails
         })
       });
-      setCart([]);
-      setSelectedMarketplaceProduct(null);
-      setMarketplaceView("catalog");
-      await Promise.all([loadHome(), loadOrders()]);
+      if (!skipCartClear) {
+         setCart([]);
+         setSelectedMarketplaceProduct(null);
+         setMarketplaceView("catalog");
+         await Promise.all([loadHome(), loadOrders()]);
+      }
+      return orderData;
     } catch (err) {
-      setError(err.message || "Order failed. Please review the payment status and try again.");
+      setError(err.message || "Order creation failed.");
+      throw err;
     }
   }
 
@@ -2179,32 +2183,44 @@ export default function SuperAppPage({
       }
       setCheckoutValidationError("");
       const method = String(checkoutMode || "RAZORPAY").toUpperCase();
+
       if (method === "WALLET") {
-        await placeOrder();
+        await placeOrder(false);
         return;
+      }
+
+      // Order First Architecture
+      const pendingOrder = await placeOrder(true);
+      if (!pendingOrder || !pendingOrder.order || !pendingOrder.order.id) {
+         throw new Error("Draft order creation failed");
       }
 
       const intent = await api("/payments/intents", {
         method: "POST",
         body: JSON.stringify({
           amount: Number(cartTotal.toFixed(2)),
-          purpose: "TOPUP",
+          purpose: "ORDER",
           provider: "RAZORPAY",
           paymentMethod: "UPI",
           currency: "INR",
           metadata: {
-            checkoutFor: "ORDER",
+            orderId: pendingOrder.order.id,
             shopId: selectedShopId
           }
         })
       });
       setPaymentIntent(intent);
       setPendingOrderAfterPayment(true);
+      
       await openRazorpayCheckout(intent, {
-        description: "LifeHub marketplace payment",
+        description: "LifeHub marketplace order payment",
         onSettled: async () => {
           setPendingOrderAfterPayment(false);
-          await placeOrder();
+          setCart([]);
+          setSelectedMarketplaceProduct(null);
+          setMarketplaceView("catalog");
+          await Promise.all([loadHome(), loadOrders()]);
+          setToast("Payment successful. Order confirmed!");
         }
       });
     } catch (err) {
@@ -3617,533 +3633,11 @@ export default function SuperAppPage({
   }, [user.name, user.phone]);
 
   function renderChatTab() {
-    const activePeer = selectedThread?.peers?.[0] || null;
-    const activePeerName = activePeer?.name || `Conversation ${selectedConversationId || "-"}`;
-    const activePeerOnline = Boolean(activePeer?.userId && onlineUsers[String(activePeer.userId)]);
-    const canCall = Boolean(
-      selectedConversationId
-      && activePeer?.userId
-      && String(selectedThread?.type || "DIRECT").toUpperCase() !== "GROUP"
-    );
-    const chatPlaceholderCopy = "Select an accepted contact from the left and start chatting.";
-
-    return (
-      <section className="chat-shell messenger-shell whatsapp-shell">
-        <div className="chat-layout full-width-chat messenger-layout whatsapp-layout">
-          <aside className="chat-sidebar messenger-sidebar whatsapp-sidebar">
-            <div className="chat-sidebar-profile">
-              <div className="chat-avatar large own-profile">
-                {profilePhoto ? (
-                  <img src={profilePhoto} alt={user.name || "Profile"} className="chat-avatar-img" />
-                ) : (
-                  initials(user.name || "User")
-                )}
-              </div>
-              <div>
-                <strong>{user.name || "LifeHub User"}</strong>
-                <small>{roleLabel(userRoles)}</small>
-              </div>
-              <button className="icon-btn" onClick={loadConversations} title="Refresh chats" type="button">
-                <UiIcon name="refresh" />
-              </button>
-            </div>
-
-            <div className="chat-sidebar-headline">
-              <div>
-                <h3>Messages</h3>
-                <small>Accepted contacts and recent conversations</small>
-              </div>
-              <span className="status-pill">{totalUnreadChats} unread</span>
-            </div>
-
-            <div className="chat-sidebar-stats whatsapp-stats">
-              <span>{visibleConversations.length} chats</span>
-              <span>{totalUnreadChats} unread</span>
-              <span>{acceptedContacts.length} contacts</span>
-            </div>
-
-            <label className="chat-search-wrap whatsapp-search">
-              <UiIcon name="search" />
-              <input
-                value={chatSearch}
-                onChange={event => setChatSearch(event.target.value)}
-                placeholder="Search accepted contacts or chats"
-              />
-            </label>
-
-            <div className="chat-filter-row compact">
-              <button
-                className={`chat-filter-chip ${chatListMode === "all" ? "active" : ""}`}
-                type="button"
-                onClick={() => setChatListMode("all")}
-              >
-                All
-              </button>
-              <button
-                className={`chat-filter-chip ${chatListMode === "unread" ? "active" : ""}`}
-                type="button"
-                onClick={() => setChatListMode("unread")}
-              >
-                Unread
-              </button>
-              <button
-                className={`chat-filter-chip ${chatListMode === "groups" ? "active" : ""}`}
-                type="button"
-                onClick={() => setChatListMode("groups")}
-              >
-                Groups
-              </button>
-            </div>
-
-            <div className="chat-contact-launcher panel-soft-card">
-              <div className="chat-section-head">
-                <div>
-                  <strong>Add Contact</strong>
-                  <small>Search LifeHub users by phone number</small>
-                </div>
-                <button type="button" className="ghost-btn" onClick={loadContactDirectory}>Refresh</button>
-              </div>
-              <div className="chat-action-row tight">
-                <input
-                  value={contactRequestPhone}
-                  onChange={event => setContactRequestPhone(event.target.value)}
-                  placeholder="Enter phone number"
-                  onKeyDown={event => {
-                    if (event.key === "Enter") sendContactRequest();
-                  }}
-                />
-                <button type="button" onClick={sendContactRequest}>Add</button>
-              </div>
-              <div className="chat-permission-row compact">
-                <button
-                  type="button"
-                  className="btn-secondary"
-                  onClick={pickContactsFromDevice}
-                  disabled={!canUseDeviceContacts}
-                >
-                  {canUseDeviceContacts ? "Import" : "Manual only"}
-                </button>
-                <input
-                  value={contactPhones}
-                  onChange={event => setContactPhones(event.target.value)}
-                  placeholder="Paste contact numbers"
-                />
-                <button type="button" className="ghost-btn" onClick={resolveContacts}>Find</button>
-              </div>
-              <div className="chat-action-row tight">
-                <input
-                  value={groupPhones}
-                  onChange={event => setGroupPhones(event.target.value)}
-                  placeholder="Group member numbers"
-                />
-                <button type="button" className="ghost-btn" onClick={createGroupConversation}>New group</button>
-              </div>
-            </div>
-
-            {!!incomingContactRequests.length && (
-              <div className="chat-request-stack panel-soft-card">
-                <div className="chat-section-head">
-                  <strong>Incoming Requests</strong>
-                  <small>{incomingContactRequests.length} waiting</small>
-                </div>
-                {incomingContactRequests.map(request => (
-                  <div key={request.requestId} className="chat-request-row">
-                    <div>
-                      <strong>{request.name}</strong>
-                      <small>{request.phone}</small>
-                    </div>
-                    <div className="chat-request-actions">
-                      <button type="button" className="ghost-btn" onClick={() => respondToContactRequest(request.requestId, "REJECT")}>Reject</button>
-                      <button type="button" onClick={() => respondToContactRequest(request.requestId, "ACCEPT")}>Accept</button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {!!outgoingContactRequests.length && (
-              <div className="chat-request-stack muted panel-soft-card">
-                <div className="chat-section-head">
-                  <strong>Pending Sent</strong>
-                  <small>{outgoingContactRequests.length} request(s)</small>
-                </div>
-                {outgoingContactRequests.slice(0, 3).map(request => (
-                  <div key={request.requestId} className="chat-request-row">
-                    <div>
-                      <strong>{request.name}</strong>
-                      <small>{request.phone}</small>
-                    </div>
-                    <span className="status-pill">Pending</span>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {!!resolvedContacts.length && (
-              <div className="chat-discovery-grid panel-soft-card">
-                <div className="chat-section-head">
-                  <strong>Matched on LifeHub</strong>
-                  <small>{resolvedContacts.length} result(s)</small>
-                </div>
-                {resolvedContacts.slice(0, 5).map(contact => (
-                  <div key={contact.id} className="chat-discovery-row">
-                    <div>
-                      <strong>{contact.name}</strong>
-                      <small>{contact.phone}</small>
-                    </div>
-                    {String(contact.contactStatus || "").toUpperCase() === "ACCEPTED" ? (
-                      <button type="button" className="ghost-btn" onClick={() => startConversationFromContact(contact)}>
-                        Chat
-                      </button>
-                    ) : String(contact.contactStatus || "").toUpperCase() === "OUTGOING_PENDING" ? (
-                      <span className="status-pill">Request sent</span>
-                    ) : String(contact.contactStatus || "").toUpperCase() === "INCOMING_PENDING" ? (
-                      <span className="status-pill">Needs approval</span>
-                    ) : (
-                      <button type="button" className="ghost-btn" onClick={() => sendContactRequest(contact.phone)}>
-                        Add
-                      </button>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {!!acceptedContacts.length && (
-              <div className="chat-accepted-strip">
-                {acceptedContacts.slice(0, 8).map(contact => (
-                  <button key={contact.requestId || contact.userId} type="button" className="chat-contact-pill" onClick={() => startConversationFromContact(contact)}>
-                    <span>{initials(contact.name)}</span>
-                    <small>{contact.name}</small>
-                  </button>
-                ))}
-              </div>
-            )}
-
-            <div className="chat-list whatsapp-chat-list">
-              {visibleConversations.map(conv => {
-                const peer = conv?.peers?.[0] || {};
-                const label = peer?.name || `Conversation #${conv.id}`;
-                const avatarUrl = peer?.avatarUrl || providerAvatarUrl(label);
-                const isActive = String(conv.id) === String(selectedConversationId);
-                const unreadCount = Number(conv?.unreadCount || 0);
-                return (
-                  <button
-                    key={conv.id}
-                    className={`chat-list-item whatsapp-list-item ${isActive ? "active" : ""}`}
-                    onClick={() => openConversation(conv.id)}
-                    type="button"
-                  >
-                    <div className="chat-row">
-                      <div className="chat-avatar">
-                        {avatarUrl ? (
-                          <img src={avatarUrl} alt={label} className="chat-avatar-img" />
-                        ) : (
-                          initials(label)
-                        )}
-                        {onlineUsers[String(peer?.userId)] && <span className="online-dot" />}
-                      </div>
-                      <div className="chat-list-body">
-                        <div className="chat-list-top">
-                          <strong>{label}</strong>
-                          <small>{formatClock(conv?.lastMessage?.created_at)}</small>
-                        </div>
-                        <small className="chat-list-meta">
-                          {messagePreview(conv?.lastMessage?.content, 58)}
-                        </small>
-                        <div className="chat-preview-row">
-                          <small>{peer?.phone || titleCase(conv.type || "direct")}</small>
-                          {unreadCount > 0 && <span className="unread-badge">{unreadCount}</span>}
-                        </div>
-                      </div>
-                    </div>
-                  </button>
-                );
-              })}
-              {!visibleConversations.length && (
-                <div className="empty-line">No accepted contact chats yet.</div>
-              )}
-            </div>
-          </aside>
-
-          <article className="chat-thread messenger-thread whatsapp-thread">
-            <div className="chat-thread-head whatsapp-thread-head">
-              <div className="thread-peer">
-                <div className="chat-avatar large">
-                  {(() => {
-                    const label = activePeer?.name || activePeer?.phone || "Contact";
-                    const avatarUrl = activePeer?.avatarUrl || providerAvatarUrl(label);
-                    return avatarUrl ? (
-                      <img src={avatarUrl} alt={label} className="chat-avatar-img" />
-                    ) : (
-                      initials(label)
-                    );
-                  })()}
-                  {activePeerOnline && <span className="online-dot" />}
-                </div>
-                <div className="thread-peer-meta">
-                  <h2>{selectedConversationId ? activePeerName : "LifeHub Messenger"}</h2>
-                  <small>
-                    {selectedConversationId
-                      ? `${activePeerOnline ? "Online now" : "Offline"} | ${activePeer?.phone || "Secure chat"}`
-                      : `${acceptedContacts.length} contacts ready to message`}
-                  </small>
-                </div>
-              </div>
-              <div className="thread-actions">
-                <button
-                  className="icon-btn"
-                  onClick={() => startInstantCall(userSettings.chat?.defaultCallType || "video")}
-                  title="Video call"
-                  type="button"
-                  disabled={!canCall}
-                >
-                  <UiIcon name="video" />
-                </button>
-                <button
-                  className="icon-btn"
-                  title="Voice call"
-                  type="button"
-                  onClick={() => startInstantCall("audio")}
-                  disabled={!canCall}
-                >
-                  <UiIcon name="phone" />
-                </button>
-                <button
-                  className="icon-btn"
-                  title="Search in chat"
-                  type="button"
-                  onClick={() => threadSearchInputRef.current?.focus()}
-                >
-                  <UiIcon name="search" />
-                </button>
-                {activeCallRoomId && <span className="chip">Room {activeCallRoomId}</span>}
-              </div>
-            </div>
-            <div className="chat-thread-tools whatsapp-thread-tools">
-              <input
-                ref={threadSearchInputRef}
-                value={threadSearch}
-                onChange={event => setThreadSearch(event.target.value)}
-                placeholder="Search inside this chat"
-              />
-              {activeTypingLabel && <span className="typing-pill">{activeTypingLabel} typing...</span>}
-            </div>
-
-            {!selectedConversationId ? (
-                <div className="chat-placeholder whatsapp-placeholder">
-                  <h3>Start with an accepted contact</h3>
-                  <p>{chatPlaceholderCopy}</p>
-                <div className="chat-placeholder-actions">
-                  <button type="button" onClick={loadContactDirectory}>Refresh contacts</button>
-                  {!!acceptedContacts[0] && (
-                    <button type="button" className="ghost-btn" onClick={() => startConversationFromContact(acceptedContacts[0])}>
-                      Open latest contact
-                    </button>
-                  )}
-                </div>
-              </div>
-            ) : (
-              <>
-                <div
-                  ref={messagePanelRef}
-                  className="messages-panel whatsapp-feed"
-                  onScroll={event => {
-                    if (event.currentTarget.scrollTop < 64) {
-                      loadOlderConversationMessages();
-                    }
-                  }}
-                >
-                  {(loadingOlderMessages || hasOlderMessages) && (
-                    <div className="messages-loader-row">
-                      <button
-                        type="button"
-                        className="ghost-btn"
-                        onClick={loadOlderConversationMessages}
-                        disabled={loadingOlderMessages || !hasOlderMessages}
-                      >
-                        {loadingOlderMessages ? "Loading older messages..." : hasOlderMessages ? "Load older messages" : "All caught up"}
-                      </button>
-                    </div>
-                  )}
-                  {loadingMessages && <div className="empty-line">Loading messages...</div>}
-                  {filteredMessages.map(message => {
-                    const mine = String(message.sender_id) === String(user.id);
-                    return (
-                      <div key={message.id} className={`message-row ${mine ? "mine" : "theirs"}`}>
-                        {!mine && (
-                          <div className="chat-avatar tiny">
-                            {initials(activePeer?.name || activePeer?.phone || "U")}
-                          </div>
-                        )}
-                        <div className={`message-bubble ${mine ? "mine" : "theirs"}`}>
-                          {!mine && <strong className="bubble-author">{activePeer?.name || "User"}</strong>}
-                          <p>{message.content}</p>
-                          {!!message?.message_attachments?.length && (
-                            <div className="bubble-attachments">
-                              {message.message_attachments.map(attachment => (
-                                <a
-                                  key={`${message.id}_${attachment.id || attachment.file_url}`}
-                                  href={attachment.file_url}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                >
-                                  {attachment.file_type || "file"}
-                                </a>
-                              ))}
-                            </div>
-                          )}
-                          <small className="bubble-meta">
-                            {formatClock(message.created_at)}
-                            {mine && (
-                              <span className={`delivery-pill ${deliveryMarker(message.deliveryStatus).toLowerCase()}`}>
-                                <UiIcon name="check" size={12} />
-                                {deliveryMarker(message.deliveryStatus)}
-                              </span>
-                            )}
-                          </small>
-                        </div>
-                      </div>
-                    );
-                  })}
-                  <div ref={messageEndRef} />
-                  {!loadingMessages && !filteredMessages.length && <div className="empty-line">No messages in this conversation yet.</div>}
-                </div>
-
-                {!!pendingAttachments.length && (
-                  <div className="attachment-draft-row">
-                    {pendingAttachments.map(item => (
-                      <button
-                        key={item.fileId}
-                        type="button"
-                        className="attachment-chip"
-                        onClick={() => removePendingAttachment(item.fileId)}
-                      >
-                        {item.fileName || item.fileType} x
-                      </button>
-                    ))}
-                  </div>
-                )}
-
-                <div className="composer whatsapp-composer">
-                  <button
-                    className="icon-btn"
-                    type="button"
-                    title="Attach file"
-                    onClick={triggerAttachmentPicker}
-                    disabled={uploadingAttachment}
-                  >
-                    <UiIcon name="attach" />
-                  </button>
-                  <button
-                    className="icon-btn"
-                    type="button"
-                    title="Emoji"
-                    onClick={() => handleChatInputChange(`${chatText} :)`)}
-                  >
-                    <UiIcon name="emoji" />
-                  </button>
-                  <input
-                    value={chatText}
-                    onChange={event => handleChatInputChange(event.target.value)}
-                    onKeyDown={event => {
-                        if (event.key === "Enter" && userSettings.chat?.enterToSend !== false) {
-                          sendMessage();
-                        }
-                      }}
-                    placeholder="Type a message"
-                  />
-                  <button className="send-btn" onClick={sendMessage} type="button">
-                    <UiIcon name="send" />
-                    Send
-                  </button>
-                  <input
-                    ref={filePickerRef}
-                    type="file"
-                    multiple
-                    className="hidden-file-input"
-                    onChange={handleChatFileSelection}
-                  />
-                </div>
-              </>
-            )}
-            {!selectedConversationId && callSession.open && (
-              <div className="call-overlay">
-                <div className="call-panel">
-                  <div className="call-head">
-                    <strong>
-                      {callSession.type === "audio" ? "Audio Call" : "Video Call"} | Incoming
-                    </strong>
-                    <span className="status-pill">{callSession.status}</span>
-                  </div>
-                  <div className="call-actions">
-                    {callSession.status === "incoming" ? (
-                      <>
-                        <button type="button" onClick={acceptIncomingCall}>Accept</button>
-                        <button type="button" className="danger" onClick={declineIncomingCall}>
-                          Decline
-                        </button>
-                      </>
-                    ) : (
-                      <button type="button" className="danger" onClick={() => endCurrentCall()}>
-                        End Call
-                      </button>
-                    )}
-                  </div>
-                </div>
-              </div>
-            )}
-            {selectedConversationId && callSession.open && (
-              <div className="call-overlay">
-                <div className="call-panel">
-                  <div className="call-head">
-                    <strong>
-                      {callSession.type === "audio" ? "Audio Call" : "Video Call"} | {activePeerName}
-                    </strong>
-                    <span className="status-pill">{callSession.status}</span>
-                  </div>
-                  <div className="call-media-grid">
-                    <div className="call-media-box">
-                      <small>You</small>
-                      <video
-                        ref={localVideoRef}
-                        autoPlay
-                        muted
-                        playsInline
-                        className={`call-video ${callSession.type === "audio" ? "audio-only" : ""}`}
-                      />
-                    </div>
-                    <div className="call-media-box">
-                      <small>Peer {remoteCallUserId || currentCallTargetId}</small>
-                      <video
-                        ref={remoteVideoRef}
-                        autoPlay
-                        playsInline
-                        className={`call-video ${callSession.type === "audio" || !remoteStreamActive ? "audio-only" : ""}`}
-                      />
-                    </div>
-                  </div>
-                  <div className="call-actions">
-                    {callSession.status === "incoming" ? (
-                      <>
-                        <button type="button" onClick={acceptIncomingCall}>Accept</button>
-                        <button type="button" className="danger" onClick={declineIncomingCall}>
-                          Decline
-                        </button>
-                      </>
-                    ) : (
-                      <button type="button" className="danger" onClick={() => endCurrentCall()}>
-                        End Call
-                      </button>
-                    )}
-                  </div>
-                </div>
-              </div>
-            )}
-          </article>
-        </div>
-      </section>
-    );
+    return <WhatsAppChat 
+      api={api} 
+      user={{ id: user?.id, name: user?.name, phone: user?.phone, avatar: profilePhoto }} 
+      callProps={{ callSession, acceptIncomingCall, declineIncomingCall, endCurrentCall, startInstantCall, localVideoRef, remoteVideoRef, activeCallRoomId }}
+    />;
   }
 
   function renderMarketplaceTab() {
@@ -6004,4 +5498,4 @@ function renderOpsTab() {
       )}
     </div>
   );
-}
+    }}
