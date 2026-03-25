@@ -1,4 +1,4 @@
-const CACHE_NAME = "lifehub-pwa-v2";
+const CACHE_NAME = "lifehub-pwa-v3";
 const APP_SHELL = [
   "/",
   "/index.html",
@@ -9,6 +9,60 @@ const APP_SHELL = [
   "/lh-maskable.svg",
   "/offline.html"
 ];
+const STATIC_DESTINATIONS = new Set(["style", "script", "worker", "image", "font"]);
+const SKIP_CACHE_PREFIXES = ["/api", "/socket.io", "/src/", "/node_modules/", "/@vite", "/@react-refresh"];
+
+function shouldSkipCache(url) {
+  return SKIP_CACHE_PREFIXES.some(prefix => url.pathname.startsWith(prefix));
+}
+
+async function handleNavigation(request) {
+  const cache = await caches.open(CACHE_NAME);
+
+  try {
+    const response = await fetch(request);
+
+    if (response && response.ok) {
+      cache.put("/", response.clone());
+      cache.put("/index.html", response.clone());
+    }
+
+    return response;
+  } catch {
+    const cached = await cache.match(request);
+    if (cached) {
+      return cached;
+    }
+
+    const shell = await cache.match("/");
+    if (shell) {
+      return shell;
+    }
+
+    return cache.match("/offline.html");
+  }
+}
+
+async function handleStaticAsset(request) {
+  const cache = await caches.open(CACHE_NAME);
+  const cached = await cache.match(request);
+
+  if (cached) {
+    return cached;
+  }
+
+  try {
+    const response = await fetch(request);
+
+    if (response && response.ok) {
+      cache.put(request, response.clone());
+    }
+
+    return response;
+  } catch {
+    return Response.error();
+  }
+}
 
 self.addEventListener("install", event => {
   event.waitUntil(
@@ -31,35 +85,24 @@ self.addEventListener("fetch", event => {
 
   const requestUrl = new URL(event.request.url);
   const isHtmlNavigation = event.request.mode === "navigate";
+  const isSameOrigin = requestUrl.origin === self.location.origin;
+  const isStaticAsset =
+    requestUrl.pathname.startsWith("/assets/")
+    || STATIC_DESTINATIONS.has(event.request.destination)
+    || APP_SHELL.includes(requestUrl.pathname);
 
-  if (isHtmlNavigation) {
-    event.respondWith(
-      fetch(event.request)
-        .then(response => {
-          const copy = response.clone();
-          caches.open(CACHE_NAME).then(cache => cache.put("/", copy));
-          return response;
-        })
-        .catch(async () => {
-          const cached = await caches.match(event.request);
-          return cached || caches.match("/offline.html");
-        })
-    );
+  if (!isSameOrigin || shouldSkipCache(requestUrl)) {
     return;
   }
 
-  event.respondWith(
-    caches.match(event.request).then(cached => {
-      if (cached) return cached;
-      return fetch(event.request)
-        .then(response => {
-          if (requestUrl.origin === self.location.origin) {
-            const copy = response.clone();
-            caches.open(CACHE_NAME).then(cache => cache.put(event.request, copy));
-          }
-          return response;
-        })
-        .catch(() => caches.match("/offline.html"));
-    })
-  );
+  if (isHtmlNavigation) {
+    event.respondWith(handleNavigation(event.request));
+    return;
+  }
+
+  if (!isStaticAsset) {
+    return;
+  }
+
+  event.respondWith(handleStaticAsset(event.request));
 });
