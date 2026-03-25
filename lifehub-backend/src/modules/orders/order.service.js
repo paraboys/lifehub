@@ -12,7 +12,8 @@ import {
 import { eventBus } from "../../common/events/eventBus.js";
 import {
   reserveFundsForOrder,
-  refundOrderEscrow
+  refundOrderEscrow,
+  releaseOrderEscrow
 } from "../transactions/transaction.service.js";
 import { createNotification } from "../notifications/notification.service.js";
 import { getSharedRedisClient } from "../../config/redis.js";
@@ -706,6 +707,8 @@ export async function confirmDelivery({
     where: { id: order.id },
     data: { status: "DELIVERED" }
   });
+
+  await releaseOrderEscrow({ orderId: order.id });
 
   await prisma.analytics_events.create({
     data: {

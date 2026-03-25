@@ -3728,6 +3728,25 @@ export default function SuperAppPage({
                 <span className="mp-hero-eyebrow">LifeHub Premium</span>
                 <h1>Discover the Best Products</h1>
                 <p>Curated collections from trusted local vendors, delivered with care.</p>
+                
+                <div className="mp-hero-search-bar">
+                  <div className="mp-search-inner">
+                    <span className="mp-search-icon">🔎</span>
+                    <input
+                      type="text"
+                      className="mp-search-input"
+                      placeholder="Search for groceries, electronics, or anything..."
+                      value={productQuery}
+                      onChange={(e) => setProductQuery(e.target.value)}
+                    />
+                    {productQuery && (
+                      <button className="mp-search-clear" onClick={() => setProductQuery("")}>
+                        ✕
+                      </button>
+                    )}
+                  </div>
+                </div>
+
                 <div className="mp-hero-stats">
                   <div className="mp-stat-item"><strong>10k+</strong><small>Products</small></div>
                   <div className="mp-stat-item"><strong>500+</strong><small>Shops</small></div>
@@ -5559,4 +5578,5 @@ function renderOpsTab() {
       )}
     </div>
   );
-    }}
+}
+}
