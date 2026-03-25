@@ -5,6 +5,7 @@ import { normalizeBigInt } from "../../common/utils/bigint.js";
 import { replayOfflineEvents } from "../../common/realtime/offlineEvents.js";
 import { createNotification } from "../notifications/notification.service.js";
 import { getSharedRedisClient } from "../../config/redis.js";
+import { buildPhoneCandidates } from "../auth/otp.service.js";
 
 const redis = getSharedRedisClient();
 const MAX_MESSAGES_PER_MIN = Number(process.env.CHAT_RATE_LIMIT_PER_MIN || 30);
@@ -59,6 +60,37 @@ async function ensureChatContactsTable() {
 
 function normalizePhone(phone) {
   return String(phone || "").trim();
+}
+
+function buildNormalizedPhoneCandidates(phone) {
+  return [...new Set(buildPhoneCandidates(phone).map(normalizePhone).filter(Boolean))];
+}
+
+function buildPhoneCandidatePool(phones = []) {
+  const seen = new Set();
+  const values = [];
+
+  for (const phone of phones) {
+    for (const candidate of buildNormalizedPhoneCandidates(phone)) {
+      if (seen.has(candidate)) continue;
+      seen.add(candidate);
+      values.push(candidate);
+    }
+  }
+
+  return values;
+}
+
+async function findUserByPhone(phone, select = { id: true, name: true, phone: true }) {
+  const candidates = buildNormalizedPhoneCandidates(phone);
+  if (!candidates.length) return null;
+
+  return prisma.users.findFirst({
+    where: {
+      phone: { in: candidates }
+    },
+    select
+  });
 }
 
 function cdnUrlFromStorage(storagePath) {
@@ -336,10 +368,7 @@ export async function requestContactByPhone({ requesterId, phone }) {
     throw new Error("phone is required");
   }
 
-  const peer = await prisma.users.findUnique({
-    where: { phone: normalizedPhone },
-    select: { id: true, name: true, phone: true }
-  });
+  const peer = await findUserByPhone(normalizedPhone);
   if (!peer) {
     throw new Error("No LifeHub account found for this phone number");
   }
@@ -568,8 +597,10 @@ export async function createConversationByPhone({ creatorId, phone }) {
     throw new Error("phone is required");
   }
 
-  const peer = await prisma.users.findUnique({
-    where: { phone: normalizedPhone }
+  const peer = await findUserByPhone(normalizedPhone, {
+    id: true,
+    name: true,
+    phone: true
   });
   if (!peer) {
     throw new Error("No LifeHub account found for this phone number");
@@ -590,10 +621,11 @@ export async function createGroupConversationByPhones({
   creatorId,
   phones = []
 }) {
-  const normalizedPhones = [...new Set(phones.map(normalizePhone).filter(Boolean))];
-  if (normalizedPhones.length < 2) {
+  const requestedPhones = [...new Set(phones.map(normalizePhone).filter(Boolean))];
+  if (requestedPhones.length < 2) {
     throw new Error("At least 2 phone numbers are required for a group chat");
   }
+  const normalizedPhones = buildPhoneCandidatePool(requestedPhones);
 
   const users = await prisma.users.findMany({
     where: {
@@ -616,8 +648,9 @@ export async function createGroupConversationByPhones({
 }
 
 export async function resolveContactsByPhones({ userId, phones = [] }) {
-  const normalized = [...new Set(phones.map(normalizePhone).filter(Boolean))].slice(0, 500);
-  if (!normalized.length) return [];
+  const requestedPhones = [...new Set(phones.map(normalizePhone).filter(Boolean))].slice(0, 500);
+  if (!requestedPhones.length) return [];
+  const normalized = buildPhoneCandidatePool(requestedPhones);
 
   const users = await prisma.users.findMany({
     where: {
@@ -631,8 +664,27 @@ export async function resolveContactsByPhones({ userId, phones = [] }) {
     }
   });
 
+  const userByPhone = new Map(
+    (users || []).map(user => [normalizePhone(user.phone), user])
+  );
+  const matchedUsers = [];
+  const seenUserIds = new Set();
+
+  for (const requestedPhone of requestedPhones) {
+    const match = buildNormalizedPhoneCandidates(requestedPhone)
+      .map(candidate => userByPhone.get(candidate))
+      .find(Boolean);
+
+    if (!match) continue;
+
+    const userIdKey = String(match.id);
+    if (seenUserIds.has(userIdKey)) continue;
+    seenUserIds.add(userIdKey);
+    matchedUsers.push(match);
+  }
+
   const contacts = [];
-  for (const user of users) {
+  for (const user of matchedUsers) {
     contacts.push({
       ...user,
       contactStatus: await getContactStatus(userId, user.id)
