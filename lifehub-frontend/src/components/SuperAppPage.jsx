@@ -2453,4334 +2453,4331 @@ export default function SuperAppPage({
     return "";
   }
 
-  async function placeOrder() {
-    if (!selectedShopId || !cart.length) return;
-    async function placeOrder(skipCartClear = false) {
-      if (!selectedShopId || !cart.length) {
-        throw new Error("Shop not selected or cart is empty.");
+  async function placeOrder(skipCartClear = false) {
+    if (!selectedShopId || !cart.length) {
+      throw new Error("Shop not selected or cart is empty.");
+    }
+    try {
+      setCheckoutValidationError("");
+      const orderData = await api("/orders", {
+        method: "POST",
+        headers: { "x-idempotency-key": `order_${Date.now()}` },
+        body: JSON.stringify({
+          shopId: selectedShopId,
+          total: Number(cartTotal.toFixed(2)),
+          items: cart.map((item) => ({
+            productId: item.productId,
+            quantity: item.quantity,
+          })),
+          paymentMethod: String(checkoutMode || "RAZORPAY").toUpperCase(),
+          deliveryDetails,
+        }),
+      });
+      if (!skipCartClear) {
+        setCart([]);
+        setSelectedMarketplaceProduct(null);
+        setMarketplaceView("catalog");
+        await Promise.all([loadHome(), loadOrders()]);
       }
-      try {
-        setCheckoutValidationError("");
-        const orderData = await api("/orders", {
-          method: "POST",
-          headers: { "x-idempotency-key": `order_${Date.now()}` },
-          body: JSON.stringify({
+      return orderData;
+    } catch (err) {
+      setError(err.message || "Order creation failed.");
+      throw err;
+    }
+  }
+
+  async function proceedCheckout() {
+    try {
+      const deliveryError = validateDeliveryDetails();
+      if (deliveryError) {
+        setCheckoutValidationError(deliveryError);
+        setError(deliveryError);
+        return;
+      }
+      setCheckoutValidationError("");
+      const method = String(checkoutMode || "RAZORPAY").toUpperCase();
+
+      if (method === "WALLET") {
+        await placeOrder(false);
+        return;
+      }
+
+      // Order First Architecture
+      const pendingOrder = await placeOrder(true);
+      if (!pendingOrder || !pendingOrder.order || !pendingOrder.order.id) {
+        throw new Error("Draft order creation failed");
+      }
+
+      const intent = await api("/payments/intents", {
+        method: "POST",
+        body: JSON.stringify({
+          amount: Number(cartTotal.toFixed(2)),
+          purpose: "ORDER",
+          provider: "RAZORPAY",
+          paymentMethod: "UPI",
+          currency: "INR",
+          metadata: {
+            orderId: pendingOrder.order.id,
             shopId: selectedShopId,
-            total: Number(cartTotal.toFixed(2)),
-            items: cart.map((item) => ({
-              productId: item.productId,
-              quantity: item.quantity,
-            })),
-            paymentMethod: String(checkoutMode || "RAZORPAY").toUpperCase(),
-            deliveryDetails,
-          }),
-        });
-        if (!skipCartClear) {
+          },
+        }),
+      });
+      setPaymentIntent(intent);
+      setPendingOrderAfterPayment(true);
+
+      await openRazorpayCheckout(intent, {
+        description: "LifeHub marketplace order payment",
+        onSettled: async () => {
+          setPendingOrderAfterPayment(false);
           setCart([]);
           setSelectedMarketplaceProduct(null);
           setMarketplaceView("catalog");
           await Promise.all([loadHome(), loadOrders()]);
-        }
-        return orderData;
-      } catch (err) {
-        setError(err.message || "Order creation failed.");
-        throw err;
-      }
-    }
-
-    async function proceedCheckout() {
-      try {
-        const deliveryError = validateDeliveryDetails();
-        if (deliveryError) {
-          setCheckoutValidationError(deliveryError);
-          setError(deliveryError);
-          return;
-        }
-        setCheckoutValidationError("");
-        const method = String(checkoutMode || "RAZORPAY").toUpperCase();
-
-        if (method === "WALLET") {
-          await placeOrder(false);
-          return;
-        }
-
-        // Order First Architecture
-        const pendingOrder = await placeOrder(true);
-        if (!pendingOrder || !pendingOrder.order || !pendingOrder.order.id) {
-          throw new Error("Draft order creation failed");
-        }
-
-        const intent = await api("/payments/intents", {
-          method: "POST",
-          body: JSON.stringify({
-            amount: Number(cartTotal.toFixed(2)),
-            purpose: "ORDER",
-            provider: "RAZORPAY",
-            paymentMethod: "UPI",
-            currency: "INR",
-            metadata: {
-              orderId: pendingOrder.order.id,
-              shopId: selectedShopId,
-            },
-          }),
-        });
-        setPaymentIntent(intent);
-        setPendingOrderAfterPayment(true);
-
-        await openRazorpayCheckout(intent, {
-          description: "LifeHub marketplace order payment",
-          onSettled: async () => {
-            setPendingOrderAfterPayment(false);
-            setCart([]);
-            setSelectedMarketplaceProduct(null);
-            setMarketplaceView("catalog");
-            await Promise.all([loadHome(), loadOrders()]);
-            setToast("Payment successful. Order confirmed!");
-          },
-        });
-      } catch (err) {
-        setPendingOrderAfterPayment(false);
-        setError(err.message || "Checkout failed");
-      }
-    }
-
-    async function loadProviders(override = null) {
-      const source = override || serviceFilters;
-      const query = new URLSearchParams({
-        skill: providerSkill,
-        availableOnly: "true",
-        limit: "20",
-        lat: source.lat,
-        lng: source.lng,
-        radiusKm: source.radiusKm,
+          setToast("Payment successful. Order confirmed!");
+        },
       });
-      const data = await api(`/marketplace/providers/search?${query}`);
-      const rows = data.providers || [];
-      setProviders(rows);
-      if (!rows.length) {
-        setSelectedProviderId("");
-        setSelectedProviderProfile(null);
-        return;
-      }
-      const stillVisible = rows.some(
-        (item) => String(item.id) === String(selectedProviderId),
+    } catch (err) {
+      setPendingOrderAfterPayment(false);
+      setError(err.message || "Checkout failed");
+    }
+  }
+
+  async function loadProviders(override = null) {
+    const source = override || serviceFilters;
+    const query = new URLSearchParams({
+      skill: providerSkill,
+      availableOnly: "true",
+      limit: "20",
+      lat: source.lat,
+      lng: source.lng,
+      radiusKm: source.radiusKm,
+    });
+    const data = await api(`/marketplace/providers/search?${query}`);
+    const rows = data.providers || [];
+    setProviders(rows);
+    if (!rows.length) {
+      setSelectedProviderId("");
+      setSelectedProviderProfile(null);
+      return;
+    }
+    const stillVisible = rows.some(
+      (item) => String(item.id) === String(selectedProviderId),
+    );
+    if (!stillVisible) {
+      const defaultId = String(rows[0].id);
+      setSelectedProviderId(defaultId);
+      openProviderProfile(defaultId).catch(() => {});
+    }
+    const mine = rows.find((item) => String(item.userId) === String(user.id));
+    if (mine?.id) {
+      setMyProviderProfileId(String(mine.id));
+    }
+  }
+
+  async function openProviderProfile(providerId) {
+    const resolvedId = String(providerId || "").trim();
+    if (!resolvedId) return;
+
+    setSelectedProviderId(resolvedId);
+    setLoadingProviderProfile(true);
+    setProviderProfileError("");
+    try {
+      const profile = await api(`/marketplace/providers/${resolvedId}`);
+      setSelectedProviderProfile(profile || null);
+      const firstSkill = profile?.provider_skills?.[0]?.skill_name;
+      setServiceForm((prev) => ({
+        ...prev,
+        preferredProviderId: resolvedId,
+        ...(firstSkill ? { serviceType: firstSkill } : {}),
+      }));
+    } catch (err) {
+      setSelectedProviderProfile(null);
+      setProviderProfileError(
+        err.message || "Unable to load provider profile.",
       );
-      if (!stillVisible) {
-        const defaultId = String(rows[0].id);
-        setSelectedProviderId(defaultId);
-        openProviderProfile(defaultId).catch(() => {});
-      }
-      const mine = rows.find((item) => String(item.userId) === String(user.id));
-      if (mine?.id) {
-        setMyProviderProfileId(String(mine.id));
-      }
+    } finally {
+      setLoadingProviderProfile(false);
     }
+  }
 
-    async function openProviderProfile(providerId) {
-      const resolvedId = String(providerId || "").trim();
-      if (!resolvedId) return;
-
-      setSelectedProviderId(resolvedId);
-      setLoadingProviderProfile(true);
-      setProviderProfileError("");
-      try {
-        const profile = await api(`/marketplace/providers/${resolvedId}`);
-        setSelectedProviderProfile(profile || null);
-        const firstSkill = profile?.provider_skills?.[0]?.skill_name;
-        setServiceForm((prev) => ({
-          ...prev,
-          preferredProviderId: resolvedId,
-          ...(firstSkill ? { serviceType: firstSkill } : {}),
-        }));
-      } catch (err) {
-        setSelectedProviderProfile(null);
-        setProviderProfileError(
-          err.message || "Unable to load provider profile.",
-        );
-      } finally {
-        setLoadingProviderProfile(false);
-      }
+  async function useCurrentLocation() {
+    if (!navigator.geolocation) {
+      setError("Geolocation is not supported in this browser.");
+      return;
     }
+    const now = Date.now();
+    if (now - locationThrottleRef.current < 3000) {
+      return;
+    }
+    locationThrottleRef.current = now;
 
-    async function useCurrentLocation() {
-      if (!navigator.geolocation) {
-        setError("Geolocation is not supported in this browser.");
-        return;
-      }
-      const now = Date.now();
-      if (now - locationThrottleRef.current < 3000) {
-        return;
-      }
-      locationThrottleRef.current = now;
-
-      navigator.geolocation.getCurrentPosition(
-        async (position) => {
-          const lat = String(position.coords.latitude);
-          const lng = String(position.coords.longitude);
-          const nextShop = { ...shopFilters, lat, lng };
-          const nextService = { ...serviceFilters, lat, lng };
-          setShopFilters(nextShop);
-          setServiceFilters(nextService);
-          setShopLocationForm((prev) => ({ ...prev, lat, lng }));
-          setProviderLocationForm((prev) => ({ ...prev, lat, lng }));
-          try {
-            if (
-              (hasRole("SHOPKEEPER") || hasRole("ADMIN")) &&
-              sellerForm.shopId
-            ) {
-              await api(`/marketplace/shops/${sellerForm.shopId}/location`, {
+    navigator.geolocation.getCurrentPosition(
+      async (position) => {
+        const lat = String(position.coords.latitude);
+        const lng = String(position.coords.longitude);
+        const nextShop = { ...shopFilters, lat, lng };
+        const nextService = { ...serviceFilters, lat, lng };
+        setShopFilters(nextShop);
+        setServiceFilters(nextService);
+        setShopLocationForm((prev) => ({ ...prev, lat, lng }));
+        setProviderLocationForm((prev) => ({ ...prev, lat, lng }));
+        try {
+          if (
+            (hasRole("SHOPKEEPER") || hasRole("ADMIN")) &&
+            sellerForm.shopId
+          ) {
+            await api(`/marketplace/shops/${sellerForm.shopId}/location`, {
+              method: "PUT",
+              body: JSON.stringify({
+                lat: Number(lat),
+                lng: Number(lng),
+              }),
+            });
+          }
+          if (
+            (hasRole("PROVIDER") || hasRole("ADMIN")) &&
+            myProviderProfileId
+          ) {
+            await api(
+              `/marketplace/providers/${myProviderProfileId}/location`,
+              {
                 method: "PUT",
                 body: JSON.stringify({
                   lat: Number(lat),
                   lng: Number(lng),
+                  available: true,
                 }),
-              });
-            }
-            if (
-              (hasRole("PROVIDER") || hasRole("ADMIN")) &&
-              myProviderProfileId
-            ) {
-              await api(
-                `/marketplace/providers/${myProviderProfileId}/location`,
-                {
-                  method: "PUT",
-                  body: JSON.stringify({
-                    lat: Number(lat),
-                    lng: Number(lng),
-                    available: true,
-                  }),
-                },
-              );
-            }
-            await Promise.all([
-              searchShops(nextShop),
-              loadProviders(nextService),
-            ]);
-          } catch {
-            // ignore refresh error in callback
+              },
+            );
           }
-        },
-        (geoError) => {
-          setError(geoError.message || "Location access denied");
-        },
-        { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 },
-      );
-    }
+          await Promise.all([
+            searchShops(nextShop),
+            loadProviders(nextService),
+          ]);
+        } catch {
+          // ignore refresh error in callback
+        }
+      },
+      (geoError) => {
+        setError(geoError.message || "Location access denied");
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 },
+    );
+  }
 
-    async function createServiceRequest() {
-      await api("/service-requests", {
-        method: "POST",
-        body: JSON.stringify({
-          serviceType: serviceForm.serviceType,
-          description: serviceForm.description,
-          preferredProviderId: serviceForm.preferredProviderId || undefined,
-        }),
-      });
-      setServiceForm((prev) => ({
-        ...prev,
-        description: "",
-        preferredProviderId: "",
-      }));
-      await loadServiceRequests();
-    }
+  async function createServiceRequest() {
+    await api("/service-requests", {
+      method: "POST",
+      body: JSON.stringify({
+        serviceType: serviceForm.serviceType,
+        description: serviceForm.description,
+        preferredProviderId: serviceForm.preferredProviderId || undefined,
+      }),
+    });
+    setServiceForm((prev) => ({
+      ...prev,
+      description: "",
+      preferredProviderId: "",
+    }));
+    await loadServiceRequests();
+  }
 
-    async function loadServiceRequests() {
-      const data = await api("/service-requests?limit=50");
-      setServiceRequests(data.requests || []);
-    }
+  async function loadServiceRequests() {
+    const data = await api("/service-requests?limit=50");
+    setServiceRequests(data.requests || []);
+  }
 
-    async function cancelServiceRequest(requestId) {
-      await api(`/service-requests/${requestId}/cancel`, {
+  async function cancelServiceRequest(requestId) {
+    await api(`/service-requests/${requestId}/cancel`, {
+      method: "POST",
+      body: JSON.stringify({ reason: "USER_CANCELLED" }),
+    });
+    await loadServiceRequests();
+  }
+
+  async function completeServiceRequest(requestId) {
+    await api(`/service-requests/${requestId}/complete`, { method: "POST" });
+    await loadServiceRequests();
+  }
+
+  async function cancelOrder(orderId) {
+    try {
+      await api(`/orders/${orderId}/cancel`, {
         method: "POST",
         body: JSON.stringify({ reason: "USER_CANCELLED" }),
       });
-      await loadServiceRequests();
+      await Promise.all([loadHome(), loadOrders()]);
+    } catch (err) {
+      setError(err.message || "Unable to cancel order");
+    }
+  }
+
+  async function startDelivery(orderId) {
+    await api(`/orders/${orderId}/delivery/start`, { method: "POST" });
+    await loadOrders();
+  }
+
+  async function sendDeliveryOtp(orderId) {
+    await api(`/orders/${orderId}/delivery/otp`, { method: "POST" });
+    setToast("Delivery OTP sent to customer notification channels.");
+  }
+
+  async function confirmDelivery(orderId) {
+    await api(`/orders/${orderId}/delivery/confirm`, {
+      method: "POST",
+      body: JSON.stringify({
+        otp: deliveryOtpInput,
+        rating: Number(deliveryRating || 5),
+        feedback: deliveryFeedback,
+      }),
+    });
+    setDeliveryOtpInput("");
+    setDeliveryFeedback("");
+    await loadOrders();
+  }
+
+  async function requestRefund(orderId) {
+    await api(`/transactions/orders/${orderId}/refund`, {
+      method: "POST",
+      body: JSON.stringify({
+        reason: "CUSTOMER_REQUESTED",
+      }),
+    });
+    await Promise.all([loadOrders(), loadWallet()]);
+    setToast("Refund processed.");
+  }
+
+  async function payoutShopkeeper(orderId) {
+    await api(`/transactions/orders/${orderId}/payout`, {
+      method: "POST",
+    });
+    await Promise.all([loadOrders(), loadWallet()]);
+    setToast("Payout executed to shopkeeper.");
+  }
+
+  async function runReconciliationNow() {
+    const result = await api("/transactions/ops/reconcile", {
+      method: "POST",
+    });
+    setToast(
+      `Reconciliation done. Checked ${result.checkedOrders}, mismatches ${result.mismatchCount}.`,
+    );
+  }
+
+  async function loadWallet() {
+    const [summary, txRows, receive] = await Promise.all([
+      api("/transactions/wallet"),
+      api("/transactions?limit=50"),
+      api("/transactions/wallet/receive").catch(() => null),
+    ]);
+    setWalletSummary(summary);
+    setTransactions(txRows.transactions || []);
+    setReceiveProfile(receive);
+  }
+
+  async function loadUserProfile() {
+    const data = await api("/users/me");
+    const nextProfile = {
+      ...session?.user,
+      ...data,
+      roles: data?.roles || session?.user?.roles || [],
+    };
+    setProfile(nextProfile);
+    setProfileDraft({
+      name: nextProfile.name || "",
+      email: nextProfile.email || "",
+    });
+  }
+
+  async function transferWalletBalance() {
+    const amount = Number(transferForm.amount || 0);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setError("Enter a valid transfer amount.");
+      return;
+    }
+    if (
+      transferForm.recipientType === "phone" &&
+      !transferForm.toPhone.trim()
+    ) {
+      setError("Recipient phone is required.");
+      return;
+    }
+    if (
+      transferForm.recipientType === "upi" &&
+      !transferForm.toUpiId.trim()
+    ) {
+      setError("Recipient UPI ID is required.");
+      return;
     }
 
-    async function completeServiceRequest(requestId) {
-      await api(`/service-requests/${requestId}/complete`, { method: "POST" });
-      await loadServiceRequests();
-    }
-
-    async function cancelOrder(orderId) {
-      try {
-        await api(`/orders/${orderId}/cancel`, {
-          method: "POST",
-          body: JSON.stringify({ reason: "USER_CANCELLED" }),
-        });
-        await Promise.all([loadHome(), loadOrders()]);
-      } catch (err) {
-        setError(err.message || "Unable to cancel order");
-      }
-    }
-
-    async function startDelivery(orderId) {
-      await api(`/orders/${orderId}/delivery/start`, { method: "POST" });
-      await loadOrders();
-    }
-
-    async function sendDeliveryOtp(orderId) {
-      await api(`/orders/${orderId}/delivery/otp`, { method: "POST" });
-      setToast("Delivery OTP sent to customer notification channels.");
-    }
-
-    async function confirmDelivery(orderId) {
-      await api(`/orders/${orderId}/delivery/confirm`, {
+    setTransferBusy(true);
+    setError("");
+    try {
+      const payload = await api("/transactions/transfer", {
         method: "POST",
         body: JSON.stringify({
-          otp: deliveryOtpInput,
-          rating: Number(deliveryRating || 5),
-          feedback: deliveryFeedback,
+          toPhone:
+            transferForm.recipientType === "phone"
+              ? transferForm.toPhone
+              : undefined,
+          toUpiId:
+            transferForm.recipientType === "upi"
+              ? transferForm.toUpiId
+              : undefined,
+          amount,
+          note: transferForm.note,
         }),
       });
-      setDeliveryOtpInput("");
-      setDeliveryFeedback("");
-      await loadOrders();
-    }
 
-    async function requestRefund(orderId) {
-      await api(`/transactions/orders/${orderId}/refund`, {
-        method: "POST",
-        body: JSON.stringify({
-          reason: "CUSTOMER_REQUESTED",
-        }),
-      });
-      await Promise.all([loadOrders(), loadWallet()]);
-      setToast("Refund processed.");
-    }
-
-    async function payoutShopkeeper(orderId) {
-      await api(`/transactions/orders/${orderId}/payout`, {
-        method: "POST",
-      });
-      await Promise.all([loadOrders(), loadWallet()]);
-      setToast("Payout executed to shopkeeper.");
-    }
-
-    async function runReconciliationNow() {
-      const result = await api("/transactions/ops/reconcile", {
-        method: "POST",
-      });
+      setTransferForm((prev) => ({
+        ...prev,
+        amount: "",
+        note: "",
+        toPhone: prev.recipientType === "phone" ? prev.toPhone : "",
+        toUpiId: prev.recipientType === "upi" ? prev.toUpiId : "",
+      }));
       setToast(
-        `Reconciliation done. Checked ${result.checkedOrders}, mismatches ${result.mismatchCount}.`,
+        `Transferred ${toCurrency(amount)} to ${payload?.recipient?.name || "recipient"}.`,
+      );
+      setTimeout(() => setToast(""), 3000);
+      await loadWallet();
+    } catch (err) {
+      setError(err.message || "Transfer failed");
+    } finally {
+      setTransferBusy(false);
+    }
+  }
+
+  async function loadUserSettings() {
+    const settings = await api("/users/settings/me");
+    const merged = mergeSettings(settings);
+    setUserSettings(merged);
+    const nextTheme = String(merged?.ui?.theme || "").toLowerCase();
+    if (
+      (nextTheme === "light" || nextTheme === "dark") &&
+      typeof onThemeChange === "function"
+    ) {
+      onThemeChange(nextTheme);
+    }
+  }
+
+  async function saveProfileDetails() {
+    const name = String(profileDraft.name || "").trim();
+    const email = String(profileDraft.email || "").trim();
+
+    if (!name) {
+      setError("Name is required.");
+      return;
+    }
+
+    setSavingProfile(true);
+    setError("");
+    try {
+      const saved = await api("/users/me", {
+        method: "PUT",
+        body: JSON.stringify({
+          name,
+          email: email || null,
+        }),
+      });
+      setProfile(saved);
+      setProfileDraft({
+        name: saved.name || "",
+        email: saved.email || "",
+      });
+      setToast("Profile details updated.");
+    } catch (err) {
+      setError(err.message || "Unable to update profile.");
+    } finally {
+      setSavingProfile(false);
+    }
+  }
+
+  async function saveUserSettings() {
+    const saved = await api("/users/settings/me", {
+      method: "PUT",
+      body: JSON.stringify(userSettings),
+    });
+    const merged = mergeSettings(saved);
+    setUserSettings(merged);
+    const nextTheme = String(merged?.ui?.theme || "").toLowerCase();
+    if (
+      (nextTheme === "light" || nextTheme === "dark") &&
+      typeof onThemeChange === "function"
+    ) {
+      onThemeChange(nextTheme);
+    }
+    setToast("Profile settings updated.");
+  }
+
+  function applyTheme(nextTheme) {
+    const resolved = nextTheme === "dark" ? "dark" : "light";
+    setUserSettings((prev) => ({
+      ...prev,
+      ui: {
+        ...(prev.ui || {}),
+        theme: resolved,
+      },
+    }));
+    if (typeof onThemeChange === "function") {
+      onThemeChange(resolved);
+    }
+  }
+
+  async function loadNotificationPreferences() {
+    const prefs = await api("/notifications/preferences/me");
+    setNotificationPrefs({
+      quietHours: {
+        enabled: Boolean(prefs?.quietHours?.enabled),
+        startHour: Number(prefs?.quietHours?.startHour ?? 22),
+        endHour: Number(prefs?.quietHours?.endHour ?? 7),
+        timezone: prefs?.quietHours?.timezone || "UTC",
+      },
+      perEventRules: prefs?.perEventRules || {},
+      channelPriority: prefs?.channelPriority || [
+        "PUSH",
+        "IN_APP",
+        "EMAIL",
+        "SMS",
+      ],
+    });
+  }
+
+  async function saveNotificationPreferences() {
+    const saved = await api("/notifications/preferences/me", {
+      method: "PUT",
+      body: JSON.stringify(notificationPrefs),
+    });
+    setNotificationPrefs({
+      quietHours: {
+        enabled: Boolean(saved?.quietHours?.enabled),
+        startHour: Number(saved?.quietHours?.startHour ?? 22),
+        endHour: Number(saved?.quietHours?.endHour ?? 7),
+        timezone: saved?.quietHours?.timezone || "UTC",
+      },
+      perEventRules: saved?.perEventRules || {},
+      channelPriority: saved?.channelPriority || [
+        "PUSH",
+        "IN_APP",
+        "EMAIL",
+        "SMS",
+      ],
+    });
+    setToast("Notification preferences saved.");
+  }
+
+  async function changePasswordAction() {
+    if (!passwordDraft.currentPassword || !passwordDraft.newPassword) {
+      setError("Enter current and new password.");
+      return;
+    }
+    if (passwordDraft.newPassword !== passwordDraft.confirmPassword) {
+      setError("New password and confirm password must match.");
+      return;
+    }
+
+    setChangingPassword(true);
+    setError("");
+    try {
+      const result = await api("/auth/password/change", {
+        method: "POST",
+        body: JSON.stringify({
+          currentPassword: passwordDraft.currentPassword,
+          newPassword: passwordDraft.newPassword,
+        }),
+      });
+      setPasswordDraft({
+        currentPassword: "",
+        newPassword: "",
+        confirmPassword: "",
+      });
+      setToast(result?.message || "Password updated successfully.");
+    } catch (err) {
+      setError(err.message || "Unable to change password.");
+    } finally {
+      setChangingPassword(false);
+    }
+  }
+
+  async function sendNotificationTest() {
+    await api("/notifications/me/test", {
+      method: "POST",
+      body: JSON.stringify({
+        channels: ["IN_APP", "PUSH", "SMS"],
+      }),
+    });
+    setToast("Test notification queued.");
+  }
+
+  async function requestBrowserPushPermission() {
+    if (typeof Notification === "undefined") {
+      setError("Browser notifications are not supported on this device.");
+      return;
+    }
+    const permission = await Notification.requestPermission();
+    setBrowserPushPermission(permission);
+    if (permission !== "granted") {
+      setError("Browser notification permission denied.");
+      return;
+    }
+    setToast("Browser push permission enabled.");
+  }
+
+  async function markNotificationsAsRead({
+    notificationIds = [],
+    scope = "system",
+  } = {}) {
+    const ids = [
+      ...new Set(
+        (Array.isArray(notificationIds) ? notificationIds : [notificationIds])
+          .map((value) => String(value || "").trim())
+          .filter(Boolean),
+      ),
+    ];
+
+    if (
+      !ids.length &&
+      scope !== "system" &&
+      scope !== "chat" &&
+      scope !== "all"
+    ) {
+      return;
+    }
+
+    await api("/notifications/me/read", {
+      method: "POST",
+      body: JSON.stringify({
+        notificationIds: ids,
+        scope,
+      }),
+    });
+
+    setNotifications((prev) =>
+      prev.map((item) => {
+        const shouldMark = ids.length
+          ? ids.includes(String(item.id))
+          : scope === "all"
+            ? true
+            : scope === "chat"
+              ? String(item?.event_type || "").startsWith("CHAT.")
+              : !String(item?.event_type || "").startsWith("CHAT.");
+        if (!shouldMark || item?.read_at || item?.readAt) {
+          return item;
+        }
+        return {
+          ...item,
+          read_at: new Date().toISOString(),
+        };
+      }),
+    );
+  }
+
+  async function loadNotifications() {
+    const [systemData, chatData] = await Promise.all([
+      api("/notifications/me?limit=30&scope=system"),
+      api("/notifications/me?limit=30&scope=chat"),
+    ]);
+    const systemRows = systemData.notifications || [];
+    const chatRows = chatData.notifications || [];
+
+    setNotifications(systemRows);
+    setChatNotifications(chatRows);
+
+    const incoming = systemRows
+      .filter((item) => !item?.read_at && !item?.readAt)
+      .map((item) => String(item.id))
+      .filter((id) => !seenMessageIds.has(id));
+    if (incoming.length) {
+      const next = new Set([...seenMessageIds, ...incoming]);
+      setSeenMessageIds(next);
+      localStorage.setItem(seenStoreKey, JSON.stringify([...next]));
+      const latest = systemRows[0];
+      setToast(
+        `New notification: ${latest?.event_type || "Update received"}`,
+      );
+      if (
+        browserPushPermission === "granted" &&
+        userSettings.notifications?.push &&
+        latest?.event_type
+      ) {
+        try {
+          new Notification(String(latest.event_type), {
+            body: String(latest.content || "").slice(0, 180),
+          });
+        } catch {
+          // ignore browser notification errors
+        }
+      }
+      setTimeout(() => setToast(""), 3500);
+    }
+  }
+
+  async function searchProductsNearby(query) {
+    const text = String(query || "").trim();
+    if (!text) {
+      setProductResults([]);
+      setProductSearchError("");
+      return;
+    }
+    setSearchingProducts(true);
+    setProductSearchError("");
+    try {
+      const params = new URLSearchParams({
+        query: text,
+        lat: shopFilters.lat,
+        lng: shopFilters.lng,
+        radiusKm: shopFilters.radiusKm,
+        sortBy: productSearchFilters.sortBy,
+        limit: "30",
+      });
+      if (productSearchFilters.maxPrice) {
+        params.set("maxPrice", productSearchFilters.maxPrice);
+      }
+      if (productSearchFilters.minShopRating) {
+        params.set("minShopRating", productSearchFilters.minShopRating);
+      }
+      const data = await api(`/marketplace/products/search?${params}`);
+      const rows = data.products || [];
+      setProductResults(rows);
+      if (!rows.length) {
+        setProductSearchError(
+          "No matching items nearby. Try a bigger radius or different keyword.",
+        );
+      }
+    } catch (err) {
+      setProductResults([]);
+      setProductSearchError(
+        err.message || "Unable to search products right now.",
+      );
+    } finally {
+      setSearchingProducts(false);
+    }
+  }
+
+  async function loadRecommendedProducts(options = {}) {
+    const {
+      seedProductIds = cart.map((item) => item.productId).slice(0, 6),
+      query = "",
+      lat = shopFilters.lat,
+      lng = shopFilters.lng,
+      radiusKm = shopFilters.radiusKm,
+    } = options;
+
+    setLoadingRecommendations(true);
+    setRecommendationError("");
+    try {
+      const params = new URLSearchParams({
+        lat,
+        lng,
+        radiusKm,
+        limit: "18",
+      });
+      if (productSearchFilters.maxPrice) {
+        params.set("maxPrice", productSearchFilters.maxPrice);
+      }
+      if (productSearchFilters.minShopRating) {
+        params.set("minShopRating", productSearchFilters.minShopRating);
+      }
+      if (Array.isArray(seedProductIds) && seedProductIds.length) {
+        params.set("seedProductIds", seedProductIds.map(String).join(","));
+      }
+      if (query) {
+        params.set("query", String(query));
+      }
+
+      const data = await api(
+        `/marketplace/products/recommendations?${params}`,
+      );
+      setRecommendedProducts(data.products || []);
+      if (!(data.products || []).length) {
+        setRecommendationError(
+          "No dynamic recommendations available for this location yet.",
+        );
+      }
+    } catch (err) {
+      setRecommendedProducts([]);
+      setRecommendationError(
+        err.message || "Unable to load top products right now.",
+      );
+    } finally {
+      setLoadingRecommendations(false);
+    }
+  }
+
+  async function topupWallet() {
+    try {
+      const amount = Number(topupAmount || 0);
+      if (!Number.isFinite(amount) || amount <= 0) {
+        setError("Enter a valid top-up amount.");
+        return;
+      }
+      const intent = await api("/payments/intents", {
+        method: "POST",
+        body: JSON.stringify({
+          amount,
+          purpose: "TOPUP",
+          provider: "RAZORPAY",
+          paymentMethod: "UPI",
+          currency: "INR",
+        }),
+      });
+      setPaymentIntent(intent);
+      await openRazorpayCheckout(intent, {
+        description: "LifeHub wallet top-up",
+      });
+      setToast("Payment successful. Wallet credited.");
+      await loadWallet();
+    } catch (err) {
+      setError(
+        `${err.message || "Topup failed"}. Configure gateway keys and retry.`,
       );
     }
+  }
 
-    async function loadWallet() {
-      const [summary, txRows, receive] = await Promise.all([
-        api("/transactions/wallet"),
-        api("/transactions?limit=50"),
-        api("/transactions/wallet/receive").catch(() => null),
-      ]);
-      setWalletSummary(summary);
-      setTransactions(txRows.transactions || []);
-      setReceiveProfile(receive);
+  async function loadSellerProducts(shopId = sellerForm.shopId) {
+    if (!shopId) return;
+    const data = await api(`/marketplace/shops/${shopId}/products?limit=100`);
+    setSellerProducts(data.products || []);
+  }
+
+  async function createSellerProduct() {
+    if (!sellerForm.name.trim()) {
+      setError("Product name is required.");
+      return;
+    }
+    if (
+      !Number.isFinite(Number(sellerForm.price)) ||
+      Number(sellerForm.price) <= 0
+    ) {
+      setError("Enter a valid product price.");
+      return;
+    }
+    if (
+      !Number.isInteger(Number(sellerForm.quantity)) ||
+      Number(sellerForm.quantity) <= 0
+    ) {
+      setError(
+        "Quantity must be at least 1 so customers can see and buy this item.",
+      );
+      return;
     }
 
-    async function loadUserProfile() {
-      const data = await api("/users/me");
-      const nextProfile = {
-        ...session?.user,
-        ...data,
-        roles: data?.roles || session?.user?.roles || [],
-      };
-      setProfile(nextProfile);
-      setProfileDraft({
-        name: nextProfile.name || "",
-        email: nextProfile.email || "",
-      });
+    const created = await api(
+      `/marketplace/shops/${sellerForm.shopId || "0"}/products`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          name: sellerForm.name,
+          company: sellerForm.company,
+          description: sellerForm.description,
+          imageUrl: sellerForm.imageUrl,
+          category: sellerForm.category,
+          price: Number(sellerForm.price || 0),
+          quantity: Number(sellerForm.quantity),
+        }),
+      },
+    );
+    const resolvedShopId = created?.shopId
+      ? String(created.shopId)
+      : String(sellerForm.shopId || "");
+    setSellerForm((prev) => ({
+      ...prev,
+      shopId: resolvedShopId || prev.shopId,
+      name: "",
+      company: "",
+      description: "",
+      imageUrl: "",
+      category: "",
+      price: "",
+      quantity: "1",
+    }));
+    await loadSellerProducts(resolvedShopId || sellerForm.shopId);
+    setToast("Product added to your inventory.");
+    setTimeout(() => setToast(""), 2200);
+  }
+
+  async function handleSellerImageSelection(event) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    if (
+      !String(file.type || "")
+        .toLowerCase()
+        .startsWith("image/")
+    ) {
+      setError("Please select a valid image file.");
+      return;
     }
 
-    async function transferWalletBalance() {
-      const amount = Number(transferForm.amount || 0);
-      if (!Number.isFinite(amount) || amount <= 0) {
-        setError("Enter a valid transfer amount.");
-        return;
-      }
-      if (
-        transferForm.recipientType === "phone" &&
-        !transferForm.toPhone.trim()
-      ) {
-        setError("Recipient phone is required.");
-        return;
-      }
-      if (
-        transferForm.recipientType === "upi" &&
-        !transferForm.toUpiId.trim()
-      ) {
-        setError("Recipient UPI ID is required.");
-        return;
-      }
+    setSellerImageUploading(true);
+    try {
+      const uploaded = await uploadChatAttachment(file, { isPrivate: false });
+      setSellerForm((prev) => ({
+        ...prev,
+        imageUrl: uploaded.fileUrl,
+      }));
+      setToast("Product image uploaded successfully.");
+      setTimeout(() => setToast(""), 2500);
+    } catch (err) {
+      setError(err.message || "Image upload failed");
+    } finally {
+      setSellerImageUploading(false);
+    }
+  }
 
-      setTransferBusy(true);
-      setError("");
-      try {
-        const payload = await api("/transactions/transfer", {
-          method: "POST",
-          body: JSON.stringify({
-            toPhone:
-              transferForm.recipientType === "phone"
-                ? transferForm.toPhone
-                : undefined,
-            toUpiId:
-              transferForm.recipientType === "upi"
-                ? transferForm.toUpiId
-                : undefined,
-            amount,
-            note: transferForm.note,
-          }),
-        });
+  async function updateShopLocation() {
+    if (!sellerForm.shopId) return;
+    await api(`/marketplace/shops/${sellerForm.shopId}/location`, {
+      method: "PUT",
+      body: JSON.stringify({
+        lat: Number(shopLocationForm.lat),
+        lng: Number(shopLocationForm.lng),
+      }),
+    });
+    await searchShops();
+  }
 
-        setTransferForm((prev) => ({
-          ...prev,
-          amount: "",
-          note: "",
-          toPhone: prev.recipientType === "phone" ? prev.toPhone : "",
-          toUpiId: prev.recipientType === "upi" ? prev.toUpiId : "",
-        }));
-        setToast(
-          `Transferred ${toCurrency(amount)} to ${payload?.recipient?.name || "recipient"}.`,
+  async function updateMyProviderLocation() {
+    if (!myProviderProfileId) {
+      setError("Provider profile not found. Refresh providers list first.");
+      return;
+    }
+    await api(`/marketplace/providers/${myProviderProfileId}/location`, {
+      method: "PUT",
+      body: JSON.stringify({
+        lat: Number(providerLocationForm.lat),
+        lng: Number(providerLocationForm.lng),
+        available: Boolean(providerLocationForm.available),
+      }),
+    });
+    await loadProviders();
+  }
+
+  async function updateSellerQuantity(productId, quantity) {
+    await api(`/marketplace/products/${productId}`, {
+      method: "PUT",
+      body: JSON.stringify({ quantity: Number(quantity || 0) }),
+    });
+    await loadSellerProducts();
+  }
+
+  function handleProfilePhotoChange(event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const value = String(reader.result || "");
+      setProfilePhoto(value);
+      localStorage.setItem(profilePhotoStorageKey, value);
+    };
+    reader.readAsDataURL(file);
+  }
+
+  async function bootstrap() {
+    setLoading(true);
+    setError("");
+    try {
+      const tasks = [
+        loadHome(),
+        loadUserProfile(),
+        loadConversations(),
+        loadContactDirectory(),
+        searchShops(),
+        loadProviders(),
+        loadWallet(),
+        loadUserSettings(),
+        loadNotificationPreferences(),
+      ];
+      if (canAccess.services) tasks.push(loadServiceRequests());
+      if (canAccess.seller) tasks.push(loadSellerProducts());
+      if (canAccess.orders) tasks.push(loadOrders());
+
+      const results = await Promise.allSettled(tasks);
+      const failed = results.find(
+        (result) =>
+          result.status === "rejected" && result.reason?.status !== 403,
+      );
+      if (failed) {
+        setError(
+          failed.reason?.message || "Some dashboard modules failed to load",
         );
-        setTimeout(() => setToast(""), 3000);
-        await loadWallet();
-      } catch (err) {
-        setError(err.message || "Transfer failed");
-      } finally {
-        setTransferBusy(false);
       }
+    } finally {
+      setLoading(false);
     }
+  }
 
-    async function loadUserSettings() {
-      const settings = await api("/users/settings/me");
-      const merged = mergeSettings(settings);
-      setUserSettings(merged);
-      const nextTheme = String(merged?.ui?.theme || "").toLowerCase();
+  useEffect(() => {
+    bootstrap();
+    loadStories();
+  }, [canAccess.orders, canAccess.services, canAccess.seller]);
+
+  useEffect(() => {
+    const raw = localStorage.getItem(seenStoreKey);
+    if (!raw) return;
+    try {
+      const rows = JSON.parse(raw);
+      setSeenMessageIds(new Set(rows.map(String)));
+    } catch {
+      setSeenMessageIds(new Set());
+    }
+  }, [seenStoreKey]);
+
+  useEffect(() => {
+    selectedConversationRef.current = String(selectedConversationId || "");
+  }, [selectedConversationId]);
+
+  useEffect(() => {
+    callSessionRef.current = callSession;
+  }, [callSession]);
+
+  useEffect(() => {
+    if (typeof Notification === "undefined") return;
+    setBrowserPushPermission(Notification.permission);
+  }, []);
+
+  useEffect(() => {
+    if (!token) return;
+    const socket = io(SOCKET_URL, {
+      transports: ["websocket"],
+      withCredentials: true,
+      auth: {
+        token,
+        deviceId,
+      },
+    });
+    socketRef.current = socket;
+
+    socket.on("presence:update", (payload) => {
+      const userId = String(payload?.userId || "");
+      if (!userId) return;
+      setOnlineUsers((prev) => {
+        const next = { ...prev };
+        if (payload?.online) {
+          next[userId] = true;
+        } else {
+          delete next[userId];
+        }
+        return next;
+      });
+    });
+
+    socket.on("chat:message.created", (payload) => {
+      const conversationId = String(
+        payload?.conversation_id || payload?.conversationId || "",
+      );
+      if (!conversationId) return;
+      loadConversations().catch(() => {});
+      if (conversationId === selectedConversationRef.current) {
+        loadMessages(conversationId, { markRead: true }).catch(() => {});
+      }
+    });
+
+    socket.on("chat:read", (payload) => {
       if (
-        (nextTheme === "light" || nextTheme === "dark") &&
-        typeof onThemeChange === "function"
-      ) {
-        onThemeChange(nextTheme);
-      }
-    }
+        String(payload?.conversationId || "") !==
+        selectedConversationRef.current
+      )
+        return;
+      loadMessages(payload.conversationId, { markRead: false }).catch(
+        () => {},
+      );
+    });
 
-    async function saveProfileDetails() {
-      const name = String(profileDraft.name || "").trim();
-      const email = String(profileDraft.email || "").trim();
+    socket.on("chat:delivered", (payload) => {
+      if (
+        String(payload?.conversationId || "") !==
+        selectedConversationRef.current
+      )
+        return;
+      loadMessages(payload.conversationId, { markRead: false }).catch(
+        () => {},
+      );
+    });
 
-      if (!name) {
-        setError("Name is required.");
+    socket.on("chat:typing", (payload) => {
+      const key = `${payload?.conversationId || ""}:${payload?.userId || ""}`;
+      if (!payload?.conversationId || !payload?.userId) return;
+      if (payload?.isTyping) {
+        setTypingUsers((prev) => ({
+          ...prev,
+          [key]: {
+            conversationId: String(payload.conversationId),
+            userId: String(payload.userId),
+            label: `User ${payload.userId}`,
+            ts: Date.now(),
+          },
+        }));
         return;
       }
-
-      setSavingProfile(true);
-      setError("");
-      try {
-        const saved = await api("/users/me", {
-          method: "PUT",
-          body: JSON.stringify({
-            name,
-            email: email || null,
-          }),
-        });
-        setProfile(saved);
-        setProfileDraft({
-          name: saved.name || "",
-          email: saved.email || "",
-        });
-        setToast("Profile details updated.");
-      } catch (err) {
-        setError(err.message || "Unable to update profile.");
-      } finally {
-        setSavingProfile(false);
-      }
-    }
-
-    async function saveUserSettings() {
-      const saved = await api("/users/settings/me", {
-        method: "PUT",
-        body: JSON.stringify(userSettings),
+      setTypingUsers((prev) => {
+        const next = { ...prev };
+        delete next[key];
+        return next;
       });
-      const merged = mergeSettings(saved);
-      setUserSettings(merged);
-      const nextTheme = String(merged?.ui?.theme || "").toLowerCase();
-      if (
-        (nextTheme === "light" || nextTheme === "dark") &&
-        typeof onThemeChange === "function"
-      ) {
-        onThemeChange(nextTheme);
-      }
-      setToast("Profile settings updated.");
-    }
+    });
 
-    function applyTheme(nextTheme) {
-      const resolved = nextTheme === "dark" ? "dark" : "light";
-      setUserSettings((prev) => ({
+    socket.on("call:offer", (payload) => {
+      if (!payload?.roomId || !payload?.fromUserId || !payload?.sdp) return;
+      setRemoteCallUserId(String(payload.fromUserId));
+      setActiveCallRoomId(String(payload.roomId));
+      setCallSession({
+        open: true,
+        roomId: String(payload.roomId),
+        type: "video",
+        status: "incoming",
+        incomingFrom: String(payload.fromUserId),
+        offerSdp: payload.sdp,
+      });
+      setActiveTab("chat");
+    });
+
+    socket.on("call:answer", async (payload) => {
+      if (!payload?.roomId || !payload?.sdp) return;
+      if (String(payload.roomId) !== String(callSessionRef.current.roomId))
+        return;
+      if (!peerConnectionRef.current) return;
+      try {
+        await peerConnectionRef.current.setRemoteDescription(
+          new RTCSessionDescription(payload.sdp),
+        );
+        setCallSession((prev) => ({ ...prev, status: "connecting" }));
+      } catch {
+        // ignore signaling mismatch
+      }
+    });
+
+    socket.on("call:ice-candidate", async (payload) => {
+      if (!payload?.roomId || !payload?.candidate) return;
+      if (String(payload.roomId) !== String(callSessionRef.current.roomId))
+        return;
+      if (!peerConnectionRef.current) return;
+      try {
+        await peerConnectionRef.current.addIceCandidate(
+          new RTCIceCandidate(payload.candidate),
+        );
+      } catch {
+        // ignore bad ice candidates
+      }
+    });
+
+    socket.on("call:participant.left", (payload) => {
+      if (
+        String(payload?.roomId || "") !==
+        String(callSessionRef.current.roomId || "")
+      )
+        return;
+      setCallSession((prev) => ({ ...prev, status: "peer-left" }));
+    });
+
+    return () => {
+      socket.removeAllListeners();
+      socket.disconnect();
+      if (socketRef.current === socket) {
+        socketRef.current = null;
+      }
+    };
+  }, [token, deviceId]);
+
+  useEffect(() => {
+    return () => {
+      if (typingTimerRef.current) {
+        clearTimeout(typingTimerRef.current);
+      }
+      cleanupPeerConnection();
+      cleanupMediaStreams();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (typeof localStorage === "undefined") return;
+    localStorage.setItem(
+      "lifehub_sidebar_collapsed",
+      sidebarCollapsed ? "true" : "false",
+    );
+  }, [sidebarCollapsed]);
+
+  useEffect(() => {
+    setUserSettings((prev) => {
+      const current = String(prev?.ui?.theme || "").toLowerCase();
+      if (current === themeMode) return prev;
+      return {
         ...prev,
         ui: {
           ...(prev.ui || {}),
-          theme: resolved,
+          theme: themeMode,
         },
-      }));
-      if (typeof onThemeChange === "function") {
-        onThemeChange(resolved);
-      }
-    }
+      };
+    });
+  }, [themeMode]);
 
-    async function loadNotificationPreferences() {
-      const prefs = await api("/notifications/preferences/me");
-      setNotificationPrefs({
-        quietHours: {
-          enabled: Boolean(prefs?.quietHours?.enabled),
-          startHour: Number(prefs?.quietHours?.startHour ?? 22),
-          endHour: Number(prefs?.quietHours?.endHour ?? 7),
-          timezone: prefs?.quietHours?.timezone || "UTC",
-        },
-        perEventRules: prefs?.perEventRules || {},
-        channelPriority: prefs?.channelPriority || [
-          "PUSH",
-          "IN_APP",
-          "EMAIL",
-          "SMS",
-        ],
-      });
-    }
-
-    async function saveNotificationPreferences() {
-      const saved = await api("/notifications/preferences/me", {
-        method: "PUT",
-        body: JSON.stringify(notificationPrefs),
-      });
-      setNotificationPrefs({
-        quietHours: {
-          enabled: Boolean(saved?.quietHours?.enabled),
-          startHour: Number(saved?.quietHours?.startHour ?? 22),
-          endHour: Number(saved?.quietHours?.endHour ?? 7),
-          timezone: saved?.quietHours?.timezone || "UTC",
-        },
-        perEventRules: saved?.perEventRules || {},
-        channelPriority: saved?.channelPriority || [
-          "PUSH",
-          "IN_APP",
-          "EMAIL",
-          "SMS",
-        ],
-      });
-      setToast("Notification preferences saved.");
-    }
-
-    async function changePasswordAction() {
-      if (!passwordDraft.currentPassword || !passwordDraft.newPassword) {
-        setError("Enter current and new password.");
-        return;
-      }
-      if (passwordDraft.newPassword !== passwordDraft.confirmPassword) {
-        setError("New password and confirm password must match.");
-        return;
-      }
-
-      setChangingPassword(true);
-      setError("");
-      try {
-        const result = await api("/auth/password/change", {
-          method: "POST",
-          body: JSON.stringify({
-            currentPassword: passwordDraft.currentPassword,
-            newPassword: passwordDraft.newPassword,
-          }),
-        });
-        setPasswordDraft({
-          currentPassword: "",
-          newPassword: "",
-          confirmPassword: "",
-        });
-        setToast(result?.message || "Password updated successfully.");
-      } catch (err) {
-        setError(err.message || "Unable to change password.");
-      } finally {
-        setChangingPassword(false);
-      }
-    }
-
-    async function sendNotificationTest() {
-      await api("/notifications/me/test", {
-        method: "POST",
-        body: JSON.stringify({
-          channels: ["IN_APP", "PUSH", "SMS"],
-        }),
-      });
-      setToast("Test notification queued.");
-    }
-
-    async function requestBrowserPushPermission() {
-      if (typeof Notification === "undefined") {
-        setError("Browser notifications are not supported on this device.");
-        return;
-      }
-      const permission = await Notification.requestPermission();
-      setBrowserPushPermission(permission);
-      if (permission !== "granted") {
-        setError("Browser notification permission denied.");
-        return;
-      }
-      setToast("Browser push permission enabled.");
-    }
-
-    async function markNotificationsAsRead({
-      notificationIds = [],
-      scope = "system",
-    } = {}) {
-      const ids = [
-        ...new Set(
-          (Array.isArray(notificationIds) ? notificationIds : [notificationIds])
-            .map((value) => String(value || "").trim())
-            .filter(Boolean),
-        ),
-      ];
-
-      if (
-        !ids.length &&
-        scope !== "system" &&
-        scope !== "chat" &&
-        scope !== "all"
-      ) {
-        return;
-      }
-
-      await api("/notifications/me/read", {
-        method: "POST",
-        body: JSON.stringify({
-          notificationIds: ids,
-          scope,
-        }),
-      });
-
-      setNotifications((prev) =>
-        prev.map((item) => {
-          const shouldMark = ids.length
-            ? ids.includes(String(item.id))
-            : scope === "all"
-              ? true
-              : scope === "chat"
-                ? String(item?.event_type || "").startsWith("CHAT.")
-                : !String(item?.event_type || "").startsWith("CHAT.");
-          if (!shouldMark || item?.read_at || item?.readAt) {
-            return item;
-          }
-          return {
-            ...item,
-            read_at: new Date().toISOString(),
-          };
-        }),
-      );
-    }
-
-    async function loadNotifications() {
-      const [systemData, chatData] = await Promise.all([
-        api("/notifications/me?limit=30&scope=system"),
-        api("/notifications/me?limit=30&scope=chat"),
-      ]);
-      const systemRows = systemData.notifications || [];
-      const chatRows = chatData.notifications || [];
-
-      setNotifications(systemRows);
-      setChatNotifications(chatRows);
-
-      const incoming = systemRows
-        .filter((item) => !item?.read_at && !item?.readAt)
-        .map((item) => String(item.id))
-        .filter((id) => !seenMessageIds.has(id));
-      if (incoming.length) {
-        const next = new Set([...seenMessageIds, ...incoming]);
-        setSeenMessageIds(next);
-        localStorage.setItem(seenStoreKey, JSON.stringify([...next]));
-        const latest = systemRows[0];
-        setToast(
-          `New notification: ${latest?.event_type || "Update received"}`,
-        );
-        if (
-          browserPushPermission === "granted" &&
-          userSettings.notifications?.push &&
-          latest?.event_type
-        ) {
-          try {
-            new Notification(String(latest.event_type), {
-              body: String(latest.content || "").slice(0, 180),
-            });
-          } catch {
-            // ignore browser notification errors
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setTypingUsers((prev) => {
+        const next = {};
+        for (const [key, value] of Object.entries(prev)) {
+          if (Date.now() - Number(value?.ts || 0) < 6000) {
+            next[key] = value;
           }
         }
-        setTimeout(() => setToast(""), 3500);
-      }
+        return next;
+      });
+    }, 3000);
+    return () => clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+    if (!tabs.some((tab) => tab.id === activeTab)) {
+      setActiveTab(tabs[0]?.id || "chat");
     }
+  }, [tabs, activeTab]);
 
-    async function searchProductsNearby(query) {
-      const text = String(query || "").trim();
-      if (!text) {
-        setProductResults([]);
-        setProductSearchError("");
-        return;
-      }
-      setSearchingProducts(true);
-      setProductSearchError("");
-      try {
-        const params = new URLSearchParams({
-          query: text,
-          lat: shopFilters.lat,
-          lng: shopFilters.lng,
-          radiusKm: shopFilters.radiusKm,
-          sortBy: productSearchFilters.sortBy,
-          limit: "30",
-        });
-        if (productSearchFilters.maxPrice) {
-          params.set("maxPrice", productSearchFilters.maxPrice);
-        }
-        if (productSearchFilters.minShopRating) {
-          params.set("minShopRating", productSearchFilters.minShopRating);
-        }
-        const data = await api(`/marketplace/products/search?${params}`);
-        const rows = data.products || [];
-        setProductResults(rows);
-        if (!rows.length) {
-          setProductSearchError(
-            "No matching items nearby. Try a bigger radius or different keyword.",
-          );
-        }
-      } catch (err) {
-        setProductResults([]);
-        setProductSearchError(
-          err.message || "Unable to search products right now.",
-        );
-      } finally {
-        setSearchingProducts(false);
-      }
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const url = new URL(window.location.href);
+    if (activeTab === "home") {
+      url.searchParams.delete("tab");
+    } else {
+      url.searchParams.set("tab", activeTab);
     }
+    window.history.replaceState({}, "", url.toString());
+  }, [activeTab]);
 
-    async function loadRecommendedProducts(options = {}) {
-      const {
-        seedProductIds = cart.map((item) => item.productId).slice(0, 6),
-        query = "",
-        lat = shopFilters.lat,
-        lng = shopFilters.lng,
-        radiusKm = shopFilters.radiusKm,
-      } = options;
-
-      setLoadingRecommendations(true);
-      setRecommendationError("");
-      try {
-        const params = new URLSearchParams({
-          lat,
-          lng,
-          radiusKm,
-          limit: "18",
-        });
-        if (productSearchFilters.maxPrice) {
-          params.set("maxPrice", productSearchFilters.maxPrice);
-        }
-        if (productSearchFilters.minShopRating) {
-          params.set("minShopRating", productSearchFilters.minShopRating);
-        }
-        if (Array.isArray(seedProductIds) && seedProductIds.length) {
-          params.set("seedProductIds", seedProductIds.map(String).join(","));
-        }
-        if (query) {
-          params.set("query", String(query));
-        }
-
-        const data = await api(
-          `/marketplace/products/recommendations?${params}`,
-        );
-        setRecommendedProducts(data.products || []);
-        if (!(data.products || []).length) {
-          setRecommendationError(
-            "No dynamic recommendations available for this location yet.",
-          );
-        }
-      } catch (err) {
-        setRecommendedProducts([]);
-        setRecommendationError(
-          err.message || "Unable to load top products right now.",
-        );
-      } finally {
-        setLoadingRecommendations(false);
+  useEffect(() => {
+    const handleKeydown = (event) => {
+      const key = String(event.key || "").toLowerCase();
+      if ((event.ctrlKey || event.metaKey) && key === "k") {
+        event.preventDefault();
+        setCommandOpen(true);
       }
+      if (key === "escape") {
+        setCommandOpen(false);
+        setCommandQuery("");
+      }
+    };
+    window.addEventListener("keydown", handleKeydown);
+    return () => window.removeEventListener("keydown", handleKeydown);
+  }, []);
+
+  useEffect(() => {
+    if (!commandOpen) return;
+    const frame = window.requestAnimationFrame(() => {
+      commandInputRef.current?.focus();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [commandOpen]);
+
+  useEffect(() => {
+    if (!marketplaceCategories.includes(marketCategory)) {
+      setMarketCategory("all");
     }
+  }, [marketplaceCategories, marketCategory]);
 
-    async function topupWallet() {
-      try {
-        const amount = Number(topupAmount || 0);
-        if (!Number.isFinite(amount) || amount <= 0) {
-          setError("Enter a valid top-up amount.");
-          return;
-        }
-        const intent = await api("/payments/intents", {
-          method: "POST",
-          body: JSON.stringify({
-            amount,
-            purpose: "TOPUP",
-            provider: "RAZORPAY",
-            paymentMethod: "UPI",
-            currency: "INR",
-          }),
-        });
-        setPaymentIntent(intent);
-        await openRazorpayCheckout(intent, {
-          description: "LifeHub wallet top-up",
-        });
-        setToast("Payment successful. Wallet credited.");
-        await loadWallet();
-      } catch (err) {
-        setError(
-          `${err.message || "Topup failed"}. Configure gateway keys and retry.`,
-        );
-      }
+  useEffect(() => {
+    if (activeTab === "chat" && selectedConversationId) {
+      loadMessages(selectedConversationId, {
+        markRead: true,
+        mode: "replace",
+      }).catch(() => {});
     }
+  }, [activeTab, selectedConversationId]);
 
-    async function loadSellerProducts(shopId = sellerForm.shopId) {
-      if (!shopId) return;
-      const data = await api(`/marketplace/shops/${shopId}/products?limit=100`);
-      setSellerProducts(data.products || []);
+  useEffect(() => {
+    if (activeTab !== "chat") return;
+    if (prependScrollStateRef.current && messagePanelRef.current) {
+      const previous = prependScrollStateRef.current;
+      const nextHeight = messagePanelRef.current.scrollHeight;
+      messagePanelRef.current.scrollTop =
+        nextHeight - previous.height + previous.top;
+      prependScrollStateRef.current = null;
+      return;
     }
+    messageEndRef.current?.scrollIntoView({
+      behavior: "smooth",
+      block: "end",
+    });
+  }, [messages, activeTab]);
 
-    async function createSellerProduct() {
-      if (!sellerForm.name.trim()) {
-        setError("Product name is required.");
-        return;
-      }
-      if (
-        !Number.isFinite(Number(sellerForm.price)) ||
-        Number(sellerForm.price) <= 0
-      ) {
-        setError("Enter a valid product price.");
-        return;
-      }
-      if (
-        !Number.isInteger(Number(sellerForm.quantity)) ||
-        Number(sellerForm.quantity) <= 0
-      ) {
-        setError(
-          "Quantity must be at least 1 so customers can see and buy this item.",
-        );
-        return;
-      }
-
-      const created = await api(
-        `/marketplace/shops/${sellerForm.shopId || "0"}/products`,
-        {
-          method: "POST",
-          body: JSON.stringify({
-            name: sellerForm.name,
-            company: sellerForm.company,
-            description: sellerForm.description,
-            imageUrl: sellerForm.imageUrl,
-            category: sellerForm.category,
-            price: Number(sellerForm.price || 0),
-            quantity: Number(sellerForm.quantity),
-          }),
-        },
-      );
-      const resolvedShopId = created?.shopId
-        ? String(created.shopId)
-        : String(sellerForm.shopId || "");
-      setSellerForm((prev) => ({
-        ...prev,
-        shopId: resolvedShopId || prev.shopId,
-        name: "",
-        company: "",
-        description: "",
-        imageUrl: "",
-        category: "",
-        price: "",
-        quantity: "1",
-      }));
-      await loadSellerProducts(resolvedShopId || sellerForm.shopId);
-      setToast("Product added to your inventory.");
-      setTimeout(() => setToast(""), 2200);
+  useEffect(() => {
+    if (activeTab !== "profile") {
+      setSettingsSection("menu");
     }
+  }, [activeTab]);
 
-    async function handleSellerImageSelection(event) {
-      const file = event.target.files?.[0];
-      event.target.value = "";
-      if (!file) return;
-      if (
-        !String(file.type || "")
-          .toLowerCase()
-          .startsWith("image/")
-      ) {
-        setError("Please select a valid image file.");
-        return;
-      }
-
-      setSellerImageUploading(true);
-      try {
-        const uploaded = await uploadChatAttachment(file, { isPrivate: false });
-        setSellerForm((prev) => ({
-          ...prev,
-          imageUrl: uploaded.fileUrl,
-        }));
-        setToast("Product image uploaded successfully.");
-        setTimeout(() => setToast(""), 2500);
-      } catch (err) {
-        setError(err.message || "Image upload failed");
-      } finally {
-        setSellerImageUploading(false);
-      }
+  useEffect(() => {
+    if (activeTab !== "services") {
+      setServiceRequestsModalOpen(false);
     }
+  }, [activeTab]);
 
-    async function updateShopLocation() {
-      if (!sellerForm.shopId) return;
-      await api(`/marketplace/shops/${sellerForm.shopId}/location`, {
-        method: "PUT",
-        body: JSON.stringify({
-          lat: Number(shopLocationForm.lat),
-          lng: Number(shopLocationForm.lng),
-        }),
-      });
-      await searchShops();
-    }
+  useEffect(() => {
+    if (activeTab !== "home" || !notificationUnreadCount) return;
+    markNotificationsAsRead({ scope: "system" }).catch(() => {});
+  }, [activeTab, notificationUnreadCount]);
 
-    async function updateMyProviderLocation() {
-      if (!myProviderProfileId) {
-        setError("Provider profile not found. Refresh providers list first.");
-        return;
-      }
-      await api(`/marketplace/providers/${myProviderProfileId}/location`, {
-        method: "PUT",
-        body: JSON.stringify({
-          lat: Number(providerLocationForm.lat),
-          lng: Number(providerLocationForm.lng),
-          available: Boolean(providerLocationForm.available),
-        }),
-      });
-      await loadProviders();
-    }
+  useEffect(() => {
+    loadPresence().catch(() => {});
+    loadNotifications().catch(() => {});
 
-    async function updateSellerQuantity(productId, quantity) {
-      await api(`/marketplace/products/${productId}`, {
-        method: "PUT",
-        body: JSON.stringify({ quantity: Number(quantity || 0) }),
-      });
-      await loadSellerProducts();
-    }
-
-    function handleProfilePhotoChange(event) {
-      const file = event.target.files?.[0];
-      if (!file) return;
-      const reader = new FileReader();
-      reader.onload = () => {
-        const value = String(reader.result || "");
-        setProfilePhoto(value);
-        localStorage.setItem(profilePhotoStorageKey, value);
-      };
-      reader.readAsDataURL(file);
-    }
-
-    async function bootstrap() {
-      setLoading(true);
-      setError("");
-      try {
-        const tasks = [
-          loadHome(),
-          loadUserProfile(),
-          loadConversations(),
-          loadContactDirectory(),
-          searchShops(),
-          loadProviders(),
-          loadWallet(),
-          loadUserSettings(),
-          loadNotificationPreferences(),
-        ];
-        if (canAccess.services) tasks.push(loadServiceRequests());
-        if (canAccess.seller) tasks.push(loadSellerProducts());
-        if (canAccess.orders) tasks.push(loadOrders());
-
-        const results = await Promise.allSettled(tasks);
-        const failed = results.find(
-          (result) =>
-            result.status === "rejected" && result.reason?.status !== 403,
-        );
-        if (failed) {
-          setError(
-            failed.reason?.message || "Some dashboard modules failed to load",
-          );
-        }
-      } finally {
-        setLoading(false);
-      }
-    }
-
-    useEffect(() => {
-      bootstrap();
-      loadStories();
-    }, [canAccess.orders, canAccess.services, canAccess.seller]);
-
-    useEffect(() => {
-      const raw = localStorage.getItem(seenStoreKey);
-      if (!raw) return;
-      try {
-        const rows = JSON.parse(raw);
-        setSeenMessageIds(new Set(rows.map(String)));
-      } catch {
-        setSeenMessageIds(new Set());
-      }
-    }, [seenStoreKey]);
-
-    useEffect(() => {
-      selectedConversationRef.current = String(selectedConversationId || "");
-    }, [selectedConversationId]);
-
-    useEffect(() => {
-      callSessionRef.current = callSession;
-    }, [callSession]);
-
-    useEffect(() => {
-      if (typeof Notification === "undefined") return;
-      setBrowserPushPermission(Notification.permission);
-    }, []);
-
-    useEffect(() => {
-      if (!token) return;
-      const socket = io(SOCKET_URL, {
-        transports: ["websocket"],
-        withCredentials: true,
-        auth: {
-          token,
-          deviceId,
-        },
-      });
-      socketRef.current = socket;
-
-      socket.on("presence:update", (payload) => {
-        const userId = String(payload?.userId || "");
-        if (!userId) return;
-        setOnlineUsers((prev) => {
-          const next = { ...prev };
-          if (payload?.online) {
-            next[userId] = true;
-          } else {
-            delete next[userId];
-          }
-          return next;
-        });
-      });
-
-      socket.on("chat:message.created", (payload) => {
-        const conversationId = String(
-          payload?.conversation_id || payload?.conversationId || "",
-        );
-        if (!conversationId) return;
-        loadConversations().catch(() => {});
-        if (conversationId === selectedConversationRef.current) {
-          loadMessages(conversationId, { markRead: true }).catch(() => {});
-        }
-      });
-
-      socket.on("chat:read", (payload) => {
-        if (
-          String(payload?.conversationId || "") !==
-          selectedConversationRef.current
-        )
-          return;
-        loadMessages(payload.conversationId, { markRead: false }).catch(
-          () => {},
-        );
-      });
-
-      socket.on("chat:delivered", (payload) => {
-        if (
-          String(payload?.conversationId || "") !==
-          selectedConversationRef.current
-        )
-          return;
-        loadMessages(payload.conversationId, { markRead: false }).catch(
-          () => {},
-        );
-      });
-
-      socket.on("chat:typing", (payload) => {
-        const key = `${payload?.conversationId || ""}:${payload?.userId || ""}`;
-        if (!payload?.conversationId || !payload?.userId) return;
-        if (payload?.isTyping) {
-          setTypingUsers((prev) => ({
-            ...prev,
-            [key]: {
-              conversationId: String(payload.conversationId),
-              userId: String(payload.userId),
-              label: `User ${payload.userId}`,
-              ts: Date.now(),
-            },
-          }));
-          return;
-        }
-        setTypingUsers((prev) => {
-          const next = { ...prev };
-          delete next[key];
-          return next;
-        });
-      });
-
-      socket.on("call:offer", (payload) => {
-        if (!payload?.roomId || !payload?.fromUserId || !payload?.sdp) return;
-        setRemoteCallUserId(String(payload.fromUserId));
-        setActiveCallRoomId(String(payload.roomId));
-        setCallSession({
-          open: true,
-          roomId: String(payload.roomId),
-          type: "video",
-          status: "incoming",
-          incomingFrom: String(payload.fromUserId),
-          offerSdp: payload.sdp,
-        });
-        setActiveTab("chat");
-      });
-
-      socket.on("call:answer", async (payload) => {
-        if (!payload?.roomId || !payload?.sdp) return;
-        if (String(payload.roomId) !== String(callSessionRef.current.roomId))
-          return;
-        if (!peerConnectionRef.current) return;
-        try {
-          await peerConnectionRef.current.setRemoteDescription(
-            new RTCSessionDescription(payload.sdp),
-          );
-          setCallSession((prev) => ({ ...prev, status: "connecting" }));
-        } catch {
-          // ignore signaling mismatch
-        }
-      });
-
-      socket.on("call:ice-candidate", async (payload) => {
-        if (!payload?.roomId || !payload?.candidate) return;
-        if (String(payload.roomId) !== String(callSessionRef.current.roomId))
-          return;
-        if (!peerConnectionRef.current) return;
-        try {
-          await peerConnectionRef.current.addIceCandidate(
-            new RTCIceCandidate(payload.candidate),
-          );
-        } catch {
-          // ignore bad ice candidates
-        }
-      });
-
-      socket.on("call:participant.left", (payload) => {
-        if (
-          String(payload?.roomId || "") !==
-          String(callSessionRef.current.roomId || "")
-        )
-          return;
-        setCallSession((prev) => ({ ...prev, status: "peer-left" }));
-      });
-
-      return () => {
-        socket.removeAllListeners();
-        socket.disconnect();
-        if (socketRef.current === socket) {
-          socketRef.current = null;
-        }
-      };
-    }, [token, deviceId]);
-
-    useEffect(() => {
-      return () => {
-        if (typingTimerRef.current) {
-          clearTimeout(typingTimerRef.current);
-        }
-        cleanupPeerConnection();
-        cleanupMediaStreams();
-      };
-    }, []);
-
-    useEffect(() => {
-      if (typeof localStorage === "undefined") return;
-      localStorage.setItem(
-        "lifehub_sidebar_collapsed",
-        sidebarCollapsed ? "true" : "false",
-      );
-    }, [sidebarCollapsed]);
-
-    useEffect(() => {
-      setUserSettings((prev) => {
-        const current = String(prev?.ui?.theme || "").toLowerCase();
-        if (current === themeMode) return prev;
-        return {
-          ...prev,
-          ui: {
-            ...(prev.ui || {}),
-            theme: themeMode,
-          },
-        };
-      });
-    }, [themeMode]);
-
-    useEffect(() => {
-      const interval = setInterval(() => {
-        setTypingUsers((prev) => {
-          const next = {};
-          for (const [key, value] of Object.entries(prev)) {
-            if (Date.now() - Number(value?.ts || 0) < 6000) {
-              next[key] = value;
-            }
-          }
-          return next;
-        });
-      }, 3000);
-      return () => clearInterval(interval);
-    }, []);
-
-    useEffect(() => {
-      if (!tabs.some((tab) => tab.id === activeTab)) {
-        setActiveTab(tabs[0]?.id || "chat");
-      }
-    }, [tabs, activeTab]);
-
-    useEffect(() => {
-      if (typeof window === "undefined") return;
-      const url = new URL(window.location.href);
-      if (activeTab === "home") {
-        url.searchParams.delete("tab");
-      } else {
-        url.searchParams.set("tab", activeTab);
-      }
-      window.history.replaceState({}, "", url.toString());
-    }, [activeTab]);
-
-    useEffect(() => {
-      const handleKeydown = (event) => {
-        const key = String(event.key || "").toLowerCase();
-        if ((event.ctrlKey || event.metaKey) && key === "k") {
-          event.preventDefault();
-          setCommandOpen(true);
-        }
-        if (key === "escape") {
-          setCommandOpen(false);
-          setCommandQuery("");
-        }
-      };
-      window.addEventListener("keydown", handleKeydown);
-      return () => window.removeEventListener("keydown", handleKeydown);
-    }, []);
-
-    useEffect(() => {
-      if (!commandOpen) return;
-      const frame = window.requestAnimationFrame(() => {
-        commandInputRef.current?.focus();
-      });
-      return () => window.cancelAnimationFrame(frame);
-    }, [commandOpen]);
-
-    useEffect(() => {
-      if (!marketplaceCategories.includes(marketCategory)) {
-        setMarketCategory("all");
-      }
-    }, [marketplaceCategories, marketCategory]);
-
-    useEffect(() => {
-      if (activeTab === "chat" && selectedConversationId) {
-        loadMessages(selectedConversationId, {
-          markRead: true,
-          mode: "replace",
-        }).catch(() => {});
-      }
-    }, [activeTab, selectedConversationId]);
-
-    useEffect(() => {
-      if (activeTab !== "chat") return;
-      if (prependScrollStateRef.current && messagePanelRef.current) {
-        const previous = prependScrollStateRef.current;
-        const nextHeight = messagePanelRef.current.scrollHeight;
-        messagePanelRef.current.scrollTop =
-          nextHeight - previous.height + previous.top;
-        prependScrollStateRef.current = null;
-        return;
-      }
-      messageEndRef.current?.scrollIntoView({
-        behavior: "smooth",
-        block: "end",
-      });
-    }, [messages, activeTab]);
-
-    useEffect(() => {
-      if (activeTab !== "profile") {
-        setSettingsSection("menu");
-      }
-    }, [activeTab]);
-
-    useEffect(() => {
-      if (activeTab !== "services") {
-        setServiceRequestsModalOpen(false);
-      }
-    }, [activeTab]);
-
-    useEffect(() => {
-      if (activeTab !== "home" || !notificationUnreadCount) return;
-      markNotificationsAsRead({ scope: "system" }).catch(() => {});
-    }, [activeTab, notificationUnreadCount]);
-
-    useEffect(() => {
+    const interval = setInterval(() => {
       loadPresence().catch(() => {});
       loadNotifications().catch(() => {});
-
-      const interval = setInterval(() => {
-        loadPresence().catch(() => {});
-        loadNotifications().catch(() => {});
-        if (activeTab === "chat") {
-          loadConversations().catch(() => {});
-          loadContactDirectory().catch(() => {});
-        }
-      }, 15000);
-
-      return () => clearInterval(interval);
-    }, [activeTab]);
-
-    useEffect(() => {
-      const needle = deferredProductQuery.trim();
-      if (!needle) return;
-      const handle = setTimeout(() => {
-        searchProductsNearby(needle).catch(() => {});
-      }, 350);
-      return () => clearTimeout(handle);
-    }, [
-      deferredProductQuery,
-      shopFilters.lat,
-      shopFilters.lng,
-      shopFilters.radiusKm,
-      productSearchFilters.maxPrice,
-      productSearchFilters.minShopRating,
-      productSearchFilters.sortBy,
-    ]);
-
-    useEffect(() => {
-      if (!canAccess.marketplace) return;
-      const handle = setTimeout(() => {
-        loadRecommendedProducts({
-          query: deferredProductQuery.trim(),
-        }).catch(() => {});
-      }, 450);
-      return () => clearTimeout(handle);
-    }, [
-      canAccess.marketplace,
-      shopFilters.lat,
-      shopFilters.lng,
-      shopFilters.radiusKm,
-      productSearchFilters.maxPrice,
-      productSearchFilters.minShopRating,
-      cart,
-      deferredProductQuery,
-    ]);
-
-    useEffect(() => {
-      if (!checkoutValidationError) return;
-      const nextError = validateDeliveryDetails();
-      if (!nextError) {
-        setCheckoutValidationError("");
+      if (activeTab === "chat") {
+        loadConversations().catch(() => {});
+        loadContactDirectory().catch(() => {});
       }
-    }, [deliveryDetails, checkoutValidationError]);
+    }, 15000);
 
-    useEffect(() => {
-      if (!paymentIntent?.intentId) return;
-      const interval = setInterval(async () => {
-        try {
-          const status = await api(
-            `/payments/intents/${paymentIntent.intentId}`,
-          );
-          setPaymentIntent(status);
-          if (status?.status === "SUCCEEDED") {
-            clearInterval(interval);
-            setToast("Payment settled. Wallet credited.");
-            await loadWallet();
-            if (pendingOrderAfterPayment) {
-              setPendingOrderAfterPayment(false);
-              await placeOrder();
-            }
-          }
-        } catch {
-          // ignore polling errors
-        }
-      }, 10000);
-      return () => clearInterval(interval);
-    }, [paymentIntent?.intentId, pendingOrderAfterPayment]);
+    return () => clearInterval(interval);
+  }, [activeTab]);
 
-    function renderHomeTab() {
-      const orderLinePoints = buildSparklinePoints(
-        ordersSeries.map((item) => item.value),
-        340,
-        100,
-      );
-      const revenueLinePoints = buildSparklinePoints(
-        revenueSeries.map((item) => item.value),
-        340,
-        100,
-      );
-      const maxModuleUsage = Math.max(
-        ...dashboardModuleUsage.map((item) => item.value),
-        1,
-      );
-      const dashboardCards = [
-        {
-          id: "orders",
-          icon: "cart",
-          label: "Active orders",
-          value: activeOrdersCount,
-          trend: `${ordersSeries.reduce((sum, item) => sum + item.value, 0)} this week`,
-          accent: "blue",
-        },
-        {
-          id: "wallet",
-          icon: "wallet",
-          label: "Revenue today",
-          value: `$${toCurrency(revenueToday)}`,
-          trend: walletHealthLabel,
-          accent: "emerald",
-        },
-        {
-          id: "chat",
-          icon: "chat",
-          label: "Unread chats",
-          value: totalUnreadChats,
-          trend: `${conversations.length} live threads`,
-          accent: "violet",
-        },
-        {
-          id: "alerts",
-          icon: "bell",
-          label: "Unread alerts",
-          value: notificationUnreadCount,
-          trend: slaBreaches ? `${slaBreaches} SLA watch items` : "All stable",
-          accent: "amber",
-        },
-      ];
+  useEffect(() => {
+    const needle = deferredProductQuery.trim();
+    if (!needle) return;
+    const handle = setTimeout(() => {
+      searchProductsNearby(needle).catch(() => {});
+    }, 350);
+    return () => clearTimeout(handle);
+  }, [
+    deferredProductQuery,
+    shopFilters.lat,
+    shopFilters.lng,
+    shopFilters.radiusKm,
+    productSearchFilters.maxPrice,
+    productSearchFilters.minShopRating,
+    productSearchFilters.sortBy,
+  ]);
 
-      return (
-        <section className="home-shell dashboard-shell">
-          <article className="dashboard-hero-card">
-            <div className="dashboard-hero-copy">
-              <span className="dashboard-kicker">LifeHub Command Center</span>
-              <h2>
-                Good to see you, {String(user.name || "there").split(" ")[0]}.
-              </h2>
-              <p>
-                Track commerce, services, messages, and operations from one
-                clean workspace with realtime activity and installable access.
-              </p>
-              <div className="dashboard-hero-meta">
-                <span className="dashboard-meta-chip">
-                  Profile completion {profileCompletion}%
-                </span>
-                <span className="dashboard-meta-chip">
-                  {home?.dashboard?.conversations || conversations.length}{" "}
-                  conversations connected
-                </span>
-                <span className="dashboard-meta-chip">{walletHealthLabel}</span>
-              </div>
-            </div>
-            <div className="dashboard-hero-actions">
-              {canInstallApp && (
-                <button
-                  type="button"
-                  className="ghost-btn dashboard-install-btn"
-                  onClick={onInstallApp}
-                >
-                  Install App
-                </button>
-              )}
-              <button
-                type="button"
-                className="dashboard-primary-btn"
-                onClick={() => setCommandOpen(true)}
-              >
-                Open Command Center
-              </button>
-              <div className="dashboard-hero-glance">
-                <strong>{home?.workflowSnapshots?.length || 0}</strong>
-                <small>workflow snapshots monitored</small>
-              </div>
-            </div>
-          </article>
+  useEffect(() => {
+    if (!canAccess.marketplace) return;
+    const handle = setTimeout(() => {
+      loadRecommendedProducts({
+        query: deferredProductQuery.trim(),
+      }).catch(() => {});
+    }, 450);
+    return () => clearTimeout(handle);
+  }, [
+    canAccess.marketplace,
+    shopFilters.lat,
+    shopFilters.lng,
+    shopFilters.radiusKm,
+    productSearchFilters.maxPrice,
+    productSearchFilters.minShopRating,
+    cart,
+    deferredProductQuery,
+  ]);
 
-          <div className="home-stat-grid">
-            {dashboardCards.map((card) => (
-              <article
-                key={card.id}
-                className={`stat-card stat-card-${card.accent}`}
-              >
-                <div className="stat-icon">
-                  <UiIcon name={card.icon} />
-                </div>
-                <div>
-                  <small>{card.label}</small>
-                  <strong>{card.value}</strong>
-                </div>
-                <span className="stat-trend">{card.trend}</span>
-              </article>
-            ))}
-          </div>
-
-          <div className="dashboard-analytics-grid">
-            <article className="panel-card dashboard-chart-card">
-              <div className="panel-title-row">
-                <div>
-                  <h3>Order activity</h3>
-                  <small>Last 7 days fulfillment momentum</small>
-                </div>
-                <span className="chart-pill">
-                  {ordersSeries.reduce((sum, item) => sum + item.value, 0)}{" "}
-                  orders
-                </span>
-              </div>
-              <svg
-                className="dashboard-line-chart"
-                viewBox="0 0 340 110"
-                preserveAspectRatio="none"
-              >
-                <polyline points={orderLinePoints} />
-              </svg>
-              <div className="dashboard-axis-row">
-                {ordersSeries.map((item) => (
-                  <span key={item.label}>
-                    <strong>{item.value}</strong>
-                    <small>{item.label}</small>
-                  </span>
-                ))}
-              </div>
-            </article>
-
-            <article className="panel-card dashboard-chart-card">
-              <div className="panel-title-row">
-                <div>
-                  <h3>Revenue trend</h3>
-                  <small>Positive wallet inflow for the last week</small>
-                </div>
-                <span className="chart-pill accent">
-                  $
-                  {toCurrency(
-                    revenueSeries.reduce((sum, item) => sum + item.value, 0),
-                  )}
-                </span>
-              </div>
-              <svg
-                className="dashboard-line-chart revenue"
-                viewBox="0 0 340 110"
-                preserveAspectRatio="none"
-              >
-                <polyline points={revenueLinePoints} />
-              </svg>
-              <div className="dashboard-axis-row">
-                {revenueSeries.map((item) => (
-                  <span key={item.label}>
-                    <strong>${toCurrency(item.value)}</strong>
-                    <small>{item.label}</small>
-                  </span>
-                ))}
-              </div>
-            </article>
-
-            <article className="panel-card dashboard-usage-card">
-              <div className="panel-title-row">
-                <div>
-                  <h3>Workspace usage</h3>
-                  <small>Where users are active right now</small>
-                </div>
-              </div>
-              <div className="dashboard-usage-list">
-                {dashboardModuleUsage.map((item) => (
-                  <div key={item.label} className="dashboard-usage-row">
-                    <div className="dashboard-usage-head">
-                      <span>{item.label}</span>
-                      <strong>{item.value}</strong>
-                    </div>
-                    <div className="dashboard-usage-track">
-                      <span
-                        className={`dashboard-usage-fill ${item.tone}`}
-                        style={{
-                          width: `${Math.max(12, (item.value / maxModuleUsage) * 100)}%`,
-                        }}
-                      />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </article>
-
-            <article className="panel-card dashboard-notification-card">
-              <div className="panel-title-row">
-                <div>
-                  <h3>Notification preview</h3>
-                  <small>Unread items are surfaced first</small>
-                </div>
-                <button
-                  type="button"
-                  className="ghost-btn"
-                  onClick={openNotificationCenter}
-                >
-                  Open all
-                </button>
-              </div>
-              <div className="dashboard-notification-list">
-                {notificationPreview.map((item) => (
-                  <button
-                    key={item.id}
-                    type="button"
-                    className={`dashboard-notification-item ${!item?.read_at && !item?.readAt ? "unread" : ""}`}
-                    onClick={() => {
-                      if (!item?.read_at && !item?.readAt) {
-                        markNotificationsAsRead({
-                          notificationIds: [item.id],
-                        }).catch(() => {});
-                      }
-                      setActiveTab("home");
-                    }}
-                  >
-                    <span className="dashboard-notification-dot" />
-                    <div>
-                      <strong>{item.event_type || "Update"}</strong>
-                      <small>{formatRelativeTime(item.created_at)}</small>
-                    </div>
-                  </button>
-                ))}
-                {!notificationPreview.length && (
-                  <div className="empty-line">No notifications right now.</div>
-                )}
-              </div>
-            </article>
-          </div>
-
-          <div className="home-main-grid dashboard-lower-grid">
-            <article className="panel-card home-quick dashboard-actions-card">
-              <div className="panel-title-row">
-                <div>
-                  <h3>Quick Actions</h3>
-                  <small>Jump into the workflows you use most</small>
-                </div>
-              </div>
-              <div className="quick-action-grid">
-                {homeActions.slice(0, 6).map((action) => (
-                  <button
-                    key={action.id}
-                    type="button"
-                    className="quick-action-card"
-                    onClick={action.run}
-                  >
-                    <span className="quick-action-icon">
-                      <UiIcon name={action.icon} />
-                    </span>
-                    <div>
-                      <strong>{action.label}</strong>
-                      <small>{action.description}</small>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            </article>
-
-            <article className="panel-card home-activity dashboard-recent-card">
-              <div className="panel-title-row">
-                <div>
-                  <h3>Recent Activity</h3>
-                  <small>
-                    Orders, services, and system events in one timeline
-                  </small>
-                </div>
-              </div>
-              <div className="activity-feed dashboard-recent-feed">
-                {recentMoments.map((item) => (
-                  <article
-                    key={item.id}
-                    className={`activity-item dashboard-recent-item ${item.type}`}
-                  >
-                    <span className="activity-dot" />
-                    <div>
-                      <strong>{item.title}</strong>
-                      <small>{item.meta}</small>
-                    </div>
-                    <span className="activity-arrow">
-                      {formatRelativeTime(item.time)}
-                    </span>
-                  </article>
-                ))}
-                {!recentMoments.length && (
-                  <div className="empty-line">No recent activity.</div>
-                )}
-              </div>
-            </article>
-          </div>
-        </section>
-      );
+  useEffect(() => {
+    if (!checkoutValidationError) return;
+    const nextError = validateDeliveryDetails();
+    if (!nextError) {
+      setCheckoutValidationError("");
     }
+  }, [deliveryDetails, checkoutValidationError]);
 
-    useEffect(() => {
-      const scoped = localStorage.getItem(profilePhotoStorageKey);
-      if (scoped) {
-        setProfilePhoto(scoped);
-        return;
-      }
-
-      const legacy = localStorage.getItem("lifehub_profile_photo");
-      if (legacy) {
-        localStorage.setItem(profilePhotoStorageKey, legacy);
-        localStorage.removeItem("lifehub_profile_photo");
-        setProfilePhoto(legacy);
-        return;
-      }
-
-      setProfilePhoto("");
-    }, [profilePhotoStorageKey]);
-
-    useEffect(() => {
-      setDeliveryDetails((prev) => ({
-        ...prev,
-        recipientName: prev.recipientName || user.name || "",
-        recipientPhone: prev.recipientPhone || user.phone || "",
-      }));
-    }, [user.name, user.phone]);
-
-    function renderChatTab() {
-      return (
-        <WhatsAppChat
-          api={api}
-          user={{
-            id: user?.id,
-            name: user?.name,
-            phone: user?.phone,
-            avatar: profilePhoto,
-          }}
-          callProps={{
-            callSession,
-            acceptIncomingCall,
-            declineIncomingCall,
-            endCurrentCall,
-            startInstantCall,
-            localVideoRef,
-            remoteVideoRef,
-            activeCallRoomId,
-          }}
-          stories={stories}
-          onUploadStory={submitStory}
-        />
-      );
-    }
-
-    function renderMarketplaceTab() {
-      const showingDetailPage = marketplaceView === "detail";
-      const showingCheckoutPage = marketplaceView === "checkout";
-      const showingCatalog = marketplaceView === "catalog";
-
-      // Grab a slice of the top 8 recommended for a showcase row
-      const dealProducts = visibleRecommendedProducts.slice(0, 8);
-
-      return (
-        <section className="marketplace-app-shell premium-marketplace">
-          <div className="premium-mp-actions-top">
-            <button
-              className="ghost-btn mp-filter-toggle"
-              onClick={() => setFilterPanelOpen(true)}
-            >
-              <span className="mp-icon">⚙️</span> Filters
-            </button>
-            <button
-              className="ghost-btn mp-cart-toggle"
-              onClick={() => setCartDrawerOpen(true)}
-            >
-              <span className="mp-icon">🛒</span> Cart (
-              {cart.reduce((s, i) => s + (i.quantity || 1), 0)})
-            </button>
-          </div>
-
-          {showingCatalog && (
-            <div className="mp-catalog-view">
-              {/* Super App Premium Hero */}
-              <div className="mp-hero-banner premium-glass">
-                <div className="mp-hero-content">
-                  <span className="mp-hero-eyebrow">LifeHub Premium</span>
-                  <h1>Discover the Best Products</h1>
-                  <p>
-                    Curated collections from trusted local vendors, delivered
-                    with care.
-                  </p>
-
-                  <div className="mp-hero-search-bar">
-                    <div className="mp-search-inner">
-                      <span className="mp-search-icon">🔎</span>
-                      <input
-                        type="text"
-                        className="mp-search-input"
-                        placeholder="Search for groceries, electronics, or anything..."
-                        value={productQuery}
-                        onChange={(e) => setProductQuery(e.target.value)}
-                      />
-                      {productQuery && (
-                        <button
-                          className="mp-search-clear"
-                          onClick={() => setProductQuery("")}
-                        >
-                          ✕
-                        </button>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="mp-hero-stats">
-                    <div className="mp-stat-item">
-                      <strong>10k+</strong>
-                      <small>Products</small>
-                    </div>
-                    <div className="mp-stat-item">
-                      <strong>500+</strong>
-                      <small>Shops</small>
-                    </div>
-                    <div className="mp-stat-item">
-                      <strong>4.8★</strong>
-                      <small>Rating</small>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <ProductRow
-                title="Recommended For You"
-                subtitle="Personalized picks based on your browsing history"
-                icon="✨"
-                products={visibleRecommendedProducts.slice(0, 10)}
-                onProductClick={(p) =>
-                  openMarketplaceProduct(p, p.shop || selectedShop)
-                }
-                onAddToCart={addToCart}
-                onBuyNow={buyNowMarketplaceProduct}
-                mediaBaseUrl={mediaBaseUrl}
-                cartProductIds={
-                  new Set(cart.map((i) => String(i.productId || i.id)))
-                }
-              />
-
-              <ProductRow
-                title="Trending Now"
-                subtitle="Most popular items in your area"
-                icon="🔥"
-                products={visibleRecommendedProducts.slice(10, 20)}
-                onProductClick={(p) =>
-                  openMarketplaceProduct(p, p.shop || selectedShop)
-                }
-                onAddToCart={addToCart}
-                onBuyNow={buyNowMarketplaceProduct}
-                mediaBaseUrl={mediaBaseUrl}
-                cartProductIds={
-                  new Set(cart.map((i) => String(i.productId || i.id)))
-                }
-              />
-
-              {!!productQuery.trim() && (
-                <ProductRow
-                  title="Search Results"
-                  subtitle={`${visibleProductResults.length} matching products found`}
-                  icon="🔎"
-                  products={visibleProductResults}
-                  onProductClick={(p) =>
-                    openMarketplaceProduct(p, p.shop || selectedShop)
-                  }
-                  onAddToCart={addToCart}
-                  onBuyNow={buyNowMarketplaceProduct}
-                  mediaBaseUrl={mediaBaseUrl}
-                  cartProductIds={
-                    new Set(cart.map((i) => String(i.productId || i.id)))
-                  }
-                />
-              )}
-
-              {selectedShop && (
-                <ProductRow
-                  title={selectedShop.shopName + " Storefront"}
-                  subtitle={selectedShop.address || "Local vendor inventory"}
-                  icon="🏪"
-                  products={visibleShopProducts}
-                  onProductClick={(p) =>
-                    openMarketplaceProduct(p, selectedShop)
-                  }
-                  onAddToCart={addToCart}
-                  onBuyNow={buyNowMarketplaceProduct}
-                  mediaBaseUrl={mediaBaseUrl}
-                  cartProductIds={
-                    new Set(cart.map((i) => String(i.productId || i.id)))
-                  }
-                />
-              )}
-
-              <ProductRow
-                title="Best Sellers"
-                subtitle="Highly-rated favorites from the community"
-                icon="⭐"
-                products={visibleRecommendedProducts.slice(20, 30)}
-                onProductClick={(p) =>
-                  openMarketplaceProduct(p, p.shop || selectedShop)
-                }
-                onAddToCart={addToCart}
-                onBuyNow={buyNowMarketplaceProduct}
-                mediaBaseUrl={mediaBaseUrl}
-                cartProductIds={
-                  new Set(cart.map((i) => String(i.productId || i.id)))
-                }
-              />
-
-              <FilterDrawer
-                open={filterPanelOpen}
-                onClose={() => setFilterPanelOpen(false)}
-                categories={marketplaceCategories}
-                filters={marketFilters}
-                onFiltersChange={setMarketFilters}
-                onApply={(f) => setMarketFilters(f)}
-              />
-
-              <CartDrawer
-                open={cartDrawerOpen}
-                onClose={() => setCartDrawerOpen(false)}
-                cart={cart}
-                onIncrement={incrementCartItem}
-                onDecrement={decrementCartItem}
-                onRemove={removeFromCart}
-                onClearCart={clearCart}
-                onCheckout={goToMarketplaceCheckout}
-                cartTotal={marketplacePayable}
-                mediaBaseUrl={mediaBaseUrl}
-              />
-            </div>
-          )}
-
-          {showingDetailPage && selectedMarketplaceDetail && (
-            <ProductDetailPage
-              product={selectedMarketplaceDetail}
-              shop={selectedShop}
-              onBack={() => setMarketplaceView("catalog")}
-              onAddToCart={addToCart}
-              onBuyNow={buyNowMarketplaceProduct}
-              onOpenReviews={() => console.log("Open reviews")}
-              mediaBaseUrl={mediaBaseUrl}
-              reviews={productReviews}
-              onAddReview={(rating, comment, imageFile) =>
-                submitReview({ rating, comment, imageFile })
-              }
-              relatedProducts={relatedMarketplaceProducts}
-              onRelatedProductClick={(p) =>
-                openMarketplaceProduct(p, p.shop || selectedShop)
-              }
-            />
-          )}
-          {showingCheckoutPage ? (
-            <div
-              dangerouslySetInnerHTML={{ __html: "<!-- checkoutPart -->" }}
-            />
-          ) : null}
-        </section>
-      );
-    }
-
-    function renderServicesTab() {
-      const availableProviders = providers.filter(
-        (provider) => provider.available,
-      ).length;
-      const activeProfile = selectedProviderProfile || null;
-      const profileName =
-        activeProfile?.users?.name || selectedProviderCard?.name || "";
-      const profileRating = Number(
-        activeProfile?.rating ?? selectedProviderCard?.rating ?? 0,
-      );
-      const profileExperience = Number(
-        activeProfile?.experience_years ??
-          selectedProviderCard?.experienceYears ??
-          0,
-      );
-      const profileSkills = activeProfile?.provider_skills?.length
-        ? activeProfile.provider_skills.map((item) => item.skill_name)
-        : selectedProviderCard?.skills || [];
-      const profileLocation = activeProfile?.provider_locations
-        ? {
-            lat: Number(activeProfile.provider_locations.lat || 0),
-            lng: Number(activeProfile.provider_locations.lng || 0),
-            available: Boolean(activeProfile.provider_locations.available),
-          }
-        : {
-            lat: Number(selectedProviderCard?.location?.lat || 0),
-            lng: Number(selectedProviderCard?.location?.lng || 0),
-            available: Boolean(selectedProviderCard?.available),
-          };
-
-      const recentServiceRequests = serviceRequests.slice(0, 3);
-
-      return (
-        <>
-          <section className="service-shell service-app-shell">
-            <header className="panel-card service-hero">
-              <div className="service-hero-head">
-                <div>
-                  <h2>Find and Hire Top Workers Nearby</h2>
-                  <p>
-                    Discover top-rated nearby professionals with profile-first
-                    cards, then open full details and hire in one flow.
-                  </p>
-                </div>
-                <div className="service-hero-metrics">
-                  <span className="status-pill">
-                    Providers {providers.length}
-                  </span>
-                  <span className="status-pill">
-                    Available {availableProviders}
-                  </span>
-                  <span className="status-pill">
-                    Requests {serviceRequests.length}
-                  </span>
-                </div>
-                <div className="service-hero-actions">
-                  <button
-                    type="button"
-                    className="ghost-btn"
-                    onClick={() => setServiceRequestsModalOpen(true)}
-                  >
-                    View Order Requests
-                  </button>
-                </div>
-              </div>
-              <div className="service-skill-row">
-                {serviceSkillOptions.map((skill) => (
-                  <button
-                    key={skill}
-                    type="button"
-                    className={`service-skill-chip ${String(providerSkill).toLowerCase() === String(skill).toLowerCase() ? "active" : ""}`}
-                    onClick={() => {
-                      setProviderSkill(skill);
-                      setServiceForm((prev) => ({
-                        ...prev,
-                        serviceType: skill,
-                      }));
-                    }}
-                  >
-                    {titleCase(skill)}
-                  </button>
-                ))}
-              </div>
-              <div className="service-filter-grid">
-                <button type="button" onClick={useCurrentLocation}>
-                  Use Current Location
-                </button>
-                <input
-                  value={providerSkill}
-                  onChange={(event) => setProviderSkill(event.target.value)}
-                  placeholder="Search skill"
-                />
-                <input
-                  value={serviceFilters.lat}
-                  onChange={(event) =>
-                    setServiceFilters((prev) => ({
-                      ...prev,
-                      lat: event.target.value,
-                    }))
-                  }
-                  placeholder="Latitude"
-                />
-                <input
-                  value={serviceFilters.lng}
-                  onChange={(event) =>
-                    setServiceFilters((prev) => ({
-                      ...prev,
-                      lng: event.target.value,
-                    }))
-                  }
-                  placeholder="Longitude"
-                />
-                <input
-                  value={serviceFilters.radiusKm}
-                  onChange={(event) =>
-                    setServiceFilters((prev) => ({
-                      ...prev,
-                      radiusKm: event.target.value,
-                    }))
-                  }
-                  placeholder="Radius KM"
-                />
-                <button type="button" onClick={loadProviders}>
-                  Search Providers
-                </button>
-              </div>
-              {(hasRole("PROVIDER") || hasRole("ADMIN")) && (
-                <div className="service-provider-self">
-                  <input
-                    value={providerLocationForm.lat}
-                    onChange={(event) =>
-                      setProviderLocationForm((prev) => ({
-                        ...prev,
-                        lat: event.target.value,
-                      }))
-                    }
-                    placeholder="My latitude"
-                  />
-                  <input
-                    value={providerLocationForm.lng}
-                    onChange={(event) =>
-                      setProviderLocationForm((prev) => ({
-                        ...prev,
-                        lng: event.target.value,
-                      }))
-                    }
-                    placeholder="My longitude"
-                  />
-                  <select
-                    value={providerLocationForm.available ? "true" : "false"}
-                    onChange={(event) =>
-                      setProviderLocationForm((prev) => ({
-                        ...prev,
-                        available: event.target.value === "true",
-                      }))
-                    }
-                  >
-                    <option value="true">Available</option>
-                    <option value="false">Unavailable</option>
-                  </select>
-                  <button type="button" onClick={updateMyProviderLocation}>
-                    Update My Provider Status
-                  </button>
-                </div>
-              )}
-            </header>
-
-            <div className="service-layout service-layout-modern">
-              <article className="panel-card service-provider-panel">
-                <div className="market-panel-head">
-                  <h3>Top Service Professionals</h3>
-                  <small>{topServiceProviders.length} workers nearby</small>
-                </div>
-                <div className="service-provider-grid service-provider-grid-modern">
-                  {topServiceProviders.map((provider) => (
-                    <article
-                      key={provider.id}
-                      className={`service-provider-card modern ${String(provider.id) === String(selectedProviderId) ? "active" : ""}`}
-                    >
-                      <div className="service-provider-profile">
-                        <img
-                          src={providerAvatarUrl(provider.name)}
-                          alt={provider.name}
-                          className="service-provider-avatar"
-                        />
-                        <div>
-                          <strong>{provider.name}</strong>
-                          <small>
-                            {(provider.skills || []).slice(0, 3).join(", ") ||
-                              "General service"}
-                          </small>
-                          <small className="service-rating-line">
-                            {ratingStars(provider.rating)}{" "}
-                            {Number(provider.rating || 0).toFixed(1)}
-                          </small>
-                        </div>
-                      </div>
-                      <div className="service-provider-top">
-                        <span className="status-pill">
-                          {provider.available ? "Available" : "Unavailable"}
-                        </span>
-                        <span className="status-pill">
-                          {provider.distanceKm !== null &&
-                          provider.distanceKm !== undefined
-                            ? `${provider.distanceKm.toFixed(1)} km away`
-                            : "distance n/a"}
-                        </span>
-                      </div>
-                      <div className="service-provider-actions">
-                        <button
-                          type="button"
-                          className="ghost-btn"
-                          onClick={() => openProviderProfile(provider.id)}
-                        >
-                          View Profile
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setServiceForm((prev) => ({
-                              ...prev,
-                              serviceType:
-                                provider.skills?.[0] || providerSkill,
-                              preferredProviderId: String(provider.id),
-                            }));
-                            openProviderProfile(provider.id).catch(() => {});
-                          }}
-                        >
-                          Hire Now
-                        </button>
-                      </div>
-                    </article>
-                  ))}
-                  {!topServiceProviders.length && (
-                    <div className="empty-line">No providers loaded yet.</div>
-                  )}
-                </div>
-              </article>
-
-              <aside className="panel-card service-book-panel service-profile-panel">
-                <h3>Worker Profile and Hire</h3>
-                {loadingProviderProfile && (
-                  <div className="info-line">Loading provider profile...</div>
-                )}
-                {!!providerProfileError && (
-                  <div className="empty-line">{providerProfileError}</div>
-                )}
-                {!loadingProviderProfile &&
-                  !providerProfileError &&
-                  !!profileName && (
-                    <article className="service-profile-card">
-                      <div className="service-provider-profile">
-                        <img
-                          src={providerAvatarUrl(profileName)}
-                          alt={profileName}
-                          className="service-provider-avatar large"
-                        />
-                        <div>
-                          <strong>{profileName}</strong>
-                          <small>
-                            {ratingStars(profileRating)}{" "}
-                            {profileRating.toFixed(1)}
-                          </small>
-                          <small>{profileExperience} years experience</small>
-                        </div>
-                      </div>
-                      <div className="service-profile-chips">
-                        {profileSkills.map((skill) => (
-                          <span
-                            key={`${profileName}_${skill}`}
-                            className="service-skill-chip"
-                          >
-                            {titleCase(skill)}
-                          </span>
-                        ))}
-                        {!profileSkills.length && (
-                          <span className="service-skill-chip">
-                            General service
-                          </span>
-                        )}
-                      </div>
-                      <small>
-                        {profileLocation.available
-                          ? "Available now"
-                          : "Currently unavailable"}{" "}
-                        |{" "}
-                        {profileLocation.lat && profileLocation.lng
-                          ? `${profileLocation.lat.toFixed(4)}, ${profileLocation.lng.toFixed(4)}`
-                          : "Location unavailable"}
-                      </small>
-                    </article>
-                  )}
-                {!loadingProviderProfile &&
-                  !providerProfileError &&
-                  !profileName && (
-                    <div className="info-line">
-                      Select a worker card to view profile details and hire.
-                    </div>
-                  )}
-
-                {canCreateServiceRequest ? (
-                  <div className="service-book-form">
-                    <input
-                      value={serviceForm.serviceType}
-                      onChange={(event) =>
-                        setServiceForm((prev) => ({
-                          ...prev,
-                          serviceType: event.target.value,
-                        }))
-                      }
-                      placeholder="Service type"
-                    />
-                    <input
-                      value={serviceForm.preferredProviderId}
-                      onChange={(event) =>
-                        setServiceForm((prev) => ({
-                          ...prev,
-                          preferredProviderId: event.target.value,
-                        }))
-                      }
-                      placeholder="Preferred provider ID"
-                    />
-                    <textarea
-                      value={serviceForm.description}
-                      onChange={(event) =>
-                        setServiceForm((prev) => ({
-                          ...prev,
-                          description: event.target.value,
-                        }))
-                      }
-                      placeholder="Describe your issue, timing, address, and requirements"
-                      rows={4}
-                    />
-                    <button type="button" onClick={createServiceRequest}>
-                      Hire for Work
-                    </button>
-                  </div>
-                ) : (
-                  <div className="info-line">
-                    You can track and complete assigned service requests in this
-                    view.
-                  </div>
-                )}
-
-                <div className="divider" />
-                <div className="market-panel-head">
-                  <h3>Latest Requests</h3>
-                  <button
-                    type="button"
-                    className="ghost-btn"
-                    onClick={() => setServiceRequestsModalOpen(true)}
-                  >
-                    View all
-                  </button>
-                </div>
-                <div className="service-request-list">
-                  {recentServiceRequests.map((request) => (
-                    <div key={request.id} className="service-request-card">
-                      <div className="item-header">
-                        <strong>
-                          #{request.id} | {request.service_type}
-                        </strong>
-                        <span className="status-pill">{request.status}</span>
-                      </div>
-                      <small>{request.description || "No description"}</small>
-                      <div className="item-actions">
-                        {canCompleteServiceRequest && (
-                          <button
-                            type="button"
-                            onClick={() => completeServiceRequest(request.id)}
-                          >
-                            Complete
-                          </button>
-                        )}
-                        {canCancelServiceRequest && (
-                          <button
-                            type="button"
-                            className="danger"
-                            onClick={() => cancelServiceRequest(request.id)}
-                          >
-                            Cancel
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                  {!recentServiceRequests.length && (
-                    <div className="empty-line">No service requests yet.</div>
-                  )}
-                </div>
-              </aside>
-            </div>
-          </section>
-          {serviceRequestsModalOpen && (
-            <div
-              className="command-overlay"
-              onClick={() => setServiceRequestsModalOpen(false)}
-            >
-              <div
-                className="command-modal service-requests-modal"
-                onClick={(event) => event.stopPropagation()}
-              >
-                <div className="command-header">
-                  <div>
-                    <strong>Service Order Requests</strong>
-                    <small>
-                      Every service booking placed from LifeHub appears here and
-                      in Orders.
-                    </small>
-                  </div>
-                  <button
-                    type="button"
-                    className="ghost-btn"
-                    onClick={() => setServiceRequestsModalOpen(false)}
-                  >
-                    Close
-                  </button>
-                </div>
-                <div className="service-requests-modal-list">
-                  {serviceRequests.map((request) => (
-                    <article
-                      key={`modal_request_${request.id}`}
-                      className="service-request-card modal-card"
-                    >
-                      <div className="item-header">
-                        <strong>Request #{request.id}</strong>
-                        <span className="status-pill">
-                          {titleCase(request.status || "CREATED")}
-                        </span>
-                      </div>
-                      <small>
-                        {titleCase(request.service_type || "Service request")}
-                      </small>
-                      <p>{request.description || "No description provided."}</p>
-                      <div className="item-actions">
-                        {canCompleteServiceRequest && (
-                          <button
-                            type="button"
-                            onClick={() => completeServiceRequest(request.id)}
-                          >
-                            Complete
-                          </button>
-                        )}
-                        {canCancelServiceRequest && (
-                          <button
-                            type="button"
-                            className="danger"
-                            onClick={() => cancelServiceRequest(request.id)}
-                          >
-                            Cancel
-                          </button>
-                        )}
-                      </div>
-                    </article>
-                  ))}
-                  {!serviceRequests.length && (
-                    <div className="empty-line">No service requests yet.</div>
-                  )}
-                </div>
-              </div>
-            </div>
-          )}
-        </>
-      );
-    }
-
-    function renderOrdersTab() {
-      return <OrdersPage token={token} userRoles={userRoles} />;
-    }
-
-    function renderWalletTab() {
-      const balanceValue =
-        walletSummary?.availableBalance || walletSummary?.wallet?.balance || 0;
-      const safeBalance = Number.isFinite(balanceValue) ? balanceValue : 0;
-      const formatMoney = (value) => {
-        const amount = Number(value || 0);
-        if (!Number.isFinite(amount)) return "0.00";
-        return amount.toLocaleString(undefined, {
-          minimumFractionDigits: 2,
-          maximumFractionDigits: 2,
-        });
-      };
-      const formatTransactionTime = (raw) => {
-        if (!raw) return "";
-        const date = new Date(raw);
-        if (Number.isNaN(date.getTime())) return "";
-        const today = new Date();
-        const yesterday = new Date();
-        yesterday.setDate(today.getDate() - 1);
-        const label = isSameDay(date, today)
-          ? "Today"
-          : isSameDay(date, yesterday)
-            ? "Yesterday"
-            : date.toLocaleDateString();
-        const time = formatClock(date);
-        return [label, time].filter(Boolean).join(", ");
-      };
-      const resolveTransactionAmount = (tx) => {
-        const raw = Number(tx?.amount ?? tx?.value ?? 0);
-        return Number.isFinite(raw) ? raw : 0;
-      };
-      const resolveTransactionLabel = (tx) => {
-        const fallback = tx?.description || tx?.note || "Transaction";
-        const rawType = tx?.transaction_type || tx?.type || fallback;
-        return titleCase(String(rawType).replace(/_/g, " "));
-      };
-      const resolveTransactionMeta = (tx) => {
-        const orderId = tx?.order_id || tx?.orderId;
-        const reference = tx?.reference_id || tx?.referenceId;
-        const refLabel = orderId
-          ? `Order #${orderId}`
-          : reference
-            ? `Ref ${reference}`
-            : tx?.counterparty || tx?.merchant || "";
-        const timeLabel = formatTransactionTime(
-          tx?.created_at || tx?.createdAt || tx?.timestamp,
+  useEffect(() => {
+    if (!paymentIntent?.intentId) return;
+    const interval = setInterval(async () => {
+      try {
+        const status = await api(
+          `/payments/intents/${paymentIntent.intentId}`,
         );
-        return [refLabel, timeLabel].filter(Boolean).join(" · ");
-      };
-      const isCreditTransaction = (tx) => {
-        const type = String(
-          tx?.transaction_type || tx?.type || "",
-        ).toUpperCase();
-        const amount = resolveTransactionAmount(tx);
-        const creditHints = [
-          "TOPUP",
-          "RECEIVE",
-          "REFUND",
-          "CREDIT",
-          "PAYMENT_RECEIVED",
-        ];
-        const debitHints = [
-          "TRANSFER",
-          "PAYOUT",
-          "DEBIT",
-          "PAYMENT",
-          "ORDER",
-          "WITHDRAW",
-        ];
-        if (creditHints.some((hint) => type.includes(hint))) return true;
-        if (debitHints.some((hint) => type.includes(hint))) return false;
-        return amount >= 0;
-      };
+        setPaymentIntent(status);
+        if (status?.status === "SUCCEEDED") {
+          clearInterval(interval);
+          setToast("Payment settled. Wallet credited.");
+          await loadWallet();
+          if (pendingOrderAfterPayment) {
+            setPendingOrderAfterPayment(false);
+            await placeOrder();
+          }
+        }
+      } catch {
+        // ignore polling errors
+      }
+    }, 10000);
+    return () => clearInterval(interval);
+  }, [paymentIntent?.intentId, pendingOrderAfterPayment]);
 
-      return (
-        <section className="wallet-shell">
-          <div className="wallet-balance-card">
-            <div className="wallet-balance-top">
-              <div className="wallet-balance-meta">
-                <span>Available Balance</span>
-                <strong>${formatMoney(safeBalance)}</strong>
-              </div>
-              <button
-                type="button"
-                className="wallet-refresh"
-                onClick={loadWallet}
-                aria-label="Refresh wallet"
-              >
-                <UiIcon name="refresh" size={16} />
-              </button>
+  function renderHomeTab() {
+    const orderLinePoints = buildSparklinePoints(
+      ordersSeries.map((item) => item.value),
+      340,
+      100,
+    );
+    const revenueLinePoints = buildSparklinePoints(
+      revenueSeries.map((item) => item.value),
+      340,
+      100,
+    );
+    const maxModuleUsage = Math.max(
+      ...dashboardModuleUsage.map((item) => item.value),
+      1,
+    );
+    const dashboardCards = [
+      {
+        id: "orders",
+        icon: "cart",
+        label: "Active orders",
+        value: activeOrdersCount,
+        trend: `${ordersSeries.reduce((sum, item) => sum + item.value, 0)} this week`,
+        accent: "blue",
+      },
+      {
+        id: "wallet",
+        icon: "wallet",
+        label: "Revenue today",
+        value: `$${toCurrency(revenueToday)}`,
+        trend: walletHealthLabel,
+        accent: "emerald",
+      },
+      {
+        id: "chat",
+        icon: "chat",
+        label: "Unread chats",
+        value: totalUnreadChats,
+        trend: `${conversations.length} live threads`,
+        accent: "violet",
+      },
+      {
+        id: "alerts",
+        icon: "bell",
+        label: "Unread alerts",
+        value: notificationUnreadCount,
+        trend: slaBreaches ? `${slaBreaches} SLA watch items` : "All stable",
+        accent: "amber",
+      },
+    ];
+
+    return (
+      <section className="home-shell dashboard-shell">
+        <article className="dashboard-hero-card">
+          <div className="dashboard-hero-copy">
+            <span className="dashboard-kicker">LifeHub Command Center</span>
+            <h2>
+              Good to see you, {String(user.name || "there").split(" ")[0]}.
+            </h2>
+            <p>
+              Track commerce, services, messages, and operations from one
+              clean workspace with realtime activity and installable access.
+            </p>
+            <div className="dashboard-hero-meta">
+              <span className="dashboard-meta-chip">
+                Profile completion {profileCompletion}%
+              </span>
+              <span className="dashboard-meta-chip">
+                {home?.dashboard?.conversations || conversations.length}{" "}
+                conversations connected
+              </span>
+              <span className="dashboard-meta-chip">{walletHealthLabel}</span>
             </div>
-            <div className="wallet-actions">
-              <button
-                type="button"
-                className={`wallet-action primary ${walletAction === "topup" ? "active" : ""}`}
-                onClick={() =>
-                  setWalletAction((prev) => (prev === "topup" ? "" : "topup"))
-                }
-              >
-                <UiIcon name="plus" size={16} />
-                Top Up
-              </button>
-              <button
-                type="button"
-                className={`wallet-action ${walletAction === "transfer" ? "active" : ""}`}
-                onClick={() =>
-                  setWalletAction((prev) =>
-                    prev === "transfer" ? "" : "transfer",
-                  )
-                }
-              >
-                <span className="wallet-action-icon">↗</span>
-                Transfer
-              </button>
-              <button
-                type="button"
-                className={`wallet-action ${walletAction === "cards" ? "active" : ""}`}
-                onClick={() =>
-                  setWalletAction((prev) => (prev === "cards" ? "" : "cards"))
-                }
-              >
-                <UiIcon name="wallet" size={16} />
-                Cards
-              </button>
-            </div>
-            {walletAction === "topup" && (
-              <div className="wallet-inline-form">
-                <div className="wallet-inline-row">
-                  <input
-                    value={topupAmount}
-                    onChange={(event) => setTopupAmount(event.target.value)}
-                    placeholder="Top up amount"
-                  />
-                  <button type="button" onClick={topupWallet}>
-                    Pay now
-                  </button>
-                </div>
-                {paymentIntent && (
-                  <div className="wallet-intent-note">
-                    <div>
-                      <strong>Gateway Intent Ready</strong>
-                      <small>Provider: {paymentIntent.provider}</small>
-                    </div>
-                    <code>
-                      {`${API_URL.replace("/api", "")}/api/payments/webhooks/${String(paymentIntent.provider || "").toLowerCase()}`}
-                    </code>
-                  </div>
-                )}
-              </div>
-            )}
-            {walletAction === "transfer" && (
-              <div className="wallet-inline-form">
-                <div className="wallet-inline-row">
-                  <select
-                    value={transferForm.recipientType}
-                    onChange={(event) =>
-                      setTransferForm((prev) => ({
-                        ...prev,
-                        recipientType: event.target.value,
-                      }))
-                    }
-                  >
-                    <option value="phone">Transfer to phone</option>
-                    <option value="upi">Transfer to UPI ID</option>
-                  </select>
-                  {transferForm.recipientType === "phone" ? (
-                    <input
-                      value={transferForm.toPhone}
-                      onChange={(event) =>
-                        setTransferForm((prev) => ({
-                          ...prev,
-                          toPhone: event.target.value,
-                        }))
-                      }
-                      placeholder="Recipient phone"
-                    />
-                  ) : (
-                    <input
-                      value={transferForm.toUpiId}
-                      onChange={(event) =>
-                        setTransferForm((prev) => ({
-                          ...prev,
-                          toUpiId: event.target.value,
-                        }))
-                      }
-                      placeholder="Recipient UPI ID (example@bank)"
-                    />
-                  )}
-                </div>
-                <div className="wallet-inline-row">
-                  <input
-                    value={transferForm.amount}
-                    onChange={(event) =>
-                      setTransferForm((prev) => ({
-                        ...prev,
-                        amount: event.target.value,
-                      }))
-                    }
-                    placeholder="Amount"
-                  />
-                  <input
-                    value={transferForm.note}
-                    onChange={(event) =>
-                      setTransferForm((prev) => ({
-                        ...prev,
-                        note: event.target.value,
-                      }))
-                    }
-                    placeholder="Note (optional)"
-                  />
-                  <button
-                    type="button"
-                    onClick={transferWalletBalance}
-                    disabled={transferBusy}
-                  >
-                    {transferBusy ? "Transferring..." : "Send"}
-                  </button>
-                </div>
-              </div>
-            )}
-            {walletAction === "cards" && (
-              <div className="wallet-inline-form">
-                <div className="wallet-inline-info">
-                  Link cards or UPI IDs from Settings to unlock instant
-                  transfers.
-                </div>
-                <button type="button" onClick={() => setActiveTab("profile")}>
-                  Open Settings
-                </button>
-              </div>
-            )}
           </div>
-
-          <div className="wallet-section-title">Transactions</div>
-          <div className="wallet-transactions-card">
-            {transactions.map((tx) => {
-              const credit = isCreditTransaction(tx);
-              const amountValue = Math.abs(resolveTransactionAmount(tx));
-              return (
-                <div
-                  key={tx.id || tx.reference_id || tx.created_at}
-                  className="wallet-transaction-row"
-                >
-                  <div className="wallet-transaction-left">
-                    <span
-                      className={`wallet-transaction-icon ${credit ? "credit" : "debit"}`}
-                    >
-                      {credit ? "↙" : "↗"}
-                    </span>
-                    <div className="wallet-transaction-info">
-                      <strong>{resolveTransactionLabel(tx)}</strong>
-                      <small>
-                        {resolveTransactionMeta(tx) || "Recent activity"}
-                      </small>
-                    </div>
-                  </div>
-                  <div
-                    className={`wallet-transaction-amount ${credit ? "credit" : "debit"}`}
-                  >
-                    {credit ? "+" : "-"}${formatMoney(amountValue)}
-                  </div>
-                </div>
-              );
-            })}
-            {!transactions.length && (
-              <div className="wallet-empty">No transactions available yet.</div>
+          <div className="dashboard-hero-actions">
+            {canInstallApp && (
+              <button
+                type="button"
+                className="ghost-btn dashboard-install-btn"
+                onClick={onInstallApp}
+              >
+                Install App
+              </button>
             )}
-          </div>
-
-          <details className="wallet-advanced">
-            <summary>Advanced wallet tools</summary>
-            <div className="wallet-advanced-grid">
-              <div className="wallet-advanced-card">
-                <h4>Receive Money</h4>
-                <div className="wallet-receive-card">
-                  <small>Your UPI ID</small>
-                  <strong>
-                    {receiveProfile?.upiId ||
-                      userSettings?.payments?.upiId ||
-                      "Set UPI ID in profile settings"}
-                  </strong>
-                  {!!receiveProfile?.qrCodeUrl && (
-                    <img
-                      src={receiveProfile.qrCodeUrl}
-                      alt="Receive payment QR"
-                      className="wallet-receive-qr"
-                    />
-                  )}
-                  {!!receiveProfile?.upiUri && (
-                    <small>
-                      UPI URI: <code>{receiveProfile.upiUri}</code>
-                    </small>
-                  )}
-                </div>
-              </div>
-              <div className="wallet-advanced-card">
-                <h4>Balances</h4>
-                <div className="wallet-metric-grid">
-                  <div className="wallet-metric">
-                    <span>Available</span>
-                    <strong>
-                      ${formatMoney(walletSummary?.availableBalance)}
-                    </strong>
-                  </div>
-                  <div className="wallet-metric">
-                    <span>Locked</span>
-                    <strong>
-                      ${formatMoney(walletSummary?.lockedBalance)}
-                    </strong>
-                  </div>
-                  <div className="wallet-metric">
-                    <span>Total Balance</span>
-                    <strong>
-                      ${formatMoney(walletSummary?.wallet?.balance)}
-                    </strong>
-                  </div>
-                  <div className="wallet-metric">
-                    <span>Transactions</span>
-                    <strong>{transactions.length}</strong>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </details>
-        </section>
-      );
-    }
-
-    function renderSellerTab() {
-      const shopIdValue =
-        sellerForm.shopId || selectedShopId || selectedShop?.id || "";
-      const sellerOrders = shopIdValue
-        ? orders.filter(
-            (order) =>
-              String(order.shopId || order.shop_id || order.shop?.id || "") ===
-              String(shopIdValue),
-          )
-        : [];
-      const totalProducts = sellerProducts.length;
-      const categoryMap = sellerProducts.reduce((acc, product) => {
-        const key = String(product.category || "General").trim() || "General";
-        acc[key] = (acc[key] || 0) + 1;
-        return acc;
-      }, {});
-      const topCategories = Object.entries(categoryMap)
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 5);
-      const ordersToday = sellerOrders.filter((order) => {
-        const rawDate = order.created_at || order.createdAt || order.timestamp;
-        if (!rawDate) return false;
-        const parsed = new Date(rawDate);
-        if (Number.isNaN(parsed.getTime())) return false;
-        return isSameDay(parsed, new Date());
-      }).length;
-      const revenue = sellerOrders.reduce((sum, order) => {
-        const amount = Number(
-          order.totalAmount || order.total || order.amount || order.value || 0,
-        );
-        return Number.isFinite(amount) ? sum + amount : sum;
-      }, 0);
-      const growth = (() => {
-        const now = new Date();
-        const startThisWeek = new Date(now);
-        startThisWeek.setDate(now.getDate() - 7);
-        const startPrevWeek = new Date(now);
-        startPrevWeek.setDate(now.getDate() - 14);
-        const thisWeek = sellerOrders.reduce((sum, order) => {
-          const rawDate =
-            order.created_at || order.createdAt || order.timestamp;
-          if (!rawDate) return sum;
-          const parsed = new Date(rawDate);
-          if (Number.isNaN(parsed.getTime())) return sum;
-          if (parsed < startThisWeek) return sum;
-          const amount = Number(
-            order.totalAmount ||
-              order.total ||
-              order.amount ||
-              order.value ||
-              0,
-          );
-          return Number.isFinite(amount) ? sum + amount : sum;
-        }, 0);
-        const prevWeek = sellerOrders.reduce((sum, order) => {
-          const rawDate =
-            order.created_at || order.createdAt || order.timestamp;
-          if (!rawDate) return sum;
-          const parsed = new Date(rawDate);
-          if (Number.isNaN(parsed.getTime())) return sum;
-          if (parsed < startPrevWeek || parsed >= startThisWeek) return sum;
-          const amount = Number(
-            order.totalAmount ||
-              order.total ||
-              order.amount ||
-              order.value ||
-              0,
-          );
-          return Number.isFinite(amount) ? sum + amount : sum;
-        }, 0);
-        if (prevWeek <= 0) return 0;
-        return Math.round(((thisWeek - prevWeek) / prevWeek) * 100);
-      })();
-
-      return (
-        <section className="seller-shell">
-          <div className="seller-header">
-            <div>
-              <h2>Seller Hub</h2>
-              <p>Manage your products and orders</p>
-            </div>
             <button
               type="button"
-              className="seller-primary-btn"
-              onClick={() => setSellerFormOpen(true)}
+              className="dashboard-primary-btn"
+              onClick={() => setCommandOpen(true)}
             >
-              + Add Product
+              Open Command Center
             </button>
-          </div>
-
-          <div className="seller-stats-grid">
-            <div className="seller-stat-card">
-              <span className="seller-stat-label">Total Products</span>
-              <strong>{totalProducts}</strong>
-            </div>
-            <div className="seller-stat-card">
-              <span className="seller-stat-label">Orders Today</span>
-              <strong>{ordersToday}</strong>
-            </div>
-            <div className="seller-stat-card">
-              <span className="seller-stat-label">Revenue</span>
-              <strong>${toCurrency(revenue)}</strong>
-            </div>
-            <div className="seller-stat-card">
-              <span className="seller-stat-label">Growth</span>
-              <strong>{growth}%</strong>
+            <div className="dashboard-hero-glance">
+              <strong>{home?.workflowSnapshots?.length || 0}</strong>
+              <small>workflow snapshots monitored</small>
             </div>
           </div>
+        </article>
 
-          {topCategories.length > 0 && (
-            <div className="seller-category-row">
-              {topCategories.map(([label, count]) => (
-                <span key={label} className="seller-category-chip">
-                  {titleCase(label)} ? {count}
+        <div className="home-stat-grid">
+          {dashboardCards.map((card) => (
+            <article
+              key={card.id}
+              className={`stat-card stat-card-${card.accent}`}
+            >
+              <div className="stat-icon">
+                <UiIcon name={card.icon} />
+              </div>
+              <div>
+                <small>{card.label}</small>
+                <strong>{card.value}</strong>
+              </div>
+              <span className="stat-trend">{card.trend}</span>
+            </article>
+          ))}
+        </div>
+
+        <div className="dashboard-analytics-grid">
+          <article className="panel-card dashboard-chart-card">
+            <div className="panel-title-row">
+              <div>
+                <h3>Order activity</h3>
+                <small>Last 7 days fulfillment momentum</small>
+              </div>
+              <span className="chart-pill">
+                {ordersSeries.reduce((sum, item) => sum + item.value, 0)}{" "}
+                orders
+              </span>
+            </div>
+            <svg
+              className="dashboard-line-chart"
+              viewBox="0 0 340 110"
+              preserveAspectRatio="none"
+            >
+              <polyline points={orderLinePoints} />
+            </svg>
+            <div className="dashboard-axis-row">
+              {ordersSeries.map((item) => (
+                <span key={item.label}>
+                  <strong>{item.value}</strong>
+                  <small>{item.label}</small>
                 </span>
               ))}
             </div>
-          )}
+          </article>
 
-          <article className="panel-card seller-inventory-card">
-            <div className="seller-table-head">
-              <h3>Inventory</h3>
-              <span>{sellerProducts.length} items</span>
-            </div>
-            <div className="seller-table">
-              <div className="seller-table-row seller-table-header">
-                <span>Product</span>
-                <span>SKU</span>
-                <span>Price</span>
-                <span>Stock</span>
-                <span>Status</span>
+          <article className="panel-card dashboard-chart-card">
+            <div className="panel-title-row">
+              <div>
+                <h3>Revenue trend</h3>
+                <small>Positive wallet inflow for the last week</small>
               </div>
-              {sellerProducts.map((product) => {
-                const status =
-                  Number(product.availableQuantity || 0) <= 0
-                    ? "Out of Stock"
-                    : Number(product.availableQuantity || 0) <= 10
-                      ? "Low Stock"
-                      : "Active";
-                const sku =
-                  product.sku ||
-                  product.code ||
-                  `SKU-${String(product.id).slice(-4)}`;
-                return (
-                  <div key={product.id} className="seller-table-row">
-                    <div className="seller-product-cell">
-                      {(() => {
-                        const imageSrc = resolveMediaUrl(
-                          product.imageUrl,
-                          mediaBaseUrl,
-                        );
-                        return imageSrc ? (
-                          <img
-                            src={imageSrc}
-                            alt={product.name}
-                            className="seller-product-thumb"
-                          />
-                        ) : (
-                          <div className="seller-product-thumb placeholder">
-                            {initials(product.name)}
-                          </div>
-                        );
-                      })()}
-                      <div>
-                        <strong>{product.name}</strong>
-                        <small>{product.category || "General"}</small>
-                      </div>
-                    </div>
-                    <span>{sku}</span>
-                    <span>${toCurrency(product.price)}</span>
-                    <span>{product.availableQuantity}</span>
-                    <span
-                      className={`seller-status ${status.replace(/\s+/g, "-").toLowerCase()}`}
-                    >
-                      {status}
-                    </span>
-                  </div>
-                );
-              })}
-              {!sellerProducts.length && (
-                <div className="empty-line">No products loaded yet.</div>
-              )}
+              <span className="chart-pill accent">
+                $
+                {toCurrency(
+                  revenueSeries.reduce((sum, item) => sum + item.value, 0),
+                )}
+              </span>
+            </div>
+            <svg
+              className="dashboard-line-chart revenue"
+              viewBox="0 0 340 110"
+              preserveAspectRatio="none"
+            >
+              <polyline points={revenueLinePoints} />
+            </svg>
+            <div className="dashboard-axis-row">
+              {revenueSeries.map((item) => (
+                <span key={item.label}>
+                  <strong>${toCurrency(item.value)}</strong>
+                  <small>{item.label}</small>
+                </span>
+              ))}
             </div>
           </article>
 
-          {sellerFormOpen && (
-            <article className="panel-card seller-form-card">
-              <div className="seller-table-head">
-                <h3>Add Product</h3>
-                <button
-                  type="button"
-                  className="ghost-btn"
-                  onClick={() => setSellerFormOpen(false)}
-                >
-                  Close
-                </button>
+          <article className="panel-card dashboard-usage-card">
+            <div className="panel-title-row">
+              <div>
+                <h3>Workspace usage</h3>
+                <small>Where users are active right now</small>
               </div>
-              <div className="field-row">
-                <input
-                  value={shopLocationForm.lat}
-                  onChange={(event) =>
-                    setShopLocationForm((prev) => ({
-                      ...prev,
-                      lat: event.target.value,
-                    }))
-                  }
-                  placeholder="Shop latitude"
-                />
-                <input
-                  value={shopLocationForm.lng}
-                  onChange={(event) =>
-                    setShopLocationForm((prev) => ({
-                      ...prev,
-                      lng: event.target.value,
-                    }))
-                  }
-                  placeholder="Shop longitude"
-                />
-                <button type="button" onClick={updateShopLocation}>
-                  Update Location
-                </button>
-              </div>
-              <div className="field-row">
-                <input
-                  value={sellerForm.shopId}
-                  onChange={(event) =>
-                    setSellerForm((prev) => ({
-                      ...prev,
-                      shopId: event.target.value,
-                    }))
-                  }
-                  placeholder="Shop ID"
-                />
-                <button type="button" onClick={() => loadSellerProducts()}>
-                  Load Inventory
-                </button>
-              </div>
-              <div className="field-row">
-                <input
-                  value={sellerForm.name}
-                  onChange={(event) =>
-                    setSellerForm((prev) => ({
-                      ...prev,
-                      name: event.target.value,
-                    }))
-                  }
-                  placeholder="Product name"
-                />
-                <input
-                  value={sellerForm.company}
-                  onChange={(event) =>
-                    setSellerForm((prev) => ({
-                      ...prev,
-                      company: event.target.value,
-                    }))
-                  }
-                  placeholder="Company / Brand"
-                />
-                <input
-                  value={sellerForm.category}
-                  onChange={(event) =>
-                    setSellerForm((prev) => ({
-                      ...prev,
-                      category: event.target.value,
-                    }))
-                  }
-                  placeholder="Category"
-                />
-              </div>
-              <div className="field-row">
-                <input
-                  value={sellerForm.imageUrl}
-                  onChange={(event) =>
-                    setSellerForm((prev) => ({
-                      ...prev,
-                      imageUrl: event.target.value,
-                    }))
-                  }
-                  placeholder="Product image URL (optional)"
-                />
-              </div>
-              <div className="field-row seller-image-row">
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={handleSellerImageSelection}
-                  disabled={sellerImageUploading}
-                />
-                <small>
-                  {sellerImageUploading
-                    ? "Uploading image to media storage..."
-                    : "Upload from device to auto-fill image URL."}
-                </small>
-              </div>
-              {(() => {
-                const imageSrc = resolveMediaUrl(
-                  sellerForm.imageUrl,
-                  mediaBaseUrl,
-                );
-                return imageSrc ? (
-                  <div className="field-row">
-                    <img
-                      src={imageSrc}
-                      alt="Product preview"
+            </div>
+            <div className="dashboard-usage-list">
+              {dashboardModuleUsage.map((item) => (
+                <div key={item.label} className="dashboard-usage-row">
+                  <div className="dashboard-usage-head">
+                    <span>{item.label}</span>
+                    <strong>{item.value}</strong>
+                  </div>
+                  <div className="dashboard-usage-track">
+                    <span
+                      className={`dashboard-usage-fill ${item.tone}`}
                       style={{
-                        width: 140,
-                        height: 90,
-                        objectFit: "cover",
-                        borderRadius: 10,
+                        width: `${Math.max(12, (item.value / maxModuleUsage) * 100)}%`,
                       }}
                     />
                   </div>
-                ) : null;
-              })()}
-              <div className="field-row">
-                <input
-                  value={sellerForm.description}
-                  onChange={(event) =>
-                    setSellerForm((prev) => ({
-                      ...prev,
-                      description: event.target.value,
-                    }))
-                  }
-                  placeholder="Product description"
-                />
+                </div>
+              ))}
+            </div>
+          </article>
+
+          <article className="panel-card dashboard-notification-card">
+            <div className="panel-title-row">
+              <div>
+                <h3>Notification preview</h3>
+                <small>Unread items are surfaced first</small>
               </div>
-              <div className="field-row">
-                <input
-                  value={sellerForm.price}
-                  onChange={(event) =>
-                    setSellerForm((prev) => ({
-                      ...prev,
-                      price: event.target.value,
-                    }))
-                  }
-                  placeholder="Price"
-                />
-                <input
-                  value={sellerForm.quantity}
-                  onChange={(event) =>
-                    setSellerForm((prev) => ({
-                      ...prev,
-                      quantity: event.target.value,
-                    }))
-                  }
-                  placeholder="Quantity"
-                />
-                <button type="button" onClick={createSellerProduct}>
-                  Add Product
-                </button>
-              </div>
-            </article>
-          )}
-        </section>
-      );
-    }
-    function renderOpsTab() {
-      return (
-        <section className="workspace-grid single">
-          <article className="panel-card">
-            <div className="header-row">
-              <h2>Workflow Graph</h2>
-              <input
-                value={workflowId}
-                onChange={(event) => setWorkflowId(event.target.value)}
-                placeholder="Workflow ID"
-              />
-              <button type="button" onClick={runReconciliationNow}>
-                Run Reconciliation
+              <button
+                type="button"
+                className="ghost-btn"
+                onClick={openNotificationCenter}
+              >
+                Open all
               </button>
             </div>
-            <WorkflowGraph workflowId={workflowId} authToken={token} />
-          </article>
-        </section>
-      );
-    }
-
-    function renderProfileTab() {
-      const settingsMenu = [
-        {
-          id: "profile",
-          title: "Profile Settings",
-          description:
-            "Photo, name, email, and account identity used across LifeHub.",
-          icon: "user",
-        },
-        {
-          id: "security",
-          title: "Security Settings",
-          description:
-            "Password, login alerts, and session protection controls.",
-          icon: "shield",
-        },
-        {
-          id: "privacy",
-          title: "Privacy",
-          description:
-            "Read receipts, last seen, profile visibility, and live location privacy.",
-          icon: "settings",
-        },
-        {
-          id: "notifications",
-          title: "Notifications",
-          description: "Push, SMS, email, quiet hours, and test notifications.",
-          icon: "bell",
-        },
-        {
-          id: "preferences",
-          title: "Account Preferences",
-          description:
-            "Payments, chat behavior, and UI preferences for daily usage.",
-          icon: "chart",
-        },
-      ];
-
-      const sectionMeta = settingsMenu.find(
-        (item) => item.id === settingsSection,
-      );
-
-      if (settingsSection === "menu") {
-        return (
-          <section className="settings-shell">
-            <div className="settings-hero-card panel-card">
-              <div className="settings-hero-copy">
-                <span className="dashboard-kicker">Account center</span>
-                <h2>{user.name || "LifeHub User"}</h2>
-                <p>
-                  Manage your account, security, notifications, and payment
-                  preferences from one organized settings hub.
-                </p>
-                <div className="settings-hero-meta">
-                  <span className="dashboard-meta-chip">
-                    {profileCompletion}% profile complete
-                  </span>
-                  <span className="dashboard-meta-chip">
-                    Wallet {toCurrency(walletBalance)}
-                  </span>
-                  <span className="dashboard-meta-chip">
-                    {notificationUnreadCount} unread alerts
-                  </span>
-                </div>
-              </div>
-              <div className="settings-hero-avatar">
-                {profilePhoto ? (
-                  <img
-                    src={profilePhoto}
-                    alt="Profile"
-                    className="profile-avatar"
-                  />
-                ) : (
-                  <div className="profile-avatar">
-                    {String(user.name || "U").slice(0, 1)}
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <div className="settings-menu-grid">
-              {settingsMenu.map((item) => (
+            <div className="dashboard-notification-list">
+              {notificationPreview.map((item) => (
                 <button
                   key={item.id}
                   type="button"
-                  className="settings-menu-card"
-                  onClick={() => setSettingsSection(item.id)}
+                  className={`dashboard-notification-item ${!item?.read_at && !item?.readAt ? "unread" : ""}`}
+                  onClick={() => {
+                    if (!item?.read_at && !item?.readAt) {
+                      markNotificationsAsRead({
+                        notificationIds: [item.id],
+                      }).catch(() => {});
+                    }
+                    setActiveTab("home");
+                  }}
                 >
-                  <span className="settings-menu-icon">
-                    <UiIcon name={item.icon} />
+                  <span className="dashboard-notification-dot" />
+                  <div>
+                    <strong>{item.event_type || "Update"}</strong>
+                    <small>{formatRelativeTime(item.created_at)}</small>
+                  </div>
+                </button>
+              ))}
+              {!notificationPreview.length && (
+                <div className="empty-line">No notifications right now.</div>
+              )}
+            </div>
+          </article>
+        </div>
+
+        <div className="home-main-grid dashboard-lower-grid">
+          <article className="panel-card home-quick dashboard-actions-card">
+            <div className="panel-title-row">
+              <div>
+                <h3>Quick Actions</h3>
+                <small>Jump into the workflows you use most</small>
+              </div>
+            </div>
+            <div className="quick-action-grid">
+              {homeActions.slice(0, 6).map((action) => (
+                <button
+                  key={action.id}
+                  type="button"
+                  className="quick-action-card"
+                  onClick={action.run}
+                >
+                  <span className="quick-action-icon">
+                    <UiIcon name={action.icon} />
                   </span>
                   <div>
-                    <strong>{item.title}</strong>
-                    <small>{item.description}</small>
+                    <strong>{action.label}</strong>
+                    <small>{action.description}</small>
                   </div>
-                  <span className="settings-menu-arrow">{"->"}</span>
                 </button>
               ))}
             </div>
-          </section>
-        );
-      }
+          </article>
 
-      return (
-        <section className="settings-shell settings-detail-shell">
-          <div className="settings-detail-topbar">
-            <button
-              type="button"
-              className="ghost-btn settings-back-btn"
-              onClick={() => setSettingsSection("menu")}
-            >
-              {"<- Back"}
-            </button>
-            <div>
-              <strong>{sectionMeta?.title || "Settings"}</strong>
-              <small>
-                {sectionMeta?.description || "Update this settings section."}
-              </small>
+          <article className="panel-card home-activity dashboard-recent-card">
+            <div className="panel-title-row">
+              <div>
+                <h3>Recent Activity</h3>
+                <small>
+                  Orders, services, and system events in one timeline
+                </small>
+              </div>
             </div>
-          </div>
-
-          {settingsSection === "profile" && (
-            <div className="settings-detail-grid two-up">
-              <article className="panel-card profile-summary-card">
-                <div className="profile-head profile-head-modern">
-                  <div className="profile-avatar-wrap large">
-                    {profilePhoto ? (
-                      <img
-                        src={profilePhoto}
-                        alt="Profile"
-                        className="profile-avatar"
-                      />
-                    ) : (
-                      <div className="profile-avatar">
-                        {String(user.name || "U").slice(0, 1)}
-                      </div>
-                    )}
-                  </div>
-                  <div className="profile-summary-copy">
-                    <span className="dashboard-kicker">Identity</span>
-                    <strong>{user.name}</strong>
-                    <small>{user.phone}</small>
-                    <small>
-                      {user.email || "Add your email to complete account setup"}
-                    </small>
-                  </div>
-                </div>
-                <div className="profile-completion-card">
+            <div className="activity-feed dashboard-recent-feed">
+              {recentMoments.map((item) => (
+                <article
+                  key={item.id}
+                  className={`activity-item dashboard-recent-item ${item.type}`}
+                >
+                  <span className="activity-dot" />
                   <div>
-                    <strong>{profileCompletion}% complete</strong>
-                    <small>Photo, contact, and billing readiness</small>
+                    <strong>{item.title}</strong>
+                    <small>{item.meta}</small>
                   </div>
-                  <div className="profile-progress-track">
-                    <span style={{ width: `${profileCompletion}%` }} />
-                  </div>
-                </div>
-                <label className="profile-photo-input">
-                  <span>Profile photo</span>
-                  <input
-                    type="file"
-                    accept="image/*"
-                    onChange={handleProfilePhotoChange}
-                  />
-                </label>
-              </article>
-
-              <article className="panel-card profile-editor-card">
-                <div className="panel-title-row">
-                  <div>
-                    <h3>Editable profile information</h3>
-                    <small>
-                      Used on orders, chat headers, receipts, and service
-                      bookings.
-                    </small>
-                  </div>
-                </div>
-                <div className="profile-form-grid">
-                  <label>
-                    Full name
-                    <input
-                      value={profileDraft.name}
-                      onChange={(event) =>
-                        setProfileDraft((prev) => ({
-                          ...prev,
-                          name: event.target.value,
-                        }))
-                      }
-                      placeholder="Your name"
-                    />
-                  </label>
-                  <label>
-                    Email address
-                    <input
-                      type="email"
-                      value={profileDraft.email}
-                      onChange={(event) =>
-                        setProfileDraft((prev) => ({
-                          ...prev,
-                          email: event.target.value,
-                        }))
-                      }
-                      placeholder="you@lifehub.app"
-                    />
-                  </label>
-                  <label>
-                    Mobile number
-                    <input
-                      value={user.phone || ""}
-                      readOnly
-                      placeholder="Phone number"
-                    />
-                  </label>
-                  <label>
-                    Roles
-                    <input
-                      value={(userRoles.length ? userRoles : ["CUSTOMER"]).join(
-                        ", ",
-                      )}
-                      readOnly
-                    />
-                  </label>
-                </div>
-                <div className="profile-form-actions">
-                  <button
-                    type="button"
-                    onClick={saveProfileDetails}
-                    disabled={savingProfile}
-                  >
-                    {savingProfile ? "Saving..." : "Save profile"}
-                  </button>
-                  <button
-                    type="button"
-                    className="ghost-btn"
-                    onClick={loadUserProfile}
-                  >
-                    Refresh
-                  </button>
-                </div>
-              </article>
+                  <span className="activity-arrow">
+                    {formatRelativeTime(item.time)}
+                  </span>
+                </article>
+              ))}
+              {!recentMoments.length && (
+                <div className="empty-line">No recent activity.</div>
+              )}
             </div>
-          )}
+          </article>
+        </div>
+      </section>
+    );
+  }
 
-          {settingsSection === "security" && (
-            <div className="settings-detail-grid two-up">
-              <article className="panel-card profile-password-card">
-                <div className="panel-title-row">
-                  <div>
-                    <h3>Password and access</h3>
-                    <small>
-                      Update your password and protect account sessions.
-                    </small>
-                  </div>
-                </div>
-                <div className="profile-form-grid compact">
-                  <label>
-                    Current password
-                    <input
-                      type="password"
-                      value={passwordDraft.currentPassword}
-                      onChange={(event) =>
-                        setPasswordDraft((prev) => ({
-                          ...prev,
-                          currentPassword: event.target.value,
-                        }))
-                      }
-                      placeholder="Current password"
-                    />
-                  </label>
-                  <label>
-                    New password
-                    <input
-                      type="password"
-                      value={passwordDraft.newPassword}
-                      onChange={(event) =>
-                        setPasswordDraft((prev) => ({
-                          ...prev,
-                          newPassword: event.target.value,
-                        }))
-                      }
-                      placeholder="Minimum 6 characters"
-                    />
-                  </label>
-                  <label>
-                    Confirm password
-                    <input
-                      type="password"
-                      value={passwordDraft.confirmPassword}
-                      onChange={(event) =>
-                        setPasswordDraft((prev) => ({
-                          ...prev,
-                          confirmPassword: event.target.value,
-                        }))
-                      }
-                      placeholder="Confirm new password"
-                    />
-                  </label>
-                </div>
-                <div className="profile-form-actions">
-                  <button
-                    type="button"
-                    onClick={changePasswordAction}
-                    disabled={changingPassword}
-                  >
-                    {changingPassword ? "Updating..." : "Change password"}
-                  </button>
-                </div>
-              </article>
-
-              <article className="panel-card profile-settings-card">
-                <div className="panel-title-row">
-                  <div>
-                    <h3>Session protection</h3>
-                    <small>
-                      Choose alerting and automatic session timeout rules.
-                    </small>
-                  </div>
-                </div>
-                <div className="profile-toggle-grid">
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={Boolean(userSettings.security?.loginAlerts)}
-                      onChange={(event) =>
-                        setUserSettings((prev) => ({
-                          ...prev,
-                          security: {
-                            ...(prev.security || {}),
-                            loginAlerts: event.target.checked,
-                          },
-                        }))
-                      }
-                    />
-                    Login alerts
-                  </label>
-                </div>
-                <div className="profile-form-grid compact">
-                  <label>
-                    Session timeout (minutes)
-                    <input
-                      value={
-                        userSettings.security?.sessionTimeoutMinutes || 120
-                      }
-                      onChange={(event) =>
-                        setUserSettings((prev) => ({
-                          ...prev,
-                          security: {
-                            ...(prev.security || {}),
-                            sessionTimeoutMinutes: Number(
-                              event.target.value || 0,
-                            ),
-                          },
-                        }))
-                      }
-                      placeholder="120"
-                    />
-                  </label>
-                  <label>
-                    Device ID
-                    <input value={deviceId} readOnly />
-                  </label>
-                </div>
-                <div className="profile-form-actions">
-                  <button type="button" onClick={saveUserSettings}>
-                    Save security settings
-                  </button>
-                </div>
-              </article>
-            </div>
-          )}
-
-          {settingsSection === "privacy" && (
-            <div className="settings-detail-grid two-up">
-              <article className="panel-card profile-settings-card">
-                <div className="panel-title-row">
-                  <div>
-                    <h3>Privacy</h3>
-                    <small>
-                      Control who can see your activity and profile identity.
-                    </small>
-                  </div>
-                </div>
-                <div className="profile-toggle-grid">
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={Boolean(userSettings.privacy?.readReceipts)}
-                      onChange={(event) =>
-                        setUserSettings((prev) => ({
-                          ...prev,
-                          privacy: {
-                            ...(prev.privacy || {}),
-                            readReceipts: event.target.checked,
-                          },
-                        }))
-                      }
-                    />
-                    Read receipts
-                  </label>
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={Boolean(
-                        userSettings.location?.shareLiveLocation,
-                      )}
-                      onChange={(event) =>
-                        setUserSettings((prev) => ({
-                          ...prev,
-                          location: {
-                            ...(prev.location || {}),
-                            shareLiveLocation: event.target.checked,
-                          },
-                        }))
-                      }
-                    />
-                    Share live location
-                  </label>
-                </div>
-                <div className="profile-form-grid compact">
-                  <label>
-                    Last seen visibility
-                    <select
-                      value={
-                        userSettings.privacy?.lastSeenVisibility || "contacts"
-                      }
-                      onChange={(event) =>
-                        setUserSettings((prev) => ({
-                          ...prev,
-                          privacy: {
-                            ...(prev.privacy || {}),
-                            lastSeenVisibility: event.target.value,
-                          },
-                        }))
-                      }
-                    >
-                      <option value="everyone">Everyone</option>
-                      <option value="contacts">Contacts</option>
-                      <option value="nobody">Nobody</option>
-                    </select>
-                  </label>
-                  <label>
-                    Profile photo visibility
-                    <select
-                      value={
-                        userSettings.privacy?.profilePhotoVisibility ||
-                        "everyone"
-                      }
-                      onChange={(event) =>
-                        setUserSettings((prev) => ({
-                          ...prev,
-                          privacy: {
-                            ...(prev.privacy || {}),
-                            profilePhotoVisibility: event.target.value,
-                          },
-                        }))
-                      }
-                    >
-                      <option value="everyone">Everyone</option>
-                      <option value="contacts">Contacts</option>
-                      <option value="nobody">Nobody</option>
-                    </select>
-                  </label>
-                  <label>
-                    Location precision
-                    <select
-                      value={
-                        userSettings.location?.locationPrecision || "precise"
-                      }
-                      onChange={(event) =>
-                        setUserSettings((prev) => ({
-                          ...prev,
-                          location: {
-                            ...(prev.location || {}),
-                            locationPrecision: event.target.value,
-                          },
-                        }))
-                      }
-                    >
-                      <option value="precise">Precise</option>
-                      <option value="approximate">Approximate</option>
-                    </select>
-                  </label>
-                </div>
-                <div className="profile-form-actions">
-                  <button type="button" onClick={saveUserSettings}>
-                    Save privacy settings
-                  </button>
-                </div>
-              </article>
-            </div>
-          )}
-
-          {settingsSection === "notifications" && (
-            <div className="settings-detail-grid two-up">
-              <article className="panel-card profile-settings-card">
-                <div className="panel-title-row">
-                  <div>
-                    <h3>Notification channels</h3>
-                    <small>Choose where LifeHub should reach you first.</small>
-                  </div>
-                </div>
-                <div className="profile-toggle-grid">
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={Boolean(userSettings.notifications?.inApp)}
-                      onChange={(event) =>
-                        setUserSettings((prev) => ({
-                          ...prev,
-                          notifications: {
-                            ...(prev.notifications || {}),
-                            inApp: event.target.checked,
-                          },
-                        }))
-                      }
-                    />
-                    In-app
-                  </label>
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={Boolean(userSettings.notifications?.push)}
-                      onChange={(event) =>
-                        setUserSettings((prev) => ({
-                          ...prev,
-                          notifications: {
-                            ...(prev.notifications || {}),
-                            push: event.target.checked,
-                          },
-                        }))
-                      }
-                    />
-                    Push
-                  </label>
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={Boolean(userSettings.notifications?.sms)}
-                      onChange={(event) =>
-                        setUserSettings((prev) => ({
-                          ...prev,
-                          notifications: {
-                            ...(prev.notifications || {}),
-                            sms: event.target.checked,
-                          },
-                        }))
-                      }
-                    />
-                    SMS
-                  </label>
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={Boolean(userSettings.notifications?.email)}
-                      onChange={(event) =>
-                        setUserSettings((prev) => ({
-                          ...prev,
-                          notifications: {
-                            ...(prev.notifications || {}),
-                            email: event.target.checked,
-                          },
-                        }))
-                      }
-                    />
-                    Email
-                  </label>
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={Boolean(userSettings.notifications?.orderAlerts)}
-                      onChange={(event) =>
-                        setUserSettings((prev) => ({
-                          ...prev,
-                          notifications: {
-                            ...(prev.notifications || {}),
-                            orderAlerts: event.target.checked,
-                          },
-                        }))
-                      }
-                    />
-                    Order alerts
-                  </label>
-                </div>
-                <div className="profile-form-actions wrap">
-                  <button
-                    type="button"
-                    className="ghost-btn"
-                    onClick={requestBrowserPushPermission}
-                  >
-                    Push: {browserPushPermission}
-                  </button>
-                  <button
-                    type="button"
-                    className="ghost-btn"
-                    onClick={sendNotificationTest}
-                  >
-                    Send test notification
-                  </button>
-                  <button type="button" onClick={saveUserSettings}>
-                    Save channel settings
-                  </button>
-                </div>
-              </article>
-
-              <article className="panel-card profile-settings-card">
-                <div className="panel-title-row">
-                  <div>
-                    <h3>Quiet hours</h3>
-                    <small>
-                      Pause non-critical alerts while you are away or sleeping.
-                    </small>
-                  </div>
-                </div>
-                <div className="profile-toggle-grid">
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={Boolean(notificationPrefs.quietHours?.enabled)}
-                      onChange={(event) =>
-                        setNotificationPrefs((prev) => ({
-                          ...prev,
-                          quietHours: {
-                            ...(prev.quietHours || {}),
-                            enabled: event.target.checked,
-                          },
-                        }))
-                      }
-                    />
-                    Enable quiet hours
-                  </label>
-                </div>
-                <div className="profile-form-grid compact">
-                  <label>
-                    Start hour
-                    <input
-                      value={notificationPrefs.quietHours?.startHour ?? 22}
-                      onChange={(event) =>
-                        setNotificationPrefs((prev) => ({
-                          ...prev,
-                          quietHours: {
-                            ...(prev.quietHours || {}),
-                            startHour: Number(event.target.value || 0),
-                          },
-                        }))
-                      }
-                    />
-                  </label>
-                  <label>
-                    End hour
-                    <input
-                      value={notificationPrefs.quietHours?.endHour ?? 7}
-                      onChange={(event) =>
-                        setNotificationPrefs((prev) => ({
-                          ...prev,
-                          quietHours: {
-                            ...(prev.quietHours || {}),
-                            endHour: Number(event.target.value || 0),
-                          },
-                        }))
-                      }
-                    />
-                  </label>
-                </div>
-                <div className="profile-form-actions">
-                  <button type="button" onClick={saveNotificationPreferences}>
-                    Save quiet hours
-                  </button>
-                </div>
-              </article>
-            </div>
-          )}
-
-          {settingsSection === "preferences" && (
-            <div className="settings-detail-grid two-up">
-              <article className="panel-card profile-settings-card">
-                <div className="panel-title-row">
-                  <div>
-                    <h3>Payment preferences</h3>
-                    <small>
-                      Set payout identity and auto top-up thresholds.
-                    </small>
-                  </div>
-                </div>
-                <div className="profile-form-grid compact">
-                  <label>
-                    UPI ID
-                    <input
-                      value={userSettings.payments?.upiId || ""}
-                      onChange={(event) =>
-                        setUserSettings((prev) => ({
-                          ...prev,
-                          payments: {
-                            ...(prev.payments || {}),
-                            upiId: event.target.value,
-                          },
-                        }))
-                      }
-                      placeholder="example@bank"
-                    />
-                  </label>
-                  <label>
-                    Auto top-up threshold
-                    <input
-                      value={userSettings.payments?.autoTopupThreshold || ""}
-                      onChange={(event) =>
-                        setUserSettings((prev) => ({
-                          ...prev,
-                          payments: {
-                            ...(prev.payments || {}),
-                            autoTopupThreshold: event.target.value,
-                          },
-                        }))
-                      }
-                      placeholder="500"
-                    />
-                  </label>
-                  <label>
-                    Auto top-up amount
-                    <input
-                      value={userSettings.payments?.autoTopupAmount || ""}
-                      onChange={(event) =>
-                        setUserSettings((prev) => ({
-                          ...prev,
-                          payments: {
-                            ...(prev.payments || {}),
-                            autoTopupAmount: event.target.value,
-                          },
-                        }))
-                      }
-                      placeholder="1000"
-                    />
-                  </label>
-                </div>
-              </article>
-
-              <article className="panel-card profile-settings-card">
-                <div className="panel-title-row">
-                  <div>
-                    <h3>Chat and UI preferences</h3>
-                    <small>
-                      Choose interaction defaults for messaging and the
-                      interface.
-                    </small>
-                  </div>
-                </div>
-                <div className="profile-toggle-grid">
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={Boolean(userSettings.chat?.enterToSend)}
-                      onChange={(event) =>
-                        setUserSettings((prev) => ({
-                          ...prev,
-                          chat: {
-                            ...(prev.chat || {}),
-                            enterToSend: event.target.checked,
-                          },
-                        }))
-                      }
-                    />
-                    Enter to send
-                  </label>
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={Boolean(userSettings.ui?.compactMode)}
-                      onChange={(event) =>
-                        setUserSettings((prev) => ({
-                          ...prev,
-                          ui: {
-                            ...(prev.ui || {}),
-                            compactMode: event.target.checked,
-                          },
-                        }))
-                      }
-                    />
-                    Compact mode
-                  </label>
-                </div>
-                <div className="profile-form-grid compact">
-                  <label>
-                    Default call type
-                    <select
-                      value={userSettings.chat?.defaultCallType || "video"}
-                      onChange={(event) =>
-                        setUserSettings((prev) => ({
-                          ...prev,
-                          chat: {
-                            ...(prev.chat || {}),
-                            defaultCallType: event.target.value,
-                          },
-                        }))
-                      }
-                    >
-                      <option value="video">Video</option>
-                      <option value="audio">Audio</option>
-                    </select>
-                  </label>
-                  <label>
-                    Auto-download media
-                    <select
-                      value={userSettings.chat?.autoDownloadMedia || "wifi"}
-                      onChange={(event) =>
-                        setUserSettings((prev) => ({
-                          ...prev,
-                          chat: {
-                            ...(prev.chat || {}),
-                            autoDownloadMedia: event.target.value,
-                          },
-                        }))
-                      }
-                    >
-                      <option value="always">Always</option>
-                      <option value="wifi">Wifi only</option>
-                      <option value="never">Never</option>
-                    </select>
-                  </label>
-                  <label>
-                    Theme
-                    <select
-                      value={userSettings.ui?.theme || themeMode}
-                      onChange={(event) => applyTheme(event.target.value)}
-                    >
-                      <option value="light">Light</option>
-                      <option value="dark">Dark</option>
-                    </select>
-                  </label>
-                  <label>
-                    Interface language
-                    <select
-                      value={userSettings.ui?.language || "en"}
-                      onChange={(event) =>
-                        setUserSettings((prev) => ({
-                          ...prev,
-                          ui: {
-                            ...(prev.ui || {}),
-                            language: event.target.value,
-                          },
-                        }))
-                      }
-                    >
-                      <option value="en">English</option>
-                      <option value="hi">Hindi</option>
-                    </select>
-                  </label>
-                </div>
-                <div className="profile-form-actions">
-                  <button type="button" onClick={saveUserSettings}>
-                    Save preferences
-                  </button>
-                  <button type="button" className="danger" onClick={onLogout}>
-                    Logout
-                  </button>
-                </div>
-              </article>
-            </div>
-          )}
-        </section>
-      );
+  useEffect(() => {
+    const scoped = localStorage.getItem(profilePhotoStorageKey);
+    if (scoped) {
+      setProfilePhoto(scoped);
+      return;
     }
 
-    function renderTab() {
-      if (activeTab === "home") return renderHomeTab();
-      if (activeTab === "chat") return renderChatTab();
-      if (activeTab === "marketplace") return renderMarketplaceTab();
-      if (activeTab === "services") return renderServicesTab();
-      if (activeTab === "orders") return renderOrdersTab();
-      if (activeTab === "wallet") return renderWalletTab();
-      if (activeTab === "seller") return renderSellerTab();
-      if (activeTab === "ops") return renderOpsTab();
-      return renderProfileTab();
+    const legacy = localStorage.getItem("lifehub_profile_photo");
+    if (legacy) {
+      localStorage.setItem(profilePhotoStorageKey, legacy);
+      localStorage.removeItem("lifehub_profile_photo");
+      setProfilePhoto(legacy);
+      return;
     }
 
-    function handleTabSelect(tabId) {
-      setActiveTab(tabId);
-      setSidebarOpen(false);
-    }
+    setProfilePhoto("");
+  }, [profilePhotoStorageKey]);
 
-    function openNotificationCenter() {
-      setActiveTab("home");
-      setSidebarOpen(false);
-      markNotificationsAsRead({ scope: "system" }).catch(() => {});
-    }
+  useEffect(() => {
+    setDeliveryDetails((prev) => ({
+      ...prev,
+      recipientName: prev.recipientName || user.name || "",
+      recipientPhone: prev.recipientPhone || user.phone || "",
+    }));
+  }, [user.name, user.phone]);
 
-    const suppressGlobalHeader =
-      activeTab === "chat" ||
-      (activeTab === "marketplace" && marketplaceView !== "catalog") ||
-      (activeTab === "profile" && settingsSection !== "menu");
-    const breadcrumbLabel =
-      activeTab === "home" ? "Overview" : activeTabMeta.title;
+  function renderChatTab() {
+    return (
+      <WhatsAppChat
+        api={api}
+        user={{
+          id: user?.id,
+          name: user?.name,
+          phone: user?.phone,
+          avatar: profilePhoto,
+        }}
+        callProps={{
+          callSession,
+          acceptIncomingCall,
+          declineIncomingCall,
+          endCurrentCall,
+          startInstantCall,
+          localVideoRef,
+          remoteVideoRef,
+          activeCallRoomId,
+        }}
+        stories={stories}
+        onUploadStory={submitStory}
+      />
+    );
+  }
 
-    const handleGlobalSearchChange = (event) => {
-      const value = event.target.value;
-      setCommandQuery(value);
-      if (!commandOpen) {
-        setCommandOpen(true);
-      }
-    };
+  function renderMarketplaceTab() {
+    const showingDetailPage = marketplaceView === "detail";
+    const showingCheckoutPage = marketplaceView === "checkout";
+    const showingCatalog = marketplaceView === "catalog";
+
+    // Grab a slice of the top 8 recommended for a showcase row
+    const dealProducts = visibleRecommendedProducts.slice(0, 8);
 
     return (
-      <div
-        className={`superapp-shell superapp-shell-full superapp-shell-v5 shell-${activeTab} theme-${themeMode} ${sidebarOpen ? "sidebar-open" : ""} ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}
-      >
-        <aside
-          className={`sidebar-v5 ${sidebarOpen ? "open" : ""} ${sidebarCollapsed ? "collapsed" : ""}`}
-        >
-          <div className="sidebar-brand">
-            <div className="sidebar-brand-main">
-              <img
-                className="brand-mark"
-                src="/lh-logo.svg"
-                alt="LifeHub logo"
-              />
-              <strong>LifeHub</strong>
-            </div>
-            <button
-              type="button"
-              className="sidebar-collapse-btn"
-              onClick={() => setSidebarCollapsed((prev) => !prev)}
-              title={
-                sidebarCollapsed ? "Expand navigation" : "Collapse navigation"
-              }
-            >
-              {sidebarCollapsed ? "›" : "‹"}
-            </button>
-          </div>
-          <div className="sidebar-search">
-            <UiIcon name="search" />
-            <input
-              value={moduleSearch}
-              onChange={(event) => setModuleSearch(event.target.value)}
-              placeholder="Search services"
-            />
-          </div>
-          <div className="sidebar-groups">
-            {moduleGroups.map((group) => (
-              <div key={group.id} className="sidebar-group">
-                <span className="sidebar-group-title">
-                  {group.label.toUpperCase()}
-                </span>
-                <div className="sidebar-links">
-                  {group.id === "core" && (
-                    <>
-                      <button
-                        type="button"
-                        className="sidebar-link"
-                        onClick={() => setCommandOpen(true)}
-                        title="Search"
-                      >
-                        <UiIcon name="search" />
-                        <span className="sidebar-link-label">Search</span>
-                      </button>
-                      <button
-                        type="button"
-                        className="sidebar-link"
-                        onClick={openNotificationCenter}
-                        title="Notifications"
-                      >
-                        <UiIcon name="bell" />
-                        <span className="sidebar-link-label">
-                          Notifications
-                        </span>
-                        {notificationUnreadCount > 0 && (
-                          <span className="sidebar-inline-badge">
-                            {notificationUnreadCount > 99
-                              ? "99+"
-                              : notificationUnreadCount}
-                          </span>
-                        )}
-                      </button>
-                    </>
-                  )}
-                  {group.items.map((tab) => (
-                    <button
-                      key={tab.id}
-                      type="button"
-                      className={`sidebar-link ${activeTab === tab.id ? "active" : ""}`}
-                      title={tab.label}
-                      onClick={() => {
-                        if (tab.id === "profile") {
-                          setSettingsSection("menu");
-                        }
-                        handleTabSelect(tab.id);
-                      }}
-                    >
-                      <UiIcon name={tabIconName(tab.id)} />
-                      <span className="sidebar-link-label">{tab.label}</span>
-                    </button>
-                  ))}
-                  {group.id === "account" && (
-                    <button
-                      type="button"
-                      className="sidebar-link"
-                      title="Security"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setCommandOpen(false);
-                        setSettingsSection("security");
-                        handleTabSelect("profile");
-                      }}
-                    >
-                      <UiIcon name="shield" />
-                      <span className="sidebar-link-label">Security</span>
-                    </button>
-                  )}
-                </div>
-              </div>
-            ))}
-            {moduleGroups.length === 1 &&
-              moduleGroups[0].id === "results" &&
-              !moduleGroups[0].items.length && (
-                <div className="module-empty">
-                  No services match that search.
-                </div>
-              )}
-          </div>
-          <div className="sidebar-foot">
-            <span>{loading ? "Syncing workspace" : "Live"}</span>
-          </div>
-        </aside>
-        {sidebarOpen && (
-          <div
-            className="sidebar-overlay"
-            onClick={() => setSidebarOpen(false)}
-          />
-        )}
-
-        <div className="content-stack">
-          <header className="topbar-v5">
-            <button
-              type="button"
-              className="nav-toggle"
-              aria-label="Toggle navigation"
-              onClick={() => setSidebarOpen((prev) => !prev)}
-            >
-              <span />
-              <span />
-              <span />
-            </button>
-            <div className="breadcrumb">
-              <span>Dashboard</span>
-              <span>/</span>
-              <strong>{breadcrumbLabel}</strong>
-            </div>
-            <div
-              className="topbar-search"
-              onClick={(e) => {
-                e.stopPropagation();
-                setCommandOpen(true);
-              }}
-            >
-              <UiIcon name="search" />
-              <input
-                value={commandQuery}
-                onChange={handleGlobalSearchChange}
-                onFocus={() => setCommandOpen(true)}
-                placeholder="Search anything..."
-              />
-              <span className="topbar-hotkey">⌘ K</span>
-            </div>
-            <div className="topbar-actions">
-              <button
-                type="button"
-                className="icon-btn badge-btn"
-                onClick={openMarketplaceCart}
-                title="Open cart"
-              >
-                <UiIcon name="cart" />
-                {cartItemCount > 0 && (
-                  <span className="mini-badge">
-                    {cartItemCount > 99 ? "99+" : cartItemCount}
-                  </span>
-                )}
-              </button>
-              <button
-                type="button"
-                className="icon-btn"
-                onClick={() =>
-                  applyTheme(themeMode === "dark" ? "light" : "dark")
-                }
-                title={
-                  themeMode === "dark"
-                    ? "Switch to light theme"
-                    : "Switch to dark theme"
-                }
-              >
-                <UiIcon name={themeMode === "dark" ? "sun" : "moon"} />
-              </button>
-              {canInstallApp && (
-                <button
-                  type="button"
-                  className="ghost-btn topbar-install-btn"
-                  onClick={onInstallApp}
-                >
-                  Install
-                </button>
-              )}
-              <button
-                type="button"
-                className="icon-btn badge-btn"
-                onClick={openNotificationCenter}
-              >
-                <UiIcon name="bell" />
-                {notificationUnreadCount > 0 && (
-                  <span className="mini-badge">
-                    {notificationUnreadCount > 99
-                      ? "99+"
-                      : notificationUnreadCount}
-                  </span>
-                )}
-              </button>
-              <div className="topbar-profile-pill">
-                <div className="topbar-avatar">
-                  {String(user.name || "A").slice(0, 1)}
-                </div>
-                <div className="topbar-profile-copy">
-                  <strong>
-                    {String(user.name || "Account").split(" ")[0]}
-                  </strong>
-                  <small>{appInstalled ? "App ready" : "Web workspace"}</small>
-                </div>
-              </div>
-            </div>
-          </header>
-
-          <main className="main-stage main-stage-full">
-            {!suppressGlobalHeader && (
-              <div
-                className={`page-intro ${activeTab === "home" ? "hero" : "compact"}`}
-              >
-                <h1>{activeTabMeta.title}</h1>
-                <p>{activeTabMeta.description}</p>
-              </div>
-            )}
-
-            {error && <div className="alert danger">{error}</div>}
-            {toast && <div className="alert info">{toast}</div>}
-            {renderTab()}
-          </main>
+      <section className="marketplace-app-shell premium-marketplace">
+        <div className="premium-mp-actions-top">
+          <button
+            className="ghost-btn mp-filter-toggle"
+            onClick={() => setFilterPanelOpen(true)}
+          >
+            <span className="mp-icon">⚙️</span> Filters
+          </button>
+          <button
+            className="ghost-btn mp-cart-toggle"
+            onClick={() => setCartDrawerOpen(true)}
+          >
+            <span className="mp-icon">🛒</span> Cart (
+            {cart.reduce((s, i) => s + (i.quantity || 1), 0)})
+          </button>
         </div>
 
-        {commandOpen && (
+        {showingCatalog && (
+          <div className="mp-catalog-view">
+            {/* Super App Premium Hero */}
+            <div className="mp-hero-banner premium-glass">
+              <div className="mp-hero-content">
+                <span className="mp-hero-eyebrow">LifeHub Premium</span>
+                <h1>Discover the Best Products</h1>
+                <p>
+                  Curated collections from trusted local vendors, delivered
+                  with care.
+                </p>
+
+                <div className="mp-hero-search-bar">
+                  <div className="mp-search-inner">
+                    <span className="mp-search-icon">🔎</span>
+                    <input
+                      type="text"
+                      className="mp-search-input"
+                      placeholder="Search for groceries, electronics, or anything..."
+                      value={productQuery}
+                      onChange={(e) => setProductQuery(e.target.value)}
+                    />
+                    {productQuery && (
+                      <button
+                        className="mp-search-clear"
+                        onClick={() => setProductQuery("")}
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                <div className="mp-hero-stats">
+                  <div className="mp-stat-item">
+                    <strong>10k+</strong>
+                    <small>Products</small>
+                  </div>
+                  <div className="mp-stat-item">
+                    <strong>500+</strong>
+                    <small>Shops</small>
+                  </div>
+                  <div className="mp-stat-item">
+                    <strong>4.8★</strong>
+                    <small>Rating</small>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <ProductRow
+              title="Recommended For You"
+              subtitle="Personalized picks based on your browsing history"
+              icon="✨"
+              products={visibleRecommendedProducts.slice(0, 10)}
+              onProductClick={(p) =>
+                openMarketplaceProduct(p, p.shop || selectedShop)
+              }
+              onAddToCart={addToCart}
+              onBuyNow={buyNowMarketplaceProduct}
+              mediaBaseUrl={mediaBaseUrl}
+              cartProductIds={
+                new Set(cart.map((i) => String(i.productId || i.id)))
+              }
+            />
+
+            <ProductRow
+              title="Trending Now"
+              subtitle="Most popular items in your area"
+              icon="🔥"
+              products={visibleRecommendedProducts.slice(10, 20)}
+              onProductClick={(p) =>
+                openMarketplaceProduct(p, p.shop || selectedShop)
+              }
+              onAddToCart={addToCart}
+              onBuyNow={buyNowMarketplaceProduct}
+              mediaBaseUrl={mediaBaseUrl}
+              cartProductIds={
+                new Set(cart.map((i) => String(i.productId || i.id)))
+              }
+            />
+
+            {!!productQuery.trim() && (
+              <ProductRow
+                title="Search Results"
+                subtitle={`${visibleProductResults.length} matching products found`}
+                icon="🔎"
+                products={visibleProductResults}
+                onProductClick={(p) =>
+                  openMarketplaceProduct(p, p.shop || selectedShop)
+                }
+                onAddToCart={addToCart}
+                onBuyNow={buyNowMarketplaceProduct}
+                mediaBaseUrl={mediaBaseUrl}
+                cartProductIds={
+                  new Set(cart.map((i) => String(i.productId || i.id)))
+                }
+              />
+            )}
+
+            {selectedShop && (
+              <ProductRow
+                title={selectedShop.shopName + " Storefront"}
+                subtitle={selectedShop.address || "Local vendor inventory"}
+                icon="🏪"
+                products={visibleShopProducts}
+                onProductClick={(p) =>
+                  openMarketplaceProduct(p, selectedShop)
+                }
+                onAddToCart={addToCart}
+                onBuyNow={buyNowMarketplaceProduct}
+                mediaBaseUrl={mediaBaseUrl}
+                cartProductIds={
+                  new Set(cart.map((i) => String(i.productId || i.id)))
+                }
+              />
+            )}
+
+            <ProductRow
+              title="Best Sellers"
+              subtitle="Highly-rated favorites from the community"
+              icon="⭐"
+              products={visibleRecommendedProducts.slice(20, 30)}
+              onProductClick={(p) =>
+                openMarketplaceProduct(p, p.shop || selectedShop)
+              }
+              onAddToCart={addToCart}
+              onBuyNow={buyNowMarketplaceProduct}
+              mediaBaseUrl={mediaBaseUrl}
+              cartProductIds={
+                new Set(cart.map((i) => String(i.productId || i.id)))
+              }
+            />
+
+            <FilterDrawer
+              open={filterPanelOpen}
+              onClose={() => setFilterPanelOpen(false)}
+              categories={marketplaceCategories}
+              filters={marketFilters}
+              onFiltersChange={setMarketFilters}
+              onApply={(f) => setMarketFilters(f)}
+            />
+
+            <CartDrawer
+              open={cartDrawerOpen}
+              onClose={() => setCartDrawerOpen(false)}
+              cart={cart}
+              onIncrement={incrementCartItem}
+              onDecrement={decrementCartItem}
+              onRemove={removeFromCart}
+              onClearCart={clearCart}
+              onCheckout={goToMarketplaceCheckout}
+              cartTotal={marketplacePayable}
+              mediaBaseUrl={mediaBaseUrl}
+            />
+          </div>
+        )}
+
+        {showingDetailPage && selectedMarketplaceDetail && (
+          <ProductDetailPage
+            product={selectedMarketplaceDetail}
+            shop={selectedShop}
+            onBack={() => setMarketplaceView("catalog")}
+            onAddToCart={addToCart}
+            onBuyNow={buyNowMarketplaceProduct}
+            onOpenReviews={() => console.log("Open reviews")}
+            mediaBaseUrl={mediaBaseUrl}
+            reviews={productReviews}
+            onAddReview={(rating, comment, imageFile) =>
+              submitReview({ rating, comment, imageFile })
+            }
+            relatedProducts={relatedMarketplaceProducts}
+            onRelatedProductClick={(p) =>
+              openMarketplaceProduct(p, p.shop || selectedShop)
+            }
+          />
+        )}
+        {showingCheckoutPage ? (
+          <div
+            dangerouslySetInnerHTML={{ __html: "<!-- checkoutPart -->" }}
+          />
+        ) : null}
+      </section>
+    );
+  }
+
+  function renderServicesTab() {
+    const availableProviders = providers.filter(
+      (provider) => provider.available,
+    ).length;
+    const activeProfile = selectedProviderProfile || null;
+    const profileName =
+      activeProfile?.users?.name || selectedProviderCard?.name || "";
+    const profileRating = Number(
+      activeProfile?.rating ?? selectedProviderCard?.rating ?? 0,
+    );
+    const profileExperience = Number(
+      activeProfile?.experience_years ??
+        selectedProviderCard?.experienceYears ??
+        0,
+    );
+    const profileSkills = activeProfile?.provider_skills?.length
+      ? activeProfile.provider_skills.map((item) => item.skill_name)
+      : selectedProviderCard?.skills || [];
+    const profileLocation = activeProfile?.provider_locations
+      ? {
+          lat: Number(activeProfile.provider_locations.lat || 0),
+          lng: Number(activeProfile.provider_locations.lng || 0),
+          available: Boolean(activeProfile.provider_locations.available),
+        }
+      : {
+          lat: Number(selectedProviderCard?.location?.lat || 0),
+          lng: Number(selectedProviderCard?.location?.lng || 0),
+          available: Boolean(selectedProviderCard?.available),
+        };
+
+    const recentServiceRequests = serviceRequests.slice(0, 3);
+
+    return (
+      <>
+        <section className="service-shell service-app-shell">
+          <header className="panel-card service-hero">
+            <div className="service-hero-head">
+              <div>
+                <h2>Find and Hire Top Workers Nearby</h2>
+                <p>
+                  Discover top-rated nearby professionals with profile-first
+                  cards, then open full details and hire in one flow.
+                </p>
+              </div>
+              <div className="service-hero-metrics">
+                <span className="status-pill">
+                  Providers {providers.length}
+                </span>
+                <span className="status-pill">
+                  Available {availableProviders}
+                </span>
+                <span className="status-pill">
+                  Requests {serviceRequests.length}
+                </span>
+              </div>
+              <div className="service-hero-actions">
+                <button
+                  type="button"
+                  className="ghost-btn"
+                  onClick={() => setServiceRequestsModalOpen(true)}
+                >
+                  View Order Requests
+                </button>
+              </div>
+            </div>
+            <div className="service-skill-row">
+              {serviceSkillOptions.map((skill) => (
+                <button
+                  key={skill}
+                  type="button"
+                  className={`service-skill-chip ${String(providerSkill).toLowerCase() === String(skill).toLowerCase() ? "active" : ""}`}
+                  onClick={() => {
+                    setProviderSkill(skill);
+                    setServiceForm((prev) => ({
+                      ...prev,
+                      serviceType: skill,
+                    }));
+                  }}
+                >
+                  {titleCase(skill)}
+                </button>
+              ))}
+            </div>
+            <div className="service-filter-grid">
+              <button type="button" onClick={useCurrentLocation}>
+                Use Current Location
+              </button>
+              <input
+                value={providerSkill}
+                onChange={(event) => setProviderSkill(event.target.value)}
+                placeholder="Search skill"
+              />
+              <input
+                value={serviceFilters.lat}
+                onChange={(event) =>
+                  setServiceFilters((prev) => ({
+                    ...prev,
+                    lat: event.target.value,
+                  }))
+                }
+                placeholder="Latitude"
+              />
+              <input
+                value={serviceFilters.lng}
+                onChange={(event) =>
+                  setServiceFilters((prev) => ({
+                    ...prev,
+                    lng: event.target.value,
+                  }))
+                }
+                placeholder="Longitude"
+              />
+              <input
+                value={serviceFilters.radiusKm}
+                onChange={(event) =>
+                  setServiceFilters((prev) => ({
+                    ...prev,
+                    radiusKm: event.target.value,
+                  }))
+                }
+                placeholder="Radius KM"
+              />
+              <button type="button" onClick={loadProviders}>
+                Search Providers
+              </button>
+            </div>
+            {(hasRole("PROVIDER") || hasRole("ADMIN")) && (
+              <div className="service-provider-self">
+                <input
+                  value={providerLocationForm.lat}
+                  onChange={(event) =>
+                    setProviderLocationForm((prev) => ({
+                      ...prev,
+                      lat: event.target.value,
+                    }))
+                  }
+                  placeholder="My latitude"
+                />
+                <input
+                  value={providerLocationForm.lng}
+                  onChange={(event) =>
+                    setProviderLocationForm((prev) => ({
+                      ...prev,
+                      lng: event.target.value,
+                    }))
+                  }
+                  placeholder="My longitude"
+                />
+                <select
+                  value={providerLocationForm.available ? "true" : "false"}
+                  onChange={(event) =>
+                    setProviderLocationForm((prev) => ({
+                      ...prev,
+                      available: event.target.value === "true",
+                    }))
+                  }
+                >
+                  <option value="true">Available</option>
+                  <option value="false">Unavailable</option>
+                </select>
+                <button type="button" onClick={updateMyProviderLocation}>
+                  Update My Provider Status
+                </button>
+              </div>
+            )}
+          </header>
+
+          <div className="service-layout service-layout-modern">
+            <article className="panel-card service-provider-panel">
+              <div className="market-panel-head">
+                <h3>Top Service Professionals</h3>
+                <small>{topServiceProviders.length} workers nearby</small>
+              </div>
+              <div className="service-provider-grid service-provider-grid-modern">
+                {topServiceProviders.map((provider) => (
+                  <article
+                    key={provider.id}
+                    className={`service-provider-card modern ${String(provider.id) === String(selectedProviderId) ? "active" : ""}`}
+                  >
+                    <div className="service-provider-profile">
+                      <img
+                        src={providerAvatarUrl(provider.name)}
+                        alt={provider.name}
+                        className="service-provider-avatar"
+                      />
+                      <div>
+                        <strong>{provider.name}</strong>
+                        <small>
+                          {(provider.skills || []).slice(0, 3).join(", ") ||
+                            "General service"}
+                        </small>
+                        <small className="service-rating-line">
+                          {ratingStars(provider.rating)}{" "}
+                          {Number(provider.rating || 0).toFixed(1)}
+                        </small>
+                      </div>
+                    </div>
+                    <div className="service-provider-top">
+                      <span className="status-pill">
+                        {provider.available ? "Available" : "Unavailable"}
+                      </span>
+                      <span className="status-pill">
+                        {provider.distanceKm !== null &&
+                        provider.distanceKm !== undefined
+                          ? `${provider.distanceKm.toFixed(1)} km away`
+                          : "distance n/a"}
+                      </span>
+                    </div>
+                    <div className="service-provider-actions">
+                      <button
+                        type="button"
+                        className="ghost-btn"
+                        onClick={() => openProviderProfile(provider.id)}
+                      >
+                        View Profile
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setServiceForm((prev) => ({
+                            ...prev,
+                            serviceType:
+                              provider.skills?.[0] || providerSkill,
+                            preferredProviderId: String(provider.id),
+                          }));
+                          openProviderProfile(provider.id).catch(() => {});
+                        }}
+                      >
+                        Hire Now
+                      </button>
+                    </div>
+                  </article>
+                ))}
+                {!topServiceProviders.length && (
+                  <div className="empty-line">No providers loaded yet.</div>
+                )}
+              </div>
+            </article>
+
+            <aside className="panel-card service-book-panel service-profile-panel">
+              <h3>Worker Profile and Hire</h3>
+              {loadingProviderProfile && (
+                <div className="info-line">Loading provider profile...</div>
+              )}
+              {!!providerProfileError && (
+                <div className="empty-line">{providerProfileError}</div>
+              )}
+              {!loadingProviderProfile &&
+                !providerProfileError &&
+                !!profileName && (
+                  <article className="service-profile-card">
+                    <div className="service-provider-profile">
+                      <img
+                        src={providerAvatarUrl(profileName)}
+                        alt={profileName}
+                        className="service-provider-avatar large"
+                      />
+                      <div>
+                        <strong>{profileName}</strong>
+                        <small>
+                          {ratingStars(profileRating)}{" "}
+                          {profileRating.toFixed(1)}
+                        </small>
+                        <small>{profileExperience} years experience</small>
+                      </div>
+                    </div>
+                    <div className="service-profile-chips">
+                      {profileSkills.map((skill) => (
+                        <span
+                          key={`${profileName}_${skill}`}
+                          className="service-skill-chip"
+                        >
+                          {titleCase(skill)}
+                        </span>
+                      ))}
+                      {!profileSkills.length && (
+                        <span className="service-skill-chip">
+                          General service
+                        </span>
+                      )}
+                    </div>
+                    <small>
+                      {profileLocation.available
+                        ? "Available now"
+                        : "Currently unavailable"}{" "}
+                      |{" "}
+                      {profileLocation.lat && profileLocation.lng
+                        ? `${profileLocation.lat.toFixed(4)}, ${profileLocation.lng.toFixed(4)}`
+                        : "Location unavailable"}
+                    </small>
+                  </article>
+                )}
+              {!loadingProviderProfile &&
+                !providerProfileError &&
+                !profileName && (
+                  <div className="info-line">
+                    Select a worker card to view profile details and hire.
+                  </div>
+                )}
+
+              {canCreateServiceRequest ? (
+                <div className="service-book-form">
+                  <input
+                    value={serviceForm.serviceType}
+                    onChange={(event) =>
+                      setServiceForm((prev) => ({
+                        ...prev,
+                        serviceType: event.target.value,
+                      }))
+                    }
+                    placeholder="Service type"
+                  />
+                  <input
+                    value={serviceForm.preferredProviderId}
+                    onChange={(event) =>
+                      setServiceForm((prev) => ({
+                        ...prev,
+                        preferredProviderId: event.target.value,
+                      }))
+                    }
+                    placeholder="Preferred provider ID"
+                  />
+                  <textarea
+                    value={serviceForm.description}
+                    onChange={(event) =>
+                      setServiceForm((prev) => ({
+                        ...prev,
+                        description: event.target.value,
+                      }))
+                    }
+                    placeholder="Describe your issue, timing, address, and requirements"
+                    rows={4}
+                  />
+                  <button type="button" onClick={createServiceRequest}>
+                    Hire for Work
+                  </button>
+                </div>
+              ) : (
+                <div className="info-line">
+                  You can track and complete assigned service requests in this
+                  view.
+                </div>
+              )}
+
+              <div className="divider" />
+              <div className="market-panel-head">
+                <h3>Latest Requests</h3>
+                <button
+                  type="button"
+                  className="ghost-btn"
+                  onClick={() => setServiceRequestsModalOpen(true)}
+                >
+                  View all
+                </button>
+              </div>
+              <div className="service-request-list">
+                {recentServiceRequests.map((request) => (
+                  <div key={request.id} className="service-request-card">
+                    <div className="item-header">
+                      <strong>
+                        #{request.id} | {request.service_type}
+                      </strong>
+                      <span className="status-pill">{request.status}</span>
+                    </div>
+                    <small>{request.description || "No description"}</small>
+                    <div className="item-actions">
+                      {canCompleteServiceRequest && (
+                        <button
+                          type="button"
+                          onClick={() => completeServiceRequest(request.id)}
+                        >
+                          Complete
+                        </button>
+                      )}
+                      {canCancelServiceRequest && (
+                        <button
+                          type="button"
+                          className="danger"
+                          onClick={() => cancelServiceRequest(request.id)}
+                        >
+                          Cancel
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+                {!recentServiceRequests.length && (
+                  <div className="empty-line">No service requests yet.</div>
+                )}
+              </div>
+            </aside>
+          </div>
+        </section>
+        {serviceRequestsModalOpen && (
           <div
             className="command-overlay"
-            onClick={() => setCommandOpen(false)}
+            onClick={() => setServiceRequestsModalOpen(false)}
           >
             <div
-              className="command-modal"
+              className="command-modal service-requests-modal"
               onClick={(event) => event.stopPropagation()}
             >
               <div className="command-header">
                 <div>
-                  <strong>Command Center</strong>
-                  <small>Jump to any module or action instantly.</small>
+                  <strong>Service Order Requests</strong>
+                  <small>
+                    Every service booking placed from LifeHub appears here and
+                    in Orders.
+                  </small>
                 </div>
                 <button
                   type="button"
                   className="ghost-btn"
-                  onClick={() => setCommandOpen(false)}
+                  onClick={() => setServiceRequestsModalOpen(false)}
                 >
                   Close
                 </button>
               </div>
-              <div className="command-search">
-                <UiIcon name="search" />
-                <input
-                  ref={commandInputRef}
-                  value={commandQuery}
-                  onChange={(event) => setCommandQuery(event.target.value)}
-                  placeholder="Search commands, modules, or actions"
-                />
-                <span className="command-hint">Ctrl+K</span>
-              </div>
-              <div className="command-service-head">
-                <span className="command-section-kicker">Service Library</span>
-                <small>{commandServiceCards.length} modules ready</small>
-              </div>
-              <div className="command-module-grid">
-                {commandServiceCards.map((card) => (
-                  <button
-                    key={`module_${card.id}`}
-                    type="button"
-                    className="command-module-card"
-                    onClick={() => {
-                      card.run();
-                      setCommandOpen(false);
-                      setCommandQuery("");
-                    }}
+              <div className="service-requests-modal-list">
+                {serviceRequests.map((request) => (
+                  <article
+                    key={`modal_request_${request.id}`}
+                    className="service-request-card modal-card"
                   >
-                    <span className="command-module-icon">
-                      <UiIcon name={tabIconName(card.id)} />
-                    </span>
-                    <span className="command-module-copy">
-                      <strong>{card.label}</strong>
-                      <small>{card.subtitle}</small>
-                    </span>
-                    {!!card.badge && (
-                      <span className="command-module-badge">{card.badge}</span>
-                    )}
-                  </button>
+                    <div className="item-header">
+                      <strong>Request #{request.id}</strong>
+                      <span className="status-pill">
+                        {titleCase(request.status || "CREATED")}
+                      </span>
+                    </div>
+                    <small>
+                      {titleCase(request.service_type || "Service request")}
+                    </small>
+                    <p>{request.description || "No description provided."}</p>
+                    <div className="item-actions">
+                      {canCompleteServiceRequest && (
+                        <button
+                          type="button"
+                          onClick={() => completeServiceRequest(request.id)}
+                        >
+                          Complete
+                        </button>
+                      )}
+                      {canCancelServiceRequest && (
+                        <button
+                          type="button"
+                          className="danger"
+                          onClick={() => cancelServiceRequest(request.id)}
+                        >
+                          Cancel
+                        </button>
+                      )}
+                    </div>
+                  </article>
                 ))}
-              </div>
-              <div className="command-service-head">
-                <span className="command-section-kicker">Quick Actions</span>
-                <small>{commandResults.length} match(es)</small>
-              </div>
-              <div className="command-list">
-                {commandResults.map((action) => (
-                  <button
-                    key={action.id}
-                    type="button"
-                    className="command-item"
-                    onClick={() => {
-                      action.run();
-                      setCommandOpen(false);
-                      setCommandQuery("");
-                    }}
-                  >
-                    <span className="command-item-main">
-                      <strong>{action.label}</strong>
-                      <small>{action.hint}</small>
-                    </span>
-                    <span className="command-item-meta">Open</span>
-                  </button>
-                ))}
-                {!commandResults.length && (
-                  <div className="command-empty">
-                    No matches. Try searching for "chat", "orders", or "wallet".
-                  </div>
+                {!serviceRequests.length && (
+                  <div className="empty-line">No service requests yet.</div>
                 )}
               </div>
             </div>
           </div>
         )}
-      </div>
+      </>
     );
   }
+
+  function renderOrdersTab() {
+    return <OrdersPage token={token} userRoles={userRoles} />;
+  }
+
+  function renderWalletTab() {
+    const balanceValue =
+      walletSummary?.availableBalance || walletSummary?.wallet?.balance || 0;
+    const safeBalance = Number.isFinite(balanceValue) ? balanceValue : 0;
+    const formatMoney = (value) => {
+      const amount = Number(value || 0);
+      if (!Number.isFinite(amount)) return "0.00";
+      return amount.toLocaleString(undefined, {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      });
+    };
+    const formatTransactionTime = (raw) => {
+      if (!raw) return "";
+      const date = new Date(raw);
+      if (Number.isNaN(date.getTime())) return "";
+      const today = new Date();
+      const yesterday = new Date();
+      yesterday.setDate(today.getDate() - 1);
+      const label = isSameDay(date, today)
+        ? "Today"
+        : isSameDay(date, yesterday)
+          ? "Yesterday"
+          : date.toLocaleDateString();
+      const time = formatClock(date);
+      return [label, time].filter(Boolean).join(", ");
+    };
+    const resolveTransactionAmount = (tx) => {
+      const raw = Number(tx?.amount ?? tx?.value ?? 0);
+      return Number.isFinite(raw) ? raw : 0;
+    };
+    const resolveTransactionLabel = (tx) => {
+      const fallback = tx?.description || tx?.note || "Transaction";
+      const rawType = tx?.transaction_type || tx?.type || fallback;
+      return titleCase(String(rawType).replace(/_/g, " "));
+    };
+    const resolveTransactionMeta = (tx) => {
+      const orderId = tx?.order_id || tx?.orderId;
+      const reference = tx?.reference_id || tx?.referenceId;
+      const refLabel = orderId
+        ? `Order #${orderId}`
+        : reference
+          ? `Ref ${reference}`
+          : tx?.counterparty || tx?.merchant || "";
+      const timeLabel = formatTransactionTime(
+        tx?.created_at || tx?.createdAt || tx?.timestamp,
+      );
+      return [refLabel, timeLabel].filter(Boolean).join(" · ");
+    };
+    const isCreditTransaction = (tx) => {
+      const type = String(
+        tx?.transaction_type || tx?.type || "",
+      ).toUpperCase();
+      const amount = resolveTransactionAmount(tx);
+      const creditHints = [
+        "TOPUP",
+        "RECEIVE",
+        "REFUND",
+        "CREDIT",
+        "PAYMENT_RECEIVED",
+      ];
+      const debitHints = [
+        "TRANSFER",
+        "PAYOUT",
+        "DEBIT",
+        "PAYMENT",
+        "ORDER",
+        "WITHDRAW",
+      ];
+      if (creditHints.some((hint) => type.includes(hint))) return true;
+      if (debitHints.some((hint) => type.includes(hint))) return false;
+      return amount >= 0;
+    };
+
+    return (
+      <section className="wallet-shell">
+        <div className="wallet-balance-card">
+          <div className="wallet-balance-top">
+            <div className="wallet-balance-meta">
+              <span>Available Balance</span>
+              <strong>${formatMoney(safeBalance)}</strong>
+            </div>
+            <button
+              type="button"
+              className="wallet-refresh"
+              onClick={loadWallet}
+              aria-label="Refresh wallet"
+            >
+              <UiIcon name="refresh" size={16} />
+            </button>
+          </div>
+          <div className="wallet-actions">
+            <button
+              type="button"
+              className={`wallet-action primary ${walletAction === "topup" ? "active" : ""}`}
+              onClick={() =>
+                setWalletAction((prev) => (prev === "topup" ? "" : "topup"))
+              }
+            >
+              <UiIcon name="plus" size={16} />
+              Top Up
+            </button>
+            <button
+              type="button"
+              className={`wallet-action ${walletAction === "transfer" ? "active" : ""}`}
+              onClick={() =>
+                setWalletAction((prev) =>
+                  prev === "transfer" ? "" : "transfer",
+                )
+              }
+            >
+              <span className="wallet-action-icon">↗</span>
+              Transfer
+            </button>
+            <button
+              type="button"
+              className={`wallet-action ${walletAction === "cards" ? "active" : ""}`}
+              onClick={() =>
+                setWalletAction((prev) => (prev === "cards" ? "" : "cards"))
+              }
+            >
+              <UiIcon name="wallet" size={16} />
+              Cards
+            </button>
+          </div>
+          {walletAction === "topup" && (
+            <div className="wallet-inline-form">
+              <div className="wallet-inline-row">
+                <input
+                  value={topupAmount}
+                  onChange={(event) => setTopupAmount(event.target.value)}
+                  placeholder="Top up amount"
+                />
+                <button type="button" onClick={topupWallet}>
+                  Pay now
+                </button>
+              </div>
+              {paymentIntent && (
+                <div className="wallet-intent-note">
+                  <div>
+                    <strong>Gateway Intent Ready</strong>
+                    <small>Provider: {paymentIntent.provider}</small>
+                  </div>
+                  <code>
+                    {`${API_URL.replace("/api", "")}/api/payments/webhooks/${String(paymentIntent.provider || "").toLowerCase()}`}
+                  </code>
+                </div>
+              )}
+            </div>
+          )}
+          {walletAction === "transfer" && (
+            <div className="wallet-inline-form">
+              <div className="wallet-inline-row">
+                <select
+                  value={transferForm.recipientType}
+                  onChange={(event) =>
+                    setTransferForm((prev) => ({
+                      ...prev,
+                      recipientType: event.target.value,
+                    }))
+                  }
+                >
+                  <option value="phone">Transfer to phone</option>
+                  <option value="upi">Transfer to UPI ID</option>
+                </select>
+                {transferForm.recipientType === "phone" ? (
+                  <input
+                    value={transferForm.toPhone}
+                    onChange={(event) =>
+                      setTransferForm((prev) => ({
+                        ...prev,
+                        toPhone: event.target.value,
+                      }))
+                    }
+                    placeholder="Recipient phone"
+                  />
+                ) : (
+                  <input
+                    value={transferForm.toUpiId}
+                    onChange={(event) =>
+                      setTransferForm((prev) => ({
+                        ...prev,
+                        toUpiId: event.target.value,
+                      }))
+                    }
+                    placeholder="Recipient UPI ID (example@bank)"
+                  />
+                )}
+              </div>
+              <div className="wallet-inline-row">
+                <input
+                  value={transferForm.amount}
+                  onChange={(event) =>
+                    setTransferForm((prev) => ({
+                      ...prev,
+                      amount: event.target.value,
+                    }))
+                  }
+                  placeholder="Amount"
+                />
+                <input
+                  value={transferForm.note}
+                  onChange={(event) =>
+                    setTransferForm((prev) => ({
+                      ...prev,
+                      note: event.target.value,
+                    }))
+                  }
+                  placeholder="Note (optional)"
+                />
+                <button
+                  type="button"
+                  onClick={transferWalletBalance}
+                  disabled={transferBusy}
+                >
+                  {transferBusy ? "Transferring..." : "Send"}
+                </button>
+              </div>
+            </div>
+          )}
+          {walletAction === "cards" && (
+            <div className="wallet-inline-form">
+              <div className="wallet-inline-info">
+                Link cards or UPI IDs from Settings to unlock instant
+                transfers.
+              </div>
+              <button type="button" onClick={() => setActiveTab("profile")}>
+                Open Settings
+              </button>
+            </div>
+          )}
+        </div>
+
+        <div className="wallet-section-title">Transactions</div>
+        <div className="wallet-transactions-card">
+          {transactions.map((tx) => {
+            const credit = isCreditTransaction(tx);
+            const amountValue = Math.abs(resolveTransactionAmount(tx));
+            return (
+              <div
+                key={tx.id || tx.reference_id || tx.created_at}
+                className="wallet-transaction-row"
+              >
+                <div className="wallet-transaction-left">
+                  <span
+                    className={`wallet-transaction-icon ${credit ? "credit" : "debit"}`}
+                  >
+                    {credit ? "↙" : "↗"}
+                  </span>
+                  <div className="wallet-transaction-info">
+                    <strong>{resolveTransactionLabel(tx)}</strong>
+                    <small>
+                      {resolveTransactionMeta(tx) || "Recent activity"}
+                    </small>
+                  </div>
+                </div>
+                <div
+                  className={`wallet-transaction-amount ${credit ? "credit" : "debit"}`}
+                >
+                  {credit ? "+" : "-"}${formatMoney(amountValue)}
+                </div>
+              </div>
+            );
+          })}
+          {!transactions.length && (
+            <div className="wallet-empty">No transactions available yet.</div>
+          )}
+        </div>
+
+        <details className="wallet-advanced">
+          <summary>Advanced wallet tools</summary>
+          <div className="wallet-advanced-grid">
+            <div className="wallet-advanced-card">
+              <h4>Receive Money</h4>
+              <div className="wallet-receive-card">
+                <small>Your UPI ID</small>
+                <strong>
+                  {receiveProfile?.upiId ||
+                    userSettings?.payments?.upiId ||
+                    "Set UPI ID in profile settings"}
+                </strong>
+                {!!receiveProfile?.qrCodeUrl && (
+                  <img
+                    src={receiveProfile.qrCodeUrl}
+                    alt="Receive payment QR"
+                    className="wallet-receive-qr"
+                  />
+                )}
+                {!!receiveProfile?.upiUri && (
+                  <small>
+                    UPI URI: <code>{receiveProfile.upiUri}</code>
+                  </small>
+                )}
+              </div>
+            </div>
+            <div className="wallet-advanced-card">
+              <h4>Balances</h4>
+              <div className="wallet-metric-grid">
+                <div className="wallet-metric">
+                  <span>Available</span>
+                  <strong>
+                    ${formatMoney(walletSummary?.availableBalance)}
+                  </strong>
+                </div>
+                <div className="wallet-metric">
+                  <span>Locked</span>
+                  <strong>
+                    ${formatMoney(walletSummary?.lockedBalance)}
+                  </strong>
+                </div>
+                <div className="wallet-metric">
+                  <span>Total Balance</span>
+                  <strong>
+                    ${formatMoney(walletSummary?.wallet?.balance)}
+                  </strong>
+                </div>
+                <div className="wallet-metric">
+                  <span>Transactions</span>
+                  <strong>{transactions.length}</strong>
+                </div>
+              </div>
+            </div>
+          </div>
+        </details>
+      </section>
+    );
+  }
+
+  function renderSellerTab() {
+    const shopIdValue =
+      sellerForm.shopId || selectedShopId || selectedShop?.id || "";
+    const sellerOrders = shopIdValue
+      ? orders.filter(
+          (order) =>
+            String(order.shopId || order.shop_id || order.shop?.id || "") ===
+            String(shopIdValue),
+        )
+      : [];
+    const totalProducts = sellerProducts.length;
+    const categoryMap = sellerProducts.reduce((acc, product) => {
+      const key = String(product.category || "General").trim() || "General";
+      acc[key] = (acc[key] || 0) + 1;
+      return acc;
+    }, {});
+    const topCategories = Object.entries(categoryMap)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5);
+    const ordersToday = sellerOrders.filter((order) => {
+      const rawDate = order.created_at || order.createdAt || order.timestamp;
+      if (!rawDate) return false;
+      const parsed = new Date(rawDate);
+      if (Number.isNaN(parsed.getTime())) return false;
+      return isSameDay(parsed, new Date());
+    }).length;
+    const revenue = sellerOrders.reduce((sum, order) => {
+      const amount = Number(
+        order.totalAmount || order.total || order.amount || order.value || 0,
+      );
+      return Number.isFinite(amount) ? sum + amount : sum;
+    }, 0);
+    const growth = (() => {
+      const now = new Date();
+      const startThisWeek = new Date(now);
+      startThisWeek.setDate(now.getDate() - 7);
+      const startPrevWeek = new Date(now);
+      startPrevWeek.setDate(now.getDate() - 14);
+      const thisWeek = sellerOrders.reduce((sum, order) => {
+        const rawDate =
+          order.created_at || order.createdAt || order.timestamp;
+        if (!rawDate) return sum;
+        const parsed = new Date(rawDate);
+        if (Number.isNaN(parsed.getTime())) return sum;
+        if (parsed < startThisWeek) return sum;
+        const amount = Number(
+          order.totalAmount ||
+            order.total ||
+            order.amount ||
+            order.value ||
+            0,
+        );
+        return Number.isFinite(amount) ? sum + amount : sum;
+      }, 0);
+      const prevWeek = sellerOrders.reduce((sum, order) => {
+        const rawDate =
+          order.created_at || order.createdAt || order.timestamp;
+        if (!rawDate) return sum;
+        const parsed = new Date(rawDate);
+        if (Number.isNaN(parsed.getTime())) return sum;
+        if (parsed < startPrevWeek || parsed >= startThisWeek) return sum;
+        const amount = Number(
+          order.totalAmount ||
+            order.total ||
+            order.amount ||
+            order.value ||
+            0,
+        );
+        return Number.isFinite(amount) ? sum + amount : sum;
+      }, 0);
+      if (prevWeek <= 0) return 0;
+      return Math.round(((thisWeek - prevWeek) / prevWeek) * 100);
+    })();
+
+    return (
+      <section className="seller-shell">
+        <div className="seller-header">
+          <div>
+            <h2>Seller Hub</h2>
+            <p>Manage your products and orders</p>
+          </div>
+          <button
+            type="button"
+            className="seller-primary-btn"
+            onClick={() => setSellerFormOpen(true)}
+          >
+            + Add Product
+          </button>
+        </div>
+
+        <div className="seller-stats-grid">
+          <div className="seller-stat-card">
+            <span className="seller-stat-label">Total Products</span>
+            <strong>{totalProducts}</strong>
+          </div>
+          <div className="seller-stat-card">
+            <span className="seller-stat-label">Orders Today</span>
+            <strong>{ordersToday}</strong>
+          </div>
+          <div className="seller-stat-card">
+            <span className="seller-stat-label">Revenue</span>
+            <strong>${toCurrency(revenue)}</strong>
+          </div>
+          <div className="seller-stat-card">
+            <span className="seller-stat-label">Growth</span>
+            <strong>{growth}%</strong>
+          </div>
+        </div>
+
+        {topCategories.length > 0 && (
+          <div className="seller-category-row">
+            {topCategories.map(([label, count]) => (
+              <span key={label} className="seller-category-chip">
+                {titleCase(label)} ? {count}
+              </span>
+            ))}
+          </div>
+        )}
+
+        <article className="panel-card seller-inventory-card">
+          <div className="seller-table-head">
+            <h3>Inventory</h3>
+            <span>{sellerProducts.length} items</span>
+          </div>
+          <div className="seller-table">
+            <div className="seller-table-row seller-table-header">
+              <span>Product</span>
+              <span>SKU</span>
+              <span>Price</span>
+              <span>Stock</span>
+              <span>Status</span>
+            </div>
+            {sellerProducts.map((product) => {
+              const status =
+                Number(product.availableQuantity || 0) <= 0
+                  ? "Out of Stock"
+                  : Number(product.availableQuantity || 0) <= 10
+                    ? "Low Stock"
+                    : "Active";
+              const sku =
+                product.sku ||
+                product.code ||
+                `SKU-${String(product.id).slice(-4)}`;
+              return (
+                <div key={product.id} className="seller-table-row">
+                  <div className="seller-product-cell">
+                    {(() => {
+                      const imageSrc = resolveMediaUrl(
+                        product.imageUrl,
+                        mediaBaseUrl,
+                      );
+                      return imageSrc ? (
+                        <img
+                          src={imageSrc}
+                          alt={product.name}
+                          className="seller-product-thumb"
+                        />
+                      ) : (
+                        <div className="seller-product-thumb placeholder">
+                          {initials(product.name)}
+                        </div>
+                      );
+                    })()}
+                    <div>
+                      <strong>{product.name}</strong>
+                      <small>{product.category || "General"}</small>
+                    </div>
+                  </div>
+                  <span>{sku}</span>
+                  <span>${toCurrency(product.price)}</span>
+                  <span>{product.availableQuantity}</span>
+                  <span
+                    className={`seller-status ${status.replace(/\s+/g, "-").toLowerCase()}`}
+                  >
+                    {status}
+                  </span>
+                </div>
+              );
+            })}
+            {!sellerProducts.length && (
+              <div className="empty-line">No products loaded yet.</div>
+            )}
+          </div>
+        </article>
+
+        {sellerFormOpen && (
+          <article className="panel-card seller-form-card">
+            <div className="seller-table-head">
+              <h3>Add Product</h3>
+              <button
+                type="button"
+                className="ghost-btn"
+                onClick={() => setSellerFormOpen(false)}
+              >
+                Close
+              </button>
+            </div>
+            <div className="field-row">
+              <input
+                value={shopLocationForm.lat}
+                onChange={(event) =>
+                  setShopLocationForm((prev) => ({
+                    ...prev,
+                    lat: event.target.value,
+                  }))
+                }
+                placeholder="Shop latitude"
+              />
+              <input
+                value={shopLocationForm.lng}
+                onChange={(event) =>
+                  setShopLocationForm((prev) => ({
+                    ...prev,
+                    lng: event.target.value,
+                  }))
+                }
+                placeholder="Shop longitude"
+              />
+              <button type="button" onClick={updateShopLocation}>
+                Update Location
+              </button>
+            </div>
+            <div className="field-row">
+              <input
+                value={sellerForm.shopId}
+                onChange={(event) =>
+                  setSellerForm((prev) => ({
+                    ...prev,
+                    shopId: event.target.value,
+                  }))
+                }
+                placeholder="Shop ID"
+              />
+              <button type="button" onClick={() => loadSellerProducts()}>
+                Load Inventory
+              </button>
+            </div>
+            <div className="field-row">
+              <input
+                value={sellerForm.name}
+                onChange={(event) =>
+                  setSellerForm((prev) => ({
+                    ...prev,
+                    name: event.target.value,
+                  }))
+                }
+                placeholder="Product name"
+              />
+              <input
+                value={sellerForm.company}
+                onChange={(event) =>
+                  setSellerForm((prev) => ({
+                    ...prev,
+                    company: event.target.value,
+                  }))
+                }
+                placeholder="Company / Brand"
+              />
+              <input
+                value={sellerForm.category}
+                onChange={(event) =>
+                  setSellerForm((prev) => ({
+                    ...prev,
+                    category: event.target.value,
+                  }))
+                }
+                placeholder="Category"
+              />
+            </div>
+            <div className="field-row">
+              <input
+                value={sellerForm.imageUrl}
+                onChange={(event) =>
+                  setSellerForm((prev) => ({
+                    ...prev,
+                    imageUrl: event.target.value,
+                  }))
+                }
+                placeholder="Product image URL (optional)"
+              />
+            </div>
+            <div className="field-row seller-image-row">
+              <input
+                type="file"
+                accept="image/*"
+                onChange={handleSellerImageSelection}
+                disabled={sellerImageUploading}
+              />
+              <small>
+                {sellerImageUploading
+                  ? "Uploading image to media storage..."
+                  : "Upload from device to auto-fill image URL."}
+              </small>
+            </div>
+            {(() => {
+              const imageSrc = resolveMediaUrl(
+                sellerForm.imageUrl,
+                mediaBaseUrl,
+              );
+              return imageSrc ? (
+                <div className="field-row">
+                  <img
+                    src={imageSrc}
+                    alt="Product preview"
+                    style={{
+                      width: 140,
+                      height: 90,
+                      objectFit: "cover",
+                      borderRadius: 10,
+                    }}
+                  />
+                </div>
+              ) : null;
+            })()}
+            <div className="field-row">
+              <input
+                value={sellerForm.description}
+                onChange={(event) =>
+                  setSellerForm((prev) => ({
+                    ...prev,
+                    description: event.target.value,
+                  }))
+                }
+                placeholder="Product description"
+              />
+            </div>
+            <div className="field-row">
+              <input
+                value={sellerForm.price}
+                onChange={(event) =>
+                  setSellerForm((prev) => ({
+                    ...prev,
+                    price: event.target.value,
+                  }))
+                }
+                placeholder="Price"
+              />
+              <input
+                value={sellerForm.quantity}
+                onChange={(event) =>
+                  setSellerForm((prev) => ({
+                    ...prev,
+                    quantity: event.target.value,
+                  }))
+                }
+                placeholder="Quantity"
+              />
+              <button type="button" onClick={createSellerProduct}>
+                Add Product
+              </button>
+            </div>
+          </article>
+        )}
+      </section>
+    );
+  }
+  function renderOpsTab() {
+    return (
+      <section className="workspace-grid single">
+        <article className="panel-card">
+          <div className="header-row">
+            <h2>Workflow Graph</h2>
+            <input
+              value={workflowId}
+              onChange={(event) => setWorkflowId(event.target.value)}
+              placeholder="Workflow ID"
+            />
+            <button type="button" onClick={runReconciliationNow}>
+              Run Reconciliation
+            </button>
+          </div>
+          <WorkflowGraph workflowId={workflowId} authToken={token} />
+        </article>
+      </section>
+    );
+  }
+
+  function renderProfileTab() {
+    const settingsMenu = [
+      {
+        id: "profile",
+        title: "Profile Settings",
+        description:
+          "Photo, name, email, and account identity used across LifeHub.",
+        icon: "user",
+      },
+      {
+        id: "security",
+        title: "Security Settings",
+        description:
+          "Password, login alerts, and session protection controls.",
+        icon: "shield",
+      },
+      {
+        id: "privacy",
+        title: "Privacy",
+        description:
+          "Read receipts, last seen, profile visibility, and live location privacy.",
+        icon: "settings",
+      },
+      {
+        id: "notifications",
+        title: "Notifications",
+        description: "Push, SMS, email, quiet hours, and test notifications.",
+        icon: "bell",
+      },
+      {
+        id: "preferences",
+        title: "Account Preferences",
+        description:
+          "Payments, chat behavior, and UI preferences for daily usage.",
+        icon: "chart",
+      },
+    ];
+
+    const sectionMeta = settingsMenu.find(
+      (item) => item.id === settingsSection,
+    );
+
+    if (settingsSection === "menu") {
+      return (
+        <section className="settings-shell">
+          <div className="settings-hero-card panel-card">
+            <div className="settings-hero-copy">
+              <span className="dashboard-kicker">Account center</span>
+              <h2>{user.name || "LifeHub User"}</h2>
+              <p>
+                Manage your account, security, notifications, and payment
+                preferences from one organized settings hub.
+              </p>
+              <div className="settings-hero-meta">
+                <span className="dashboard-meta-chip">
+                  {profileCompletion}% profile complete
+                </span>
+                <span className="dashboard-meta-chip">
+                  Wallet {toCurrency(walletBalance)}
+                </span>
+                <span className="dashboard-meta-chip">
+                  {notificationUnreadCount} unread alerts
+                </span>
+              </div>
+            </div>
+            <div className="settings-hero-avatar">
+              {profilePhoto ? (
+                <img
+                  src={profilePhoto}
+                  alt="Profile"
+                  className="profile-avatar"
+                />
+              ) : (
+                <div className="profile-avatar">
+                  {String(user.name || "U").slice(0, 1)}
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="settings-menu-grid">
+            {settingsMenu.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                className="settings-menu-card"
+                onClick={() => setSettingsSection(item.id)}
+              >
+                <span className="settings-menu-icon">
+                  <UiIcon name={item.icon} />
+                </span>
+                <div>
+                  <strong>{item.title}</strong>
+                  <small>{item.description}</small>
+                </div>
+                <span className="settings-menu-arrow">{"->"}</span>
+              </button>
+            ))}
+          </div>
+        </section>
+      );
+    }
+
+    return (
+      <section className="settings-shell settings-detail-shell">
+        <div className="settings-detail-topbar">
+          <button
+            type="button"
+            className="ghost-btn settings-back-btn"
+            onClick={() => setSettingsSection("menu")}
+          >
+            {"<- Back"}
+          </button>
+          <div>
+            <strong>{sectionMeta?.title || "Settings"}</strong>
+            <small>
+              {sectionMeta?.description || "Update this settings section."}
+            </small>
+          </div>
+        </div>
+
+        {settingsSection === "profile" && (
+          <div className="settings-detail-grid two-up">
+            <article className="panel-card profile-summary-card">
+              <div className="profile-head profile-head-modern">
+                <div className="profile-avatar-wrap large">
+                  {profilePhoto ? (
+                    <img
+                      src={profilePhoto}
+                      alt="Profile"
+                      className="profile-avatar"
+                    />
+                  ) : (
+                    <div className="profile-avatar">
+                      {String(user.name || "U").slice(0, 1)}
+                    </div>
+                  )}
+                </div>
+                <div className="profile-summary-copy">
+                  <span className="dashboard-kicker">Identity</span>
+                  <strong>{user.name}</strong>
+                  <small>{user.phone}</small>
+                  <small>
+                    {user.email || "Add your email to complete account setup"}
+                  </small>
+                </div>
+              </div>
+              <div className="profile-completion-card">
+                <div>
+                  <strong>{profileCompletion}% complete</strong>
+                  <small>Photo, contact, and billing readiness</small>
+                </div>
+                <div className="profile-progress-track">
+                  <span style={{ width: `${profileCompletion}%` }} />
+                </div>
+              </div>
+              <label className="profile-photo-input">
+                <span>Profile photo</span>
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={handleProfilePhotoChange}
+                />
+              </label>
+            </article>
+
+            <article className="panel-card profile-editor-card">
+              <div className="panel-title-row">
+                <div>
+                  <h3>Editable profile information</h3>
+                  <small>
+                    Used on orders, chat headers, receipts, and service
+                    bookings.
+                  </small>
+                </div>
+              </div>
+              <div className="profile-form-grid">
+                <label>
+                  Full name
+                  <input
+                    value={profileDraft.name}
+                    onChange={(event) =>
+                      setProfileDraft((prev) => ({
+                        ...prev,
+                        name: event.target.value,
+                      }))
+                    }
+                    placeholder="Your name"
+                  />
+                </label>
+                <label>
+                  Email address
+                  <input
+                    type="email"
+                    value={profileDraft.email}
+                    onChange={(event) =>
+                      setProfileDraft((prev) => ({
+                        ...prev,
+                        email: event.target.value,
+                      }))
+                    }
+                    placeholder="you@lifehub.app"
+                  />
+                </label>
+                <label>
+                  Mobile number
+                  <input
+                    value={user.phone || ""}
+                    readOnly
+                    placeholder="Phone number"
+                  />
+                </label>
+                <label>
+                  Roles
+                  <input
+                    value={(userRoles.length ? userRoles : ["CUSTOMER"]).join(
+                      ", ",
+                    )}
+                    readOnly
+                  />
+                </label>
+              </div>
+              <div className="profile-form-actions">
+                <button
+                  type="button"
+                  onClick={saveProfileDetails}
+                  disabled={savingProfile}
+                >
+                  {savingProfile ? "Saving..." : "Save profile"}
+                </button>
+                <button
+                  type="button"
+                  className="ghost-btn"
+                  onClick={loadUserProfile}
+                >
+                  Refresh
+                </button>
+              </div>
+            </article>
+          </div>
+        )}
+
+        {settingsSection === "security" && (
+          <div className="settings-detail-grid two-up">
+            <article className="panel-card profile-password-card">
+              <div className="panel-title-row">
+                <div>
+                  <h3>Password and access</h3>
+                  <small>
+                    Update your password and protect account sessions.
+                  </small>
+                </div>
+              </div>
+              <div className="profile-form-grid compact">
+                <label>
+                  Current password
+                  <input
+                    type="password"
+                    value={passwordDraft.currentPassword}
+                    onChange={(event) =>
+                      setPasswordDraft((prev) => ({
+                        ...prev,
+                        currentPassword: event.target.value,
+                      }))
+                    }
+                    placeholder="Current password"
+                  />
+                </label>
+                <label>
+                  New password
+                  <input
+                    type="password"
+                    value={passwordDraft.newPassword}
+                    onChange={(event) =>
+                      setPasswordDraft((prev) => ({
+                        ...prev,
+                        newPassword: event.target.value,
+                      }))
+                    }
+                    placeholder="Minimum 6 characters"
+                  />
+                </label>
+                <label>
+                  Confirm password
+                  <input
+                    type="password"
+                    value={passwordDraft.confirmPassword}
+                    onChange={(event) =>
+                      setPasswordDraft((prev) => ({
+                        ...prev,
+                        confirmPassword: event.target.value,
+                      }))
+                    }
+                    placeholder="Confirm new password"
+                  />
+                </label>
+              </div>
+              <div className="profile-form-actions">
+                <button
+                  type="button"
+                  onClick={changePasswordAction}
+                  disabled={changingPassword}
+                >
+                  {changingPassword ? "Updating..." : "Change password"}
+                </button>
+              </div>
+            </article>
+
+            <article className="panel-card profile-settings-card">
+              <div className="panel-title-row">
+                <div>
+                  <h3>Session protection</h3>
+                  <small>
+                    Choose alerting and automatic session timeout rules.
+                  </small>
+                </div>
+              </div>
+              <div className="profile-toggle-grid">
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(userSettings.security?.loginAlerts)}
+                    onChange={(event) =>
+                      setUserSettings((prev) => ({
+                        ...prev,
+                        security: {
+                          ...(prev.security || {}),
+                          loginAlerts: event.target.checked,
+                        },
+                      }))
+                    }
+                  />
+                  Login alerts
+                </label>
+              </div>
+              <div className="profile-form-grid compact">
+                <label>
+                  Session timeout (minutes)
+                  <input
+                    value={
+                      userSettings.security?.sessionTimeoutMinutes || 120
+                    }
+                    onChange={(event) =>
+                      setUserSettings((prev) => ({
+                        ...prev,
+                        security: {
+                          ...(prev.security || {}),
+                          sessionTimeoutMinutes: Number(
+                            event.target.value || 0,
+                          ),
+                        },
+                      }))
+                    }
+                    placeholder="120"
+                  />
+                </label>
+                <label>
+                  Device ID
+                  <input value={deviceId} readOnly />
+                </label>
+              </div>
+              <div className="profile-form-actions">
+                <button type="button" onClick={saveUserSettings}>
+                  Save security settings
+                </button>
+              </div>
+            </article>
+          </div>
+        )}
+
+        {settingsSection === "privacy" && (
+          <div className="settings-detail-grid two-up">
+            <article className="panel-card profile-settings-card">
+              <div className="panel-title-row">
+                <div>
+                  <h3>Privacy</h3>
+                  <small>
+                    Control who can see your activity and profile identity.
+                  </small>
+                </div>
+              </div>
+              <div className="profile-toggle-grid">
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(userSettings.privacy?.readReceipts)}
+                    onChange={(event) =>
+                      setUserSettings((prev) => ({
+                        ...prev,
+                        privacy: {
+                          ...(prev.privacy || {}),
+                          readReceipts: event.target.checked,
+                        },
+                      }))
+                    }
+                  />
+                  Read receipts
+                </label>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(
+                      userSettings.location?.shareLiveLocation,
+                    )}
+                    onChange={(event) =>
+                      setUserSettings((prev) => ({
+                        ...prev,
+                        location: {
+                          ...(prev.location || {}),
+                          shareLiveLocation: event.target.checked,
+                        },
+                      }))
+                    }
+                  />
+                  Share live location
+                </label>
+              </div>
+              <div className="profile-form-grid compact">
+                <label>
+                  Last seen visibility
+                  <select
+                    value={
+                      userSettings.privacy?.lastSeenVisibility || "contacts"
+                    }
+                    onChange={(event) =>
+                      setUserSettings((prev) => ({
+                        ...prev,
+                        privacy: {
+                          ...(prev.privacy || {}),
+                          lastSeenVisibility: event.target.value,
+                        },
+                      }))
+                    }
+                  >
+                    <option value="everyone">Everyone</option>
+                    <option value="contacts">Contacts</option>
+                    <option value="nobody">Nobody</option>
+                  </select>
+                </label>
+                <label>
+                  Profile photo visibility
+                  <select
+                    value={
+                      userSettings.privacy?.profilePhotoVisibility ||
+                      "everyone"
+                    }
+                    onChange={(event) =>
+                      setUserSettings((prev) => ({
+                        ...prev,
+                        privacy: {
+                          ...(prev.privacy || {}),
+                          profilePhotoVisibility: event.target.value,
+                        },
+                      }))
+                    }
+                  >
+                    <option value="everyone">Everyone</option>
+                    <option value="contacts">Contacts</option>
+                    <option value="nobody">Nobody</option>
+                  </select>
+                </label>
+                <label>
+                  Location precision
+                  <select
+                    value={
+                      userSettings.location?.locationPrecision || "precise"
+                    }
+                    onChange={(event) =>
+                      setUserSettings((prev) => ({
+                        ...prev,
+                        location: {
+                          ...(prev.location || {}),
+                          locationPrecision: event.target.value,
+                        },
+                      }))
+                    }
+                  >
+                    <option value="precise">Precise</option>
+                    <option value="approximate">Approximate</option>
+                  </select>
+                </label>
+              </div>
+              <div className="profile-form-actions">
+                <button type="button" onClick={saveUserSettings}>
+                  Save privacy settings
+                </button>
+              </div>
+            </article>
+          </div>
+        )}
+
+        {settingsSection === "notifications" && (
+          <div className="settings-detail-grid two-up">
+            <article className="panel-card profile-settings-card">
+              <div className="panel-title-row">
+                <div>
+                  <h3>Notification channels</h3>
+                  <small>Choose where LifeHub should reach you first.</small>
+                </div>
+              </div>
+              <div className="profile-toggle-grid">
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(userSettings.notifications?.inApp)}
+                    onChange={(event) =>
+                      setUserSettings((prev) => ({
+                        ...prev,
+                        notifications: {
+                          ...(prev.notifications || {}),
+                          inApp: event.target.checked,
+                        },
+                      }))
+                    }
+                  />
+                  In-app
+                </label>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(userSettings.notifications?.push)}
+                    onChange={(event) =>
+                      setUserSettings((prev) => ({
+                        ...prev,
+                        notifications: {
+                          ...(prev.notifications || {}),
+                          push: event.target.checked,
+                        },
+                      }))
+                    }
+                  />
+                  Push
+                </label>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(userSettings.notifications?.sms)}
+                    onChange={(event) =>
+                      setUserSettings((prev) => ({
+                        ...prev,
+                        notifications: {
+                          ...(prev.notifications || {}),
+                          sms: event.target.checked,
+                        },
+                      }))
+                    }
+                  />
+                  SMS
+                </label>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(userSettings.notifications?.email)}
+                    onChange={(event) =>
+                      setUserSettings((prev) => ({
+                        ...prev,
+                        notifications: {
+                          ...(prev.notifications || {}),
+                          email: event.target.checked,
+                        },
+                      }))
+                    }
+                  />
+                  Email
+                </label>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(userSettings.notifications?.orderAlerts)}
+                    onChange={(event) =>
+                      setUserSettings((prev) => ({
+                        ...prev,
+                        notifications: {
+                          ...(prev.notifications || {}),
+                          orderAlerts: event.target.checked,
+                        },
+                      }))
+                    }
+                  />
+                  Order alerts
+                </label>
+              </div>
+              <div className="profile-form-actions wrap">
+                <button
+                  type="button"
+                  className="ghost-btn"
+                  onClick={requestBrowserPushPermission}
+                >
+                  Push: {browserPushPermission}
+                </button>
+                <button
+                  type="button"
+                  className="ghost-btn"
+                  onClick={sendNotificationTest}
+                >
+                  Send test notification
+                </button>
+                <button type="button" onClick={saveUserSettings}>
+                  Save channel settings
+                </button>
+              </div>
+            </article>
+
+            <article className="panel-card profile-settings-card">
+              <div className="panel-title-row">
+                <div>
+                  <h3>Quiet hours</h3>
+                  <small>
+                    Pause non-critical alerts while you are away or sleeping.
+                  </small>
+                </div>
+              </div>
+              <div className="profile-toggle-grid">
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(notificationPrefs.quietHours?.enabled)}
+                    onChange={(event) =>
+                      setNotificationPrefs((prev) => ({
+                        ...prev,
+                        quietHours: {
+                          ...(prev.quietHours || {}),
+                          enabled: event.target.checked,
+                        },
+                      }))
+                    }
+                  />
+                  Enable quiet hours
+                </label>
+              </div>
+              <div className="profile-form-grid compact">
+                <label>
+                  Start hour
+                  <input
+                    value={notificationPrefs.quietHours?.startHour ?? 22}
+                    onChange={(event) =>
+                      setNotificationPrefs((prev) => ({
+                        ...prev,
+                        quietHours: {
+                          ...(prev.quietHours || {}),
+                          startHour: Number(event.target.value || 0),
+                        },
+                      }))
+                    }
+                  />
+                </label>
+                <label>
+                  End hour
+                  <input
+                    value={notificationPrefs.quietHours?.endHour ?? 7}
+                    onChange={(event) =>
+                      setNotificationPrefs((prev) => ({
+                        ...prev,
+                        quietHours: {
+                          ...(prev.quietHours || {}),
+                          endHour: Number(event.target.value || 0),
+                        },
+                      }))
+                    }
+                  />
+                </label>
+              </div>
+              <div className="profile-form-actions">
+                <button type="button" onClick={saveNotificationPreferences}>
+                  Save quiet hours
+                </button>
+              </div>
+            </article>
+          </div>
+        )}
+
+        {settingsSection === "preferences" && (
+          <div className="settings-detail-grid two-up">
+            <article className="panel-card profile-settings-card">
+              <div className="panel-title-row">
+                <div>
+                  <h3>Payment preferences</h3>
+                  <small>
+                    Set payout identity and auto top-up thresholds.
+                  </small>
+                </div>
+              </div>
+              <div className="profile-form-grid compact">
+                <label>
+                  UPI ID
+                  <input
+                    value={userSettings.payments?.upiId || ""}
+                    onChange={(event) =>
+                      setUserSettings((prev) => ({
+                        ...prev,
+                        payments: {
+                          ...(prev.payments || {}),
+                          upiId: event.target.value,
+                        },
+                      }))
+                    }
+                    placeholder="example@bank"
+                  />
+                </label>
+                <label>
+                  Auto top-up threshold
+                  <input
+                    value={userSettings.payments?.autoTopupThreshold || ""}
+                    onChange={(event) =>
+                      setUserSettings((prev) => ({
+                        ...prev,
+                        payments: {
+                          ...(prev.payments || {}),
+                          autoTopupThreshold: event.target.value,
+                        },
+                      }))
+                    }
+                    placeholder="500"
+                  />
+                </label>
+                <label>
+                  Auto top-up amount
+                  <input
+                    value={userSettings.payments?.autoTopupAmount || ""}
+                    onChange={(event) =>
+                      setUserSettings((prev) => ({
+                        ...prev,
+                        payments: {
+                          ...(prev.payments || {}),
+                          autoTopupAmount: event.target.value,
+                        },
+                      }))
+                    }
+                    placeholder="1000"
+                  />
+                </label>
+              </div>
+            </article>
+
+            <article className="panel-card profile-settings-card">
+              <div className="panel-title-row">
+                <div>
+                  <h3>Chat and UI preferences</h3>
+                  <small>
+                    Choose interaction defaults for messaging and the
+                    interface.
+                  </small>
+                </div>
+              </div>
+              <div className="profile-toggle-grid">
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(userSettings.chat?.enterToSend)}
+                    onChange={(event) =>
+                      setUserSettings((prev) => ({
+                        ...prev,
+                        chat: {
+                          ...(prev.chat || {}),
+                          enterToSend: event.target.checked,
+                        },
+                      }))
+                    }
+                  />
+                  Enter to send
+                </label>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(userSettings.ui?.compactMode)}
+                    onChange={(event) =>
+                      setUserSettings((prev) => ({
+                        ...prev,
+                        ui: {
+                          ...(prev.ui || {}),
+                          compactMode: event.target.checked,
+                        },
+                      }))
+                    }
+                  />
+                  Compact mode
+                </label>
+              </div>
+              <div className="profile-form-grid compact">
+                <label>
+                  Default call type
+                  <select
+                    value={userSettings.chat?.defaultCallType || "video"}
+                    onChange={(event) =>
+                      setUserSettings((prev) => ({
+                        ...prev,
+                        chat: {
+                          ...(prev.chat || {}),
+                          defaultCallType: event.target.value,
+                        },
+                      }))
+                    }
+                  >
+                    <option value="video">Video</option>
+                    <option value="audio">Audio</option>
+                  </select>
+                </label>
+                <label>
+                  Auto-download media
+                  <select
+                    value={userSettings.chat?.autoDownloadMedia || "wifi"}
+                    onChange={(event) =>
+                      setUserSettings((prev) => ({
+                        ...prev,
+                        chat: {
+                          ...(prev.chat || {}),
+                          autoDownloadMedia: event.target.value,
+                        },
+                      }))
+                    }
+                  >
+                    <option value="always">Always</option>
+                    <option value="wifi">Wifi only</option>
+                    <option value="never">Never</option>
+                  </select>
+                </label>
+                <label>
+                  Theme
+                  <select
+                    value={userSettings.ui?.theme || themeMode}
+                    onChange={(event) => applyTheme(event.target.value)}
+                  >
+                    <option value="light">Light</option>
+                    <option value="dark">Dark</option>
+                  </select>
+                </label>
+                <label>
+                  Interface language
+                  <select
+                    value={userSettings.ui?.language || "en"}
+                    onChange={(event) =>
+                      setUserSettings((prev) => ({
+                        ...prev,
+                        ui: {
+                          ...(prev.ui || {}),
+                          language: event.target.value,
+                        },
+                      }))
+                    }
+                  >
+                    <option value="en">English</option>
+                    <option value="hi">Hindi</option>
+                  </select>
+                </label>
+              </div>
+              <div className="profile-form-actions">
+                <button type="button" onClick={saveUserSettings}>
+                  Save preferences
+                </button>
+                <button type="button" className="danger" onClick={onLogout}>
+                  Logout
+                </button>
+              </div>
+            </article>
+          </div>
+        )}
+      </section>
+    );
+  }
+
+  function renderTab() {
+    if (activeTab === "home") return renderHomeTab();
+    if (activeTab === "chat") return renderChatTab();
+    if (activeTab === "marketplace") return renderMarketplaceTab();
+    if (activeTab === "services") return renderServicesTab();
+    if (activeTab === "orders") return renderOrdersTab();
+    if (activeTab === "wallet") return renderWalletTab();
+    if (activeTab === "seller") return renderSellerTab();
+    if (activeTab === "ops") return renderOpsTab();
+    return renderProfileTab();
+  }
+
+  function handleTabSelect(tabId) {
+    setActiveTab(tabId);
+    setSidebarOpen(false);
+  }
+
+  function openNotificationCenter() {
+    setActiveTab("home");
+    setSidebarOpen(false);
+    markNotificationsAsRead({ scope: "system" }).catch(() => {});
+  }
+
+  const suppressGlobalHeader =
+    activeTab === "chat" ||
+    (activeTab === "marketplace" && marketplaceView !== "catalog") ||
+    (activeTab === "profile" && settingsSection !== "menu");
+  const breadcrumbLabel =
+    activeTab === "home" ? "Overview" : activeTabMeta.title;
+
+  const handleGlobalSearchChange = (event) => {
+    const value = event.target.value;
+    setCommandQuery(value);
+    if (!commandOpen) {
+      setCommandOpen(true);
+    }
+  };
+
+  return (
+    <div
+      className={`superapp-shell superapp-shell-full superapp-shell-v5 shell-${activeTab} theme-${themeMode} ${sidebarOpen ? "sidebar-open" : ""} ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}
+    >
+      <aside
+        className={`sidebar-v5 ${sidebarOpen ? "open" : ""} ${sidebarCollapsed ? "collapsed" : ""}`}
+      >
+        <div className="sidebar-brand">
+          <div className="sidebar-brand-main">
+            <img
+              className="brand-mark"
+              src="/lh-logo.svg"
+              alt="LifeHub logo"
+            />
+            <strong>LifeHub</strong>
+          </div>
+          <button
+            type="button"
+            className="sidebar-collapse-btn"
+            onClick={() => setSidebarCollapsed((prev) => !prev)}
+            title={
+              sidebarCollapsed ? "Expand navigation" : "Collapse navigation"
+            }
+          >
+            {sidebarCollapsed ? "›" : "‹"}
+          </button>
+        </div>
+        <div className="sidebar-search">
+          <UiIcon name="search" />
+          <input
+            value={moduleSearch}
+            onChange={(event) => setModuleSearch(event.target.value)}
+            placeholder="Search services"
+          />
+        </div>
+        <div className="sidebar-groups">
+          {moduleGroups.map((group) => (
+            <div key={group.id} className="sidebar-group">
+              <span className="sidebar-group-title">
+                {group.label.toUpperCase()}
+              </span>
+              <div className="sidebar-links">
+                {group.id === "core" && (
+                  <>
+                    <button
+                      type="button"
+                      className="sidebar-link"
+                      onClick={() => setCommandOpen(true)}
+                      title="Search"
+                    >
+                      <UiIcon name="search" />
+                      <span className="sidebar-link-label">Search</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="sidebar-link"
+                      onClick={openNotificationCenter}
+                      title="Notifications"
+                    >
+                      <UiIcon name="bell" />
+                      <span className="sidebar-link-label">
+                        Notifications
+                      </span>
+                      {notificationUnreadCount > 0 && (
+                        <span className="sidebar-inline-badge">
+                          {notificationUnreadCount > 99
+                            ? "99+"
+                            : notificationUnreadCount}
+                        </span>
+                      )}
+                    </button>
+                  </>
+                )}
+                {group.items.map((tab) => (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    className={`sidebar-link ${activeTab === tab.id ? "active" : ""}`}
+                    title={tab.label}
+                    onClick={() => {
+                      if (tab.id === "profile") {
+                        setSettingsSection("menu");
+                      }
+                      handleTabSelect(tab.id);
+                    }}
+                  >
+                    <UiIcon name={tabIconName(tab.id)} />
+                    <span className="sidebar-link-label">{tab.label}</span>
+                  </button>
+                ))}
+                {group.id === "account" && (
+                  <button
+                    type="button"
+                    className="sidebar-link"
+                    title="Security"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setCommandOpen(false);
+                      setSettingsSection("security");
+                      handleTabSelect("profile");
+                    }}
+                  >
+                    <UiIcon name="shield" />
+                    <span className="sidebar-link-label">Security</span>
+                  </button>
+                )}
+              </div>
+            </div>
+          ))}
+          {moduleGroups.length === 1 &&
+            moduleGroups[0].id === "results" &&
+            !moduleGroups[0].items.length && (
+              <div className="module-empty">
+                No services match that search.
+              </div>
+            )}
+        </div>
+        <div className="sidebar-foot">
+          <span>{loading ? "Syncing workspace" : "Live"}</span>
+        </div>
+      </aside>
+      {sidebarOpen && (
+        <div
+          className="sidebar-overlay"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
+
+      <div className="content-stack">
+        <header className="topbar-v5">
+          <button
+            type="button"
+            className="nav-toggle"
+            aria-label="Toggle navigation"
+            onClick={() => setSidebarOpen((prev) => !prev)}
+          >
+            <span />
+            <span />
+            <span />
+          </button>
+          <div className="breadcrumb">
+            <span>Dashboard</span>
+            <span>/</span>
+            <strong>{breadcrumbLabel}</strong>
+          </div>
+          <div
+            className="topbar-search"
+            onClick={(e) => {
+              e.stopPropagation();
+              setCommandOpen(true);
+            }}
+          >
+            <UiIcon name="search" />
+            <input
+              value={commandQuery}
+              onChange={handleGlobalSearchChange}
+              onFocus={() => setCommandOpen(true)}
+              placeholder="Search anything..."
+            />
+            <span className="topbar-hotkey">⌘ K</span>
+          </div>
+          <div className="topbar-actions">
+            <button
+              type="button"
+              className="icon-btn badge-btn"
+              onClick={openMarketplaceCart}
+              title="Open cart"
+            >
+              <UiIcon name="cart" />
+              {cartItemCount > 0 && (
+                <span className="mini-badge">
+                  {cartItemCount > 99 ? "99+" : cartItemCount}
+                </span>
+              )}
+            </button>
+            <button
+              type="button"
+              className="icon-btn"
+              onClick={() =>
+                applyTheme(themeMode === "dark" ? "light" : "dark")
+              }
+              title={
+                themeMode === "dark"
+                  ? "Switch to light theme"
+                  : "Switch to dark theme"
+              }
+            >
+              <UiIcon name={themeMode === "dark" ? "sun" : "moon"} />
+            </button>
+            {canInstallApp && (
+              <button
+                type="button"
+                className="ghost-btn topbar-install-btn"
+                onClick={onInstallApp}
+              >
+                Install
+              </button>
+            )}
+            <button
+              type="button"
+              className="icon-btn badge-btn"
+              onClick={openNotificationCenter}
+            >
+              <UiIcon name="bell" />
+              {notificationUnreadCount > 0 && (
+                <span className="mini-badge">
+                  {notificationUnreadCount > 99
+                    ? "99+"
+                    : notificationUnreadCount}
+                </span>
+              )}
+            </button>
+            <div className="topbar-profile-pill">
+              <div className="topbar-avatar">
+                {String(user.name || "A").slice(0, 1)}
+              </div>
+              <div className="topbar-profile-copy">
+                <strong>
+                  {String(user.name || "Account").split(" ")[0]}
+                </strong>
+                <small>{appInstalled ? "App ready" : "Web workspace"}</small>
+              </div>
+            </div>
+          </div>
+        </header>
+
+        <main className="main-stage main-stage-full">
+          {!suppressGlobalHeader && (
+            <div
+              className={`page-intro ${activeTab === "home" ? "hero" : "compact"}`}
+            >
+              <h1>{activeTabMeta.title}</h1>
+              <p>{activeTabMeta.description}</p>
+            </div>
+          )}
+
+          {error && <div className="alert danger">{error}</div>}
+          {toast && <div className="alert info">{toast}</div>}
+          {renderTab()}
+        </main>
+      </div>
+
+      {commandOpen && (
+        <div
+          className="command-overlay"
+          onClick={() => setCommandOpen(false)}
+        >
+          <div
+            className="command-modal"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="command-header">
+              <div>
+                <strong>Command Center</strong>
+                <small>Jump to any module or action instantly.</small>
+              </div>
+              <button
+                type="button"
+                className="ghost-btn"
+                onClick={() => setCommandOpen(false)}
+              >
+                Close
+              </button>
+            </div>
+            <div className="command-search">
+              <UiIcon name="search" />
+              <input
+                ref={commandInputRef}
+                value={commandQuery}
+                onChange={(event) => setCommandQuery(event.target.value)}
+                placeholder="Search commands, modules, or actions"
+              />
+              <span className="command-hint">Ctrl+K</span>
+            </div>
+            <div className="command-service-head">
+              <span className="command-section-kicker">Service Library</span>
+              <small>{commandServiceCards.length} modules ready</small>
+            </div>
+            <div className="command-module-grid">
+              {commandServiceCards.map((card) => (
+                <button
+                  key={`module_${card.id}`}
+                  type="button"
+                  className="command-module-card"
+                  onClick={() => {
+                    card.run();
+                    setCommandOpen(false);
+                    setCommandQuery("");
+                  }}
+                >
+                  <span className="command-module-icon">
+                    <UiIcon name={tabIconName(card.id)} />
+                  </span>
+                  <span className="command-module-copy">
+                    <strong>{card.label}</strong>
+                    <small>{card.subtitle}</small>
+                  </span>
+                  {!!card.badge && (
+                    <span className="command-module-badge">{card.badge}</span>
+                  )}
+                </button>
+              ))}
+            </div>
+            <div className="command-service-head">
+              <span className="command-section-kicker">Quick Actions</span>
+              <small>{commandResults.length} match(es)</small>
+            </div>
+            <div className="command-list">
+              {commandResults.map((action) => (
+                <button
+                  key={action.id}
+                  type="button"
+                  className="command-item"
+                  onClick={() => {
+                    action.run();
+                    setCommandOpen(false);
+                    setCommandQuery("");
+                  }}
+                >
+                  <span className="command-item-main">
+                    <strong>{action.label}</strong>
+                    <small>{action.hint}</small>
+                  </span>
+                  <span className="command-item-meta">Open</span>
+                </button>
+              ))}
+              {!commandResults.length && (
+                <div className="command-empty">
+                  No matches. Try searching for "chat", "orders", or "wallet".
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
