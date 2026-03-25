@@ -18,7 +18,7 @@ import {
   typing,
   presence,
   presenceList,
-  sync
+  sync,
   createStory,
   listStories
 } from "./chat.controller.js";

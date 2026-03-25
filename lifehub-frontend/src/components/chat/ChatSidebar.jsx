@@ -12,8 +12,8 @@ export default function ChatSidebar() {
         <div className={`wa-slim-icon ${activeTab === 'CHATS' ? 'active-icon' : ''}`} onClick={() => setActiveTab("CHATS")}>
           <ChatIcon />
         </div>
-        <div className={`wa-slim-icon ${activeTab === 'STATUS' ? 'active-icon' : ''}`} onClick={() => setActiveTab("STATUS")}>
-          <StatusIcon />
+        <div className={`wa-slim-icon ${activeTab === 'CONTACTS' ? 'active-icon' : ''}`} onClick={() => setActiveTab("CONTACTS")}>
+          <div className="wa-contacts-icon">👤</div>
         </div>
         <div className="wa-slim-icon" onClick={() => alert("Calls UI is invoked from chat headers or direct incoming.")}>
           <CallIcon />

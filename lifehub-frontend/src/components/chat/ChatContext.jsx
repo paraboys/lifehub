@@ -2,7 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useRef } from "r
 
 const ChatContext = createContext(null);
 
-export function ChatProvider({ children, api, user, callProps }) {
+export function ChatProvider({ children, api, user, callProps, stories: passedStories, onUploadStory }) {
   const [activeTab, setActiveTab] = useState("CHATS"); // CHATS, STATUS
   
   // Data States
@@ -10,8 +10,11 @@ export function ChatProvider({ children, api, user, callProps }) {
   const [contacts, setContacts] = useState([]);
   const [incomingReqs, setIncomingReqs] = useState([]);
   const [outgoingReqs, setOutgoingReqs] = useState([]);
-  const [stories, setStories] = useState([]);
+  const [internalStories, setInternalStories] = useState([]);
   
+  // Use passed stories if available, otherwise use internal state
+  const displayedStories = passedStories || internalStories;
+
   const [selectedChat, setSelectedChat] = useState(null);
   const [messages, setMessages] = useState([]);
   const [filter, setFilter] = useState("All"); 
@@ -47,9 +50,10 @@ export function ChatProvider({ children, api, user, callProps }) {
   };
 
   const fetchStories = async () => {
+    if (passedStories) return; // Skip if handled by parent
     try {
       const data = await api("/chat/stories");
-      if (data && data.stories) setStories(data.stories);
+      if (data && data.stories) setInternalStories(data.stories);
     } catch (e) { console.error(e); }
   };
 
@@ -70,6 +74,30 @@ export function ChatProvider({ children, api, user, callProps }) {
       }
       setTimeout(() => scrollToBottom(), 100);
     } catch(e) { console.error(e) }
+  };
+
+  const handleSearchContact = async () => {
+    if (!searchPhone.trim()) return;
+    setSearchLoading(true);
+    setSearchResult(null);
+    try {
+      const data = await api(`/chat/search?phone=${encodeURIComponent(searchPhone)}`);
+      setSearchResult(data.user || null);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setSearchLoading(false);
+    }
+  };
+
+  const sendContactRequest = async (targetId) => {
+     try {
+       await api('/chat/request', 'POST', { targetUserId: targetId });
+       fetchContactsAndReqs();
+       setSearchResult(null);
+       setSearchPhone("");
+       setIsAddContactOpen(false);
+     } catch(e) { console.error(e) }
   };
 
   const scrollToBottom = () => {
@@ -105,7 +133,8 @@ export function ChatProvider({ children, api, user, callProps }) {
     activeTab, setActiveTab,
     conversations, setConversations, fetchConversations,
     contacts, incomingReqs, outgoingReqs, fetchContactsAndReqs,
-    stories, setStories, fetchStories,
+    stories: displayedStories, setStories: setInternalStories, fetchStories,
+    onUploadStory,
     selectedChat, setSelectedChat,
     messages, setMessages, fetchMessages, messagesEndRef, scrollToBottom,
     filter, setFilter,
@@ -113,6 +142,7 @@ export function ChatProvider({ children, api, user, callProps }) {
     isGroupModalOpen, setIsGroupModalOpen,
     activeStory, setActiveStory,
     searchPhone, setSearchPhone, searchResult, setSearchResult, searchLoading, setSearchLoading,
+    handleSearchContact, sendContactRequest,
     archivedChatIds, showingArchived, setShowingArchived, toggleArchive
   };
 

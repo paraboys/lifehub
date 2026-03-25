@@ -4,6 +4,7 @@ import ChatSidebar from "./ChatSidebar";
 import ChatListPane from "./ChatListPane";
 import ChatWindow from "./ChatWindow";
 import ChatStatusPane from "./ChatStatusPane";
+import ChatContactsPane from "./ChatContactsPane";
 import ChatModals from "./ChatModals";
 import "../WhatsAppChat.css";
 
@@ -14,7 +15,9 @@ function ChatAppContent() {
     <div className="wa-app-container">
       <ChatSidebar />
       <div className="wa-list-panel">
-         {activeTab === 'CHATS' ? <ChatListPane /> : <ChatStatusPane />}
+          {activeTab === 'CHATS' && <ChatListPane />}
+          {activeTab === 'STATUS' && <ChatStatusPane />}
+          {activeTab === 'CONTACTS' && <ChatContactsPane />}
       </div>
       <div className={`wa-main-panel ${selectedChat ? 'active' : ''}`}>
          {activeTab === 'CHATS' ? <ChatWindow /> : <div className="wa-empty-chat-state"><h1>Status</h1><p>Watch updates from your friends.</p></div>}
@@ -24,9 +27,15 @@ function ChatAppContent() {
   );
 }
 
-export default function ChatApp({ api, user, callProps }) {
+export default function ChatApp({ api, user, callProps, stories, onUploadStory }) {
   return (
-    <ChatProvider api={api} user={user} callProps={callProps}>
+    <ChatProvider 
+      api={api} 
+      user={user} 
+      callProps={callProps}
+      stories={stories}
+      onUploadStory={onUploadStory}
+    >
       <ChatAppContent />
     </ChatProvider>
   );

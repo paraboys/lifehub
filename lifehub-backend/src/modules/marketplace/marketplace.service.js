@@ -47,8 +47,28 @@ async function hasShopFeedbackTable() {
   }
 
   try {
-    const rows = await prisma.$queryRawUnsafe("SELECT to_regclass('public.shop_feedbacks')::text AS table_name");
-    const available = Boolean(rows?.[0]?.table_name);
+    await prisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS "shop_feedbacks" (
+        "id" BIGSERIAL PRIMARY KEY,
+        "shop_id" BIGINT NOT NULL,
+        "user_id" BIGINT NOT NULL,
+        "order_id" BIGINT UNIQUE,
+        "rating" DECIMAL(2,1) NOT NULL,
+        "comment" TEXT,
+        "image_url" TEXT,
+        "created_at" TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT "shop_feedbacks_shop_id_fkey"
+          FOREIGN KEY ("shop_id") REFERENCES "shop_profiles"("id")
+          ON DELETE CASCADE ON UPDATE NO ACTION,
+        CONSTRAINT "shop_feedbacks_user_id_fkey"
+          FOREIGN KEY ("user_id") REFERENCES "users"("id")
+          ON DELETE CASCADE ON UPDATE NO ACTION,
+        CONSTRAINT "shop_feedbacks_order_id_fkey"
+          FOREIGN KEY ("order_id") REFERENCES "orders"("id")
+          ON DELETE SET NULL ON UPDATE NO ACTION
+      )
+    `);
+    const available = true;
     shopFeedbackTableAvailability = {
       checkedAt: now,
       available
@@ -81,6 +101,7 @@ async function hasProductFeedbackTable() {
         "order_id" BIGINT,
         "rating" DECIMAL(2,1) NOT NULL,
         "comment" TEXT,
+        "image_url" TEXT,
         "created_at" TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
         CONSTRAINT "product_feedbacks_product_id_fkey"
           FOREIGN KEY ("product_id") REFERENCES "products"("id")
@@ -354,6 +375,7 @@ function mapShopFeedbackForResponse(feedback) {
     orderId: feedback.order_id,
     rating: Number(feedback.rating || 0),
     comment: feedback.comment || null,
+    imageUrl: feedback.image_url || null,
     createdAt: feedback.created_at,
     customer: feedback.users
       ? {
@@ -1541,6 +1563,7 @@ export async function createShopFeedback({
   shopId,
   rating,
   comment,
+  imageUrl,
   orderId
 }) {
   if (!(await hasShopFeedbackTable())) {
@@ -1591,7 +1614,8 @@ export async function createShopFeedback({
           where: { id: existing.id },
           data: {
             rating: Number(numericRating.toFixed(1)),
-            comment: normalizedComment
+            comment: normalizedComment,
+            image_url: imageUrl || null
           }
         })
       : await prisma.shop_feedbacks.create({
@@ -1600,7 +1624,8 @@ export async function createShopFeedback({
             user_id: userId,
             order_id: eligibleOrder.id,
             rating: Number(numericRating.toFixed(1)),
-            comment: normalizedComment
+            comment: normalizedComment,
+            image_url: imageUrl || null
           }
         });
 

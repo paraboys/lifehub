@@ -2056,10 +2056,68 @@ export default function SuperAppPage({
   }
 
   function openMarketplaceCart() {
-    setActiveTab("marketplace");
-    setMarketplaceView("checkout");
-    setCheckoutValidationError("");
+    setCartDrawerOpen(true);
     setSidebarOpen(false);
+  }
+
+  async function submitReview({ rating, comment, imageFile }) {
+    if (!selectedMarketplaceProduct) return;
+    try {
+      let imageUrl = null;
+      if (imageFile) {
+        setToast("Uploading review image...");
+        const uploaded = await uploadChatAttachment(imageFile, { isPrivate: false });
+        imageUrl = uploaded.fileUrl;
+      }
+
+      await api(`/marketplace/shops/${selectedMarketplaceProduct.shopId}/feedback`, {
+        method: "POST",
+        body: JSON.stringify({
+          rating,
+          comment,
+          imageUrl,
+          orderId: null // Optional: find a valid orderId if needed
+        })
+      });
+
+      setToast("Review submitted successfully!");
+      if (selectedShopId) await loadShopFeedback(selectedShopId);
+    } catch (err) {
+      setError(err.message || "Failed to submit review");
+    }
+  }
+
+  async function submitStory({ content, imageFile }) {
+    try {
+      let mediaUrl = null;
+      if (imageFile) {
+        setToast("Uploading story...");
+        const uploaded = await uploadChatAttachment(imageFile, { isPrivate: false });
+        mediaUrl = uploaded.fileUrl;
+      }
+
+      await api("/chat/stories", {
+        method: "POST",
+        body: JSON.stringify({
+          content,
+          mediaUrl
+        })
+      });
+
+      setToast("Story posted!");
+      await loadStories();
+    } catch (err) {
+      setError(err.message || "Failed to post story");
+    }
+  }
+
+  async function loadStories() {
+    try {
+      const data = await api("/chat/stories");
+      setStories(data.stories || []);
+    } catch (err) {
+      console.error("Stories load failed", err);
+    }
   }
 
   async function openMarketplaceProduct(item, fallbackShop = null) {
@@ -3001,6 +3059,7 @@ export default function SuperAppPage({
 
   useEffect(() => {
     bootstrap();
+    loadStories();
   }, [canAccess.orders, canAccess.services, canAccess.seller]);
 
   useEffect(() => {
@@ -3637,6 +3696,8 @@ export default function SuperAppPage({
       api={api} 
       user={{ id: user?.id, name: user?.name, phone: user?.phone, avatar: profilePhoto }} 
       callProps={{ callSession, acceptIncomingCall, declineIncomingCall, endCurrentCall, startInstantCall, localVideoRef, remoteVideoRef, activeCallRoomId }}
+      stories={stories}
+      onUploadStory={submitStory}
     />;
   }
 
@@ -3773,7 +3834,7 @@ export default function SuperAppPage({
             onOpenReviews={() => console.log('Open reviews')}
             mediaBaseUrl={mediaBaseUrl}
             reviews={productReviews}
-            onAddReview={(rating, text, file) => console.log("Review", rating, text, file)}
+            onAddReview={(rating, comment, imageFile) => submitReview({ rating, comment, imageFile })}
             relatedProducts={relatedMarketplaceProducts}
             onRelatedProductClick={(p) => openMarketplaceProduct(p, p.shop || selectedShop)}
           />
@@ -5348,7 +5409,7 @@ function renderOpsTab() {
             <span>/</span>
             <strong>{breadcrumbLabel}</strong>
           </div>
-          <div className="topbar-search" onClick={() => setCommandOpen(true)}>
+          <div className="topbar-search" onClick={(e) => { e.stopPropagation(); setCommandOpen(true); }}>
             <UiIcon name="search" />
             <input
               value={commandQuery}

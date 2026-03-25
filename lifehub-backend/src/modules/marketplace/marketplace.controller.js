@@ -187,6 +187,7 @@ export async function createShopFeedback(req, res) {
       shopId: req.params.shopId,
       rating: req.body.rating,
       comment: req.body.comment,
+      imageUrl: req.body.imageUrl,
       orderId: req.body.orderId
     });
     res.status(201).json(jsonSafe(payload));
