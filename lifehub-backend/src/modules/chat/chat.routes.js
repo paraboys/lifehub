@@ -7,6 +7,7 @@ import {
   createConversationByPhone,
   createGroupConversationByPhones,
   listConversations,
+  searchUser,
   resolveContacts,
   listContactDirectory,
   requestContact,
