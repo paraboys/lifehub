@@ -3,6 +3,15 @@ import { useChatContext } from "./ChatContext";
 import { CallIcon } from "./ChatIcons";
 import { initials, formatTime } from "./ChatUtils";
 
+// Normalize phone before sending to backend
+// 10-digit → prepend +91 (India); if already has country code digits, prepend +
+function normalizePhone(raw) {
+  const digits = String(raw || "").replace(/\D/g, "");
+  if (digits.length === 10) return `+91${digits}`;
+  if (digits.length > 10) return `+${digits}`;
+  return String(raw || "").trim();
+}
+
 export default function ChatModals() {
   const { 
     isAddContactOpen, setIsAddContactOpen, incomingReqs, api, fetchContactsAndReqs, fetchConversations,
@@ -13,34 +22,52 @@ export default function ChatModals() {
   } = useChatContext();
 
   const [groupPhones, setGroupPhones] = useState("");
+  const [sendingRequest, setSendingRequest] = useState(false);
+  const [statusMsg, setStatusMsg] = useState("");
 
   const handleSearchContact = async () => {
-    if (!searchPhone) return;
+    if (!searchPhone.trim()) return;
     setSearchLoading(true);
     setSearchResult(null);
+    setStatusMsg("");
     try {
+      const normalized = normalizePhone(searchPhone);
       const data = await api("/chat/contacts/resolve", {
         method: "POST",
-        body: JSON.stringify({ phones: [searchPhone] })
+        body: JSON.stringify({ phones: [normalized] })
       });
-      if (data && data.length > 0) setSearchResult(data[0]);
+      // API returns { contacts: [...] }
+      const contacts = data?.contacts || (Array.isArray(data) ? data : []);
+      if (contacts.length > 0) setSearchResult(contacts[0]);
       else setSearchResult({ notFound: true });
-    } catch (e) { console.error(e); }
+    } catch (e) { 
+      console.error(e);
+      setStatusMsg("Error searching. Check phone format (e.g. +919876543210)");
+    }
     setSearchLoading(false);
   };
 
   const sendFriendRequest = async () => {
+    setSendingRequest(true);
+    setStatusMsg("");
     try {
+      const normalized = normalizePhone(searchPhone);
       await api("/chat/contacts/request", {
         method: "POST",
-        body: JSON.stringify({ phone: searchPhone })
+        body: JSON.stringify({ phone: normalized })
       });
-      alert("Request sent successfully!");
-      setIsAddContactOpen(false);
-      setSearchPhone("");
-      setSearchResult(null);
+      setStatusMsg("✅ Request sent successfully!");
+      setTimeout(() => {
+        setIsAddContactOpen(false);
+        setSearchPhone("");
+        setSearchResult(null);
+        setStatusMsg("");
+      }, 1200);
       fetchContactsAndReqs();
-    } catch(e) { alert("Error sending request: " + e.message); }
+    } catch(e) { 
+      setStatusMsg(`❌ Error: ${e.message}`);
+    }
+    setSendingRequest(false);
   };
 
   const respondToRequest = async (requestId, action) => {
@@ -57,7 +84,7 @@ export default function ChatModals() {
   const handleCreateGroup = async () => {
     if (!groupPhones) return;
     try {
-      const phones = groupPhones.split(',').map(p => p.trim()).filter(Boolean);
+      const phones = groupPhones.split(',').map(p => normalizePhone(p.trim())).filter(Boolean);
       await api("/chat/conversations/group-by-phones", {
         method: "POST",
         body: JSON.stringify({ phones })
@@ -72,53 +99,95 @@ export default function ChatModals() {
     <>
       {isAddContactOpen && (
         <div className="wa-modal-overlay" onClick={() => setIsAddContactOpen(false)}>
-          <div className="wa-modal" onClick={e => e.stopPropagation()}>
+          <div className="wa-modal wa-modal-modern" onClick={e => e.stopPropagation()}>
             <div className="wa-modal-header">
-              <h2>New Chat / Contacts</h2>
+              <h2>💬 New Contact / Chat</h2>
               <button className="wa-icon-btn" onClick={() => setIsAddContactOpen(false)}>✕</button>
             </div>
             
-            <div className="wa-modal-tabs">
-              <h4>Pending Requests ({incomingReqs.length})</h4>
-              {incomingReqs.map(req => (
-                 <div key={req.requestId} className="wa-req-row">
-                   <div><strong>{req.name}</strong><small>{req.phone}</small></div>
-                   <div style={{display:'flex', gap: 5}}>
-                     <button className="wa-btn-primary" onClick={() => respondToRequest(req.requestId, "ACCEPT")}>Accept</button>
-                     <button className="wa-btn-secondary" onClick={() => respondToRequest(req.requestId, "REJECT")}>Reject</button>
+            {incomingReqs.length > 0 && (
+              <div className="wa-modal-section">
+                <h4 className="wa-section-label">Pending Requests ({incomingReqs.length})</h4>
+                {incomingReqs.map(req => (
+                   <div key={req.requestId} className="wa-req-row">
+                     <div className="wa-req-info">
+                       <div className="wa-chat-avatar fallback" style={{width:36,height:36,fontSize:14}}>{initials(req.name)}</div>
+                       <div>
+                         <strong>{req.name}</strong>
+                         <small style={{display:'block',color:'#8696a0'}}>{req.phone}</small>
+                       </div>
+                     </div>
+                     <div style={{display:'flex', gap: 6}}>
+                       <button className="wa-btn-accept" onClick={() => respondToRequest(req.requestId, "ACCEPT")}>Accept</button>
+                       <button className="wa-btn-reject" onClick={() => respondToRequest(req.requestId, "REJECT")}>Reject</button>
+                     </div>
                    </div>
-                 </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
 
-            <div className="wa-modal-body" style={{borderTop: '1px solid #313d45'}}>
-              <h4>Add New Contact</h4>
-              <div style={{display:'flex', gap: 10, marginTop:10}}>
+            <div className="wa-modal-section" style={{borderTop: incomingReqs.length > 0 ? '1px solid #2a3942' : 'none', paddingTop: incomingReqs.length > 0 ? 16 : 0}}>
+              <h4 className="wa-section-label">Add New Contact by Phone</h4>
+              <p className="wa-hint" style={{marginBottom: 12}}>Enter phone number with country code (e.g. +919876543210 or 9876543210)</p>
+              <div style={{display:'flex', gap: 8}}>
                 <input 
-                  type="text" 
-                  placeholder="Enter phone number..." 
+                  type="tel" 
+                  placeholder="+91 9876543210" 
                   className="wa-search-input" 
-                  style={{border: '1px solid #313d45'}}
+                  style={{flex:1, fontSize: 15}}
                   value={searchPhone} 
-                  onChange={(e) => setSearchPhone(e.target.value)} 
+                  onChange={(e) => setSearchPhone(e.target.value)}
+                  onKeyDown={(e) => { if(e.key === 'Enter') handleSearchContact(); }}
                 />
-                <button className="wa-btn-primary" onClick={handleSearchContact}>{searchLoading ? '...' : 'Search'}</button>
+                <button 
+                  className="wa-btn-primary" 
+                  onClick={handleSearchContact}
+                  disabled={searchLoading || !searchPhone.trim()}
+                  style={{minWidth: 80}}
+                >
+                  {searchLoading ? '⏳' : '🔍 Find'}
+                </button>
               </div>
               
-              <div className="wa-modal-results" style={{marginTop: 20}}>
+              {statusMsg && (
+                <p style={{marginTop: 10, fontSize: 13, color: statusMsg.startsWith('✅') ? '#00a884' : '#ef5350'}}>{statusMsg}</p>
+              )}
+              
+              <div className="wa-modal-results" style={{marginTop: 16}}>
                  {searchResult?.notFound ? (
-                    <p className="wa-hint">No user found with this number.</p>
+                    <div className="wa-not-found-hint">
+                      <span>👤</span>
+                      <div>
+                        <p>No LifeHub account found.</p>
+                        <small>Make sure the number is correct and registered on LifeHub.</small>
+                      </div>
+                    </div>
                  ) : searchResult ? (
-                    <div className="wa-req-row">
-                      <div><strong>{searchResult.name}</strong><small>{searchResult.phone}</small></div>
-                      {searchResult.contactStatus === "NONE" ? (
-                         <button className="wa-btn-primary" onClick={sendFriendRequest}>Add Contact</button>
+                    <div className="wa-req-row wa-found-user">
+                      <div className="wa-req-info">
+                        <div className="wa-chat-avatar fallback" style={{width:42,height:42}}>{initials(searchResult.name)}</div>
+                        <div>
+                          <strong>{searchResult.name}</strong>
+                          <small style={{display:'block',color:'#8696a0'}}>{searchResult.phone}</small>
+                        </div>
+                      </div>
+                      {searchResult.contactStatus === "NONE" || !searchResult.contactStatus ? (
+                         <button 
+                           className="wa-btn-primary" 
+                           onClick={sendFriendRequest}
+                           disabled={sendingRequest}
+                         >
+                           {sendingRequest ? '...' : '➕ Add'}
+                         </button>
                       ) : (
-                         <span className="wa-hint" style={{color: '#00a884'}}>{searchResult.contactStatus}</span>
+                         <span className="wa-hint" style={{color: '#00a884', fontWeight: 600}}>
+                           {searchResult.contactStatus === 'ACCEPTED' ? '✅ Contact' : 
+                            searchResult.contactStatus === 'OUTGOING_PENDING' ? '⏳ Sent' : searchResult.contactStatus}
+                         </span>
                       )}
                     </div>
                  ) : (
-                    <p className="wa-hint">Search for friends registered on LifeHub to start chatting.</p>
+                    <p className="wa-hint">Search for a LifeHub user by their phone number to send a contact request.</p>
                  )}
               </div>
             </div>
@@ -128,22 +197,23 @@ export default function ChatModals() {
 
       {isGroupModalOpen && (
         <div className="wa-modal-overlay" onClick={() => setIsGroupModalOpen(false)}>
-          <div className="wa-modal" onClick={e => e.stopPropagation()}>
+          <div className="wa-modal wa-modal-modern" onClick={e => e.stopPropagation()}>
             <div className="wa-modal-header">
-              <h2>New Group</h2>
+              <h2>👥 New Group Chat</h2>
               <button className="wa-icon-btn" onClick={() => setIsGroupModalOpen(false)}>✕</button>
             </div>
             <div className="wa-modal-body">
-              <p className="wa-hint">Enter comma-separated phone numbers of contacts.</p>
-              <input 
-                type="text" 
-                placeholder="e.g. +919876543210" 
+              <p className="wa-hint">Enter comma-separated phone numbers (min 2 contacts).</p>
+              <p className="wa-hint" style={{fontSize: 12, marginTop: 4}}>Example: +919876543210, +919123456789</p>
+              <textarea 
+                placeholder="+919876543210, +919123456789..." 
                 className="wa-message-input" 
+                rows={3}
                 value={groupPhones} 
                 onChange={(e) => setGroupPhones(e.target.value)} 
-                style={{marginTop: 10, width: 'calc(100% - 24px)'}}
+                style={{marginTop: 10, width: 'calc(100% - 24px)', resize: 'vertical'}}
               />
-              <div style={{marginTop: 20, textAlign: 'right'}}>
+              <div style={{marginTop: 16, textAlign: 'right'}}>
                  <button className="wa-btn-primary" onClick={handleCreateGroup}>Create Group</button>
               </div>
             </div>
@@ -173,7 +243,7 @@ export default function ChatModals() {
             <div className="wa-modal-header" style={{borderBottom: 'none'}}>
               <h2 style={{width: '100%'}}>
                 {callProps.callSession.type === "audio" ? "Audio Call" : "Video Call"} 
-                {callProps.activeCallRoomId ? ' - Connected' : ' - ' + callProps.callSession.status}
+                {callProps.activeCallRoomId ? ' — Connected' : ' — ' + callProps.callSession.status}
               </h2>
             </div>
             <div className="wa-modal-body" style={{display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 20}}>
@@ -200,11 +270,11 @@ export default function ChatModals() {
               <div style={{display: 'flex', gap: 20}}>
                 {callProps.callSession.status === "incoming" ? (
                   <>
-                    <button onClick={callProps.acceptIncomingCall} className="wa-btn-primary" style={{backgroundColor: '#00a884', padding: '10px 30px', borderRadius: 24, border: 'none'}}>Accept</button>
-                    <button onClick={callProps.declineIncomingCall} className="wa-btn-secondary" style={{backgroundColor: '#ef5350', color: 'white', padding: '10px 30px', borderRadius: 24, border: 'none'}}>Decline</button>
+                    <button onClick={callProps.acceptIncomingCall} style={{backgroundColor: '#00a884', color:'white', padding: '10px 30px', borderRadius: 24, border: 'none', cursor:'pointer'}}>Accept</button>
+                    <button onClick={callProps.declineIncomingCall} style={{backgroundColor: '#ef5350', color: 'white', padding: '10px 30px', borderRadius: 24, border: 'none', cursor:'pointer'}}>Decline</button>
                   </>
                 ) : (
-                  <button onClick={() => callProps.endCurrentCall()} className="wa-btn-secondary" style={{backgroundColor: '#ef5350', color: 'white', padding: '10px 30px', borderRadius: 24, border: 'none'}}>End Call</button>
+                  <button onClick={() => callProps.endCurrentCall()} style={{backgroundColor: '#ef5350', color: 'white', padding: '10px 30px', borderRadius: 24, border: 'none', cursor:'pointer'}}>End Call</button>
                 )}
               </div>
             </div>

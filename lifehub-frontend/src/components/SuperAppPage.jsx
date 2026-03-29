@@ -401,6 +401,7 @@ export default function SuperAppPage({
   const [commandQuery, setCommandQuery] = useState("");
   const [moduleSearch, setModuleSearch] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [notificationDrawerOpen, setNotificationDrawerOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     if (typeof localStorage === "undefined") return false;
     return localStorage.getItem("lifehub_sidebar_collapsed") === "true";
@@ -3710,10 +3711,7 @@ export default function SuperAppPage({
     }
   }, [activeTab]);
 
-  useEffect(() => {
-    if (activeTab !== "home" || !notificationUnreadCount) return;
-    markNotificationsAsRead({ scope: "system" }).catch(() => {});
-  }, [activeTab, notificationUnreadCount]);
+
 
   useEffect(() => {
     loadPresence().catch(() => {});
@@ -4000,47 +3998,7 @@ export default function SuperAppPage({
             </div>
           </article>
 
-          <article className="panel-card dashboard-notification-card">
-            <div className="panel-title-row">
-              <div>
-                <h3>Notification preview</h3>
-                <small>Unread items are surfaced first</small>
-              </div>
-              <button
-                type="button"
-                className="ghost-btn"
-                onClick={openNotificationCenter}
-              >
-                Open all
-              </button>
-            </div>
-            <div className="dashboard-notification-list">
-              {notificationPreview.map((item) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  className={`dashboard-notification-item ${!item?.read_at && !item?.readAt ? "unread" : ""}`}
-                  onClick={() => {
-                    if (!item?.read_at && !item?.readAt) {
-                      markNotificationsAsRead({
-                        notificationIds: [item.id],
-                      }).catch(() => {});
-                    }
-                    setActiveTab("home");
-                  }}
-                >
-                  <span className="dashboard-notification-dot" />
-                  <div>
-                    <strong>{item.event_type || "Update"}</strong>
-                    <small>{formatRelativeTime(item.created_at)}</small>
-                  </div>
-                </button>
-              ))}
-              {!notificationPreview.length && (
-                <div className="empty-line">No notifications right now.</div>
-              )}
-            </div>
-          </article>
+
         </div>
 
         <div className="home-main-grid dashboard-lower-grid">
@@ -6423,9 +6381,8 @@ export default function SuperAppPage({
   }
 
   function openNotificationCenter() {
-    setActiveTab("home");
+    setNotificationDrawerOpen(true);
     setSidebarOpen(false);
-    markNotificationsAsRead({ scope: "system" }).catch(() => {});
   }
 
   const suppressGlobalHeader =
@@ -6684,6 +6641,89 @@ export default function SuperAppPage({
           {renderTab()}
         </main>
       </div>
+
+      {notificationDrawerOpen && (
+        <>
+          <div
+            className="notif-drawer-backdrop"
+            onClick={() => setNotificationDrawerOpen(false)}
+          />
+          <aside className={`notif-drawer ${notificationDrawerOpen ? "open" : ""}`}>
+            <div className="notif-drawer-header">
+              <div className="notif-drawer-title">
+                <span className="notif-drawer-icon">🔔</span>
+                <div>
+                  <strong>Notifications</strong>
+                  {notificationUnreadCount > 0 && (
+                    <span className="notif-drawer-badge">{notificationUnreadCount} unread</span>
+                  )}
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                {notificationUnreadCount > 0 && (
+                  <button
+                    type="button"
+                    className="ghost-btn notif-mark-all-btn"
+                    onClick={() => markNotificationsAsRead({ scope: "all" }).catch(() => {})}
+                  >
+                    Mark all read
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="notif-drawer-close"
+                  onClick={() => setNotificationDrawerOpen(false)}
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+            <div className="notif-drawer-body">
+              {notifications.length === 0 && (
+                <div className="notif-empty">
+                  <span style={{ fontSize: 40 }}>🔕</span>
+                  <p>You&apos;re all caught up!</p>
+                  <small>New notifications will appear here.</small>
+                </div>
+              )}
+              {notifications.map((item) => {
+                const isUnread = !item?.read_at && !item?.readAt;
+                const evType = String(item?.event_type || "");
+                let icon = "📣";
+                if (evType.startsWith("CHAT.")) icon = "💬";
+                else if (evType.includes("ORDER")) icon = "📦";
+                else if (evType.includes("PAYMENT") || evType.includes("WALLET")) icon = "💳";
+                else if (evType.includes("SERVICE")) icon = "🔧";
+                else if (evType.includes("SLA")) icon = "⚠️";
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    className={`notif-item ${isUnread ? "notif-item-unread" : ""}`}
+                    onClick={() => {
+                      if (isUnread) {
+                        markNotificationsAsRead({ notificationIds: [item.id] }).catch(() => {});
+                      }
+                    }}
+                  >
+                    <span className="notif-item-icon">{icon}</span>
+                    <div className="notif-item-body">
+                      <strong className="notif-item-title">
+                        {evType.replace(/_/g, " ") || "System Update"}
+                      </strong>
+                      {item.message && (
+                        <span className="notif-item-desc">{String(item.message).slice(0, 120)}</span>
+                      )}
+                      <span className="notif-item-time">{formatRelativeTime(item.created_at || item.createdAt)}</span>
+                    </div>
+                    {isUnread && <span className="notif-unread-dot" />}
+                  </button>
+                );
+              })}
+            </div>
+          </aside>
+        </>
+      )}
 
       {commandOpen && (
         <div
