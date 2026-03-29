@@ -69,11 +69,23 @@ export async function listContactDirectory(req, res) {
   }
 }
 
+
+export async function searchUser(req, res) {
+  try {
+    const phone = req.query.phone;
+    if (!phone) throw new Error("Phone number is required");
+    const user = await chatService.findUserByPhone(phone);
+    res.json({ user });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+}
+
 export async function requestContact(req, res) {
   try {
     const payload = await chatService.requestContactByPhone({
       requesterId: req.user.id,
-      phone: req.body.phone
+      phone: req.body.phone || req.body.targetPhone
     });
     res.status(201).json(jsonSafe(payload));
   } catch (err) {

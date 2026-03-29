@@ -32,6 +32,8 @@ router.post("/conversations", authenticate, allowChatRole, abuseGuard("chat"), c
 router.post("/conversations/by-phone", authenticate, allowChatRole, abuseGuard("chat"), createConversationByPhone);
 router.post("/conversations/group-by-phones", authenticate, allowChatRole, abuseGuard("chat"), createGroupConversationByPhones);
 router.get("/conversations", authenticate, allowChatRole, abuseGuard("chat"), listConversations);
+router.get("/search", authenticate, allowChatRole, abuseGuard("chat"), searchUser);
+
 router.post("/contacts/resolve", authenticate, allowChatRole, abuseGuard("chat"), resolveContacts);
 router.get("/contacts", authenticate, allowChatRole, abuseGuard("chat"), listContactDirectory);
 router.post("/contacts/request", authenticate, allowChatRole, abuseGuard("chat"), requestContact);

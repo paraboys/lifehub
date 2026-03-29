@@ -81,7 +81,7 @@ function buildPhoneCandidatePool(phones = []) {
   return values;
 }
 
-async function findUserByPhone(phone, select = { id: true, name: true, phone: true }) {
+export async function findUserByPhone(phone, select = { id: true, name: true, phone: true }) {
   const candidates = buildNormalizedPhoneCandidates(phone);
   if (!candidates.length) return null;
 

@@ -92,7 +92,8 @@ export function ChatProvider({ children, api, user, callProps, stories: passedSt
 
   const sendContactRequest = async (targetId) => {
      try {
-       await api('/chat/request', 'POST', { targetUserId: targetId });
+       // Using searchResult.phone because the controller expect phone
+       await api('/chat/contacts/request', { method: 'POST', body: JSON.stringify({ targetPhone: searchResult?.phone }) });
        fetchContactsAndReqs();
        setSearchResult(null);
        setSearchPhone("");
@@ -140,13 +141,13 @@ export function ChatProvider({ children, api, user, callProps, stories: passedSt
             return { ...m, reactions: r };
          }));
       }
-      await api(`/chat/messages/${messageId}/react`, 'POST', { emoji });
+      await api(`/chat/messages/${messageId}/react`, { method: 'POST', body: JSON.stringify({ emoji }) });
     } catch(e) { console.error(e) }
   };
 
   const markConversationAsRead = async (conversationId) => {
     try {
-      await api(`/chat/conversations/${conversationId}/read`, 'POST');
+      await api(`/chat/conversations/${conversationId}/read`, { method: 'POST' });
       setConversations(prev => prev.map(c => c.id === conversationId ? { ...c, unreadCount: 0 } : c));
     } catch(e) { console.error(e) }
   };
