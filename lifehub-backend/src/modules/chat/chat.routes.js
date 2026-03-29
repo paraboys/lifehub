@@ -20,7 +20,8 @@ import {
   presenceList,
   sync,
   createStory,
-  listStories
+  listStories,
+  reactMessage
 } from "./chat.controller.js";
 import { getBundle, publishBundle } from "./e2ee.controller.js";
 
@@ -45,6 +46,8 @@ router.get("/presence/:userId", authenticate, allowChatRole, abuseGuard("chat"),
 router.get("/sync", authenticate, allowChatRole, abuseGuard("chat"), sync);
 router.post("/e2ee/bundles/me", authenticate, allowChatRole, abuseGuard("chat"), publishBundle);
 router.get("/e2ee/bundles/:userId/:deviceId", authenticate, allowChatRole, abuseGuard("chat"), getBundle);
+
+router.post("/messages/:messageId/react", authenticate, allowChatRole, abuseGuard("chat"), reactMessage);
 
 
 router.get("/stories", authenticate, allowChatRole, abuseGuard("chat"), listStories);

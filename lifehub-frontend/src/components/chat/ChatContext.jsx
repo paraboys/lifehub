@@ -128,6 +128,29 @@ export function ChatProvider({ children, api, user, callProps, stories: passedSt
      localStorage.setItem('wa_archived', JSON.stringify(newArchived));
   };
 
+  const reactToMessage = async (messageId, emoji) => {
+    try {
+      if (emoji) {
+         setMessages(prev => prev.map(m => m.id === messageId ? { ...m, reactions: { ...(m.reactions || {}), [user.id]: emoji } } : m));
+      } else {
+         setMessages(prev => prev.map(m => {
+            if (m.id !== messageId) return m;
+            const r = { ...(m.reactions || {}) };
+            delete r[user.id];
+            return { ...m, reactions: r };
+         }));
+      }
+      await api(`/chat/messages/${messageId}/react`, 'POST', { emoji });
+    } catch(e) { console.error(e) }
+  };
+
+  const markConversationAsRead = async (conversationId) => {
+    try {
+      await api(`/chat/conversations/${conversationId}/read`, 'POST');
+      setConversations(prev => prev.map(c => c.id === conversationId ? { ...c, unreadCount: 0 } : c));
+    } catch(e) { console.error(e) }
+  };
+
   const value = {
     api, user, callProps,
     activeTab, setActiveTab,
@@ -143,7 +166,8 @@ export function ChatProvider({ children, api, user, callProps, stories: passedSt
     activeStory, setActiveStory,
     searchPhone, setSearchPhone, searchResult, setSearchResult, searchLoading, setSearchLoading,
     handleSearchContact, sendContactRequest,
-    archivedChatIds, showingArchived, setShowingArchived, toggleArchive
+    archivedChatIds, showingArchived, setShowingArchived, toggleArchive,
+    reactToMessage, markConversationAsRead
   };
 
   return <ChatContext.Provider value={value}>{children}</ChatContext.Provider>;

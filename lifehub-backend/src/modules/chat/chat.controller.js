@@ -207,4 +207,17 @@ export const listStories = async (req, res, next) => {
   } catch (error) {
     next(error);
   }
+}
+
+export async function reactMessage(req, res) {
+  try {
+    const updated = await chatService.reactToMessage({
+      messageId: req.params.messageId,
+      userId: req.user.id,
+      emoji: req.body.emoji
+    });
+    res.json({ success: true, reactions: updated.reactions });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
 };

@@ -711,6 +711,14 @@ export async function listMessages({ conversationId, userId, limit = 50, beforeM
     },
     include: {
       message_attachments: true,
+      parent_message: {
+        select: {
+          id: true,
+          content: true,
+          message_type: true,
+          sender_id: true
+        }
+      },
       message_status: {
         select: {
           user_id: true,
@@ -760,7 +768,8 @@ export async function sendMessage({
   content,
   messageType = "TEXT",
   attachments = [],
-  encryptedPayload = null
+  encryptedPayload = null,
+  replyToId = null
 }) {
   await assertParticipant(conversationId, senderId);
   await assertNotSpam(senderId);
@@ -785,7 +794,8 @@ export async function sendMessage({
       conversation_id: BigInt(conversationId),
       sender_id: BigInt(senderId),
       message_type: normalizedType,
-      content: effectiveContent
+      content: effectiveContent,
+      reply_to_id: replyToId ? BigInt(replyToId) : null
     }
   });
 
@@ -1042,4 +1052,36 @@ export async function listStories(userId) {
     mediaUrl: s.mediaUrl,
     createdAt: s.createdAt
   }));
+}
+
+export async function reactToMessage({ messageId, userId, emoji }) {
+  const msg = await prisma.messages.findUnique({ where: { id: BigInt(messageId) } });
+  if (!msg) throw new Error("Message not found");
+
+  await assertParticipant(msg.conversation_id, userId);
+
+  const currentReactions = msg.reactions && typeof msg.reactions === 'object' ? msg.reactions : {};
+  if (emoji) {
+    currentReactions[String(userId)] = String(emoji);
+  } else {
+    delete currentReactions[String(userId)];
+  }
+
+  const updated = await prisma.messages.update({
+    where: { id: BigInt(messageId) },
+    data: { reactions: currentReactions }
+  });
+
+  const participantIds = await getParticipantIds(msg.conversation_id);
+  for (const pid of participantIds) {
+    if (String(pid) === String(userId)) continue;
+    emitToUser(pid, "chat:message.reacted", {
+      messageId: String(messageId),
+      conversationId: String(msg.conversation_id),
+      userId: String(userId),
+      emoji: emoji || null
+    });
+  }
+
+  return updated;
 }
