@@ -13,7 +13,7 @@ export default function ChatWindow() {
   } = useChatContext();
   
   const [messageInput, setMessageInput] = useState("");
-  const [showProfileInfo, setShowProfileInfo] = useState(false);
+  const [showProfileInfo, setShowProfileInfo] = useState(true); // Default open on wide screens
   const [showAttachMenu, setShowAttachMenu] = useState(false);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   
@@ -25,7 +25,6 @@ export default function ChatWindow() {
   const attachMenuRef = useRef(null);
   const emojiPickerRef = useRef(null);
 
-  // Close menus on click outside
   useEffect(() => {
     const handleClickOutside = (e) => {
       if (attachMenuRef.current && !attachMenuRef.current.contains(e.target)) setShowAttachMenu(false);
@@ -35,20 +34,12 @@ export default function ChatWindow() {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  // Mark as read when entering chat
   useEffect(() => {
     if (selectedChat) {
       markConversationAsRead(selectedChat.id);
     }
   }, [selectedChat?.id]);
 
-  // Derived Media Gallery
-  const mediaGallery = useMemo(() => {
-    if (!messages) return [];
-    return messages.filter(m => m.message_type === "IMAGE" || m.message_type === "VIDEO" || m.message_attachments?.length > 0);
-  }, [messages]);
-
-  // Derived Search Filter
   const renderedMessages = useMemo(() => {
     if (!searchQuery.trim()) return messages;
     return messages.filter(m => String(m.content || "").toLowerCase().includes(searchQuery.toLowerCase()));
@@ -61,18 +52,13 @@ export default function ChatWindow() {
           <div className="wa-shield-icon">💬</div>
         </div>
         <h1>LifeHub Messenger</h1>
-        <p>End-to-end encrypted messaging. Connect with friends and family seamlessly.</p>
-        <div className="wa-empty-features">
-          <span>🔒 Private</span>
-          <span>⚡ Fast</span>
-          <span>🎨 Modern</span>
-        </div>
+        <p>End-to-end encrypted messaging. Click a contact to start chatting securely.</p>
       </div>
     );
   }
 
   const sendMessage = async () => {
-    if (!messageInput.trim() || !selectedChat) return;
+    if (!messageInput.trim()) return;
     try {
       await api(`/chat/conversations/${selectedChat.id}/messages`, 'POST', {
         content: messageInput,
@@ -85,201 +71,182 @@ export default function ChatWindow() {
     } catch(e) { console.error("Send message error", e); }
   };
 
-  const handleEmojiSelect = (emoji) => {
-    setMessageInput(prev => prev + emoji);
-  };
-
-  const handleReact = (msgId, emoji) => {
-    reactToMessage(msgId, emoji);
-  };
-
   const peer = selectedChat.peers?.[0] || {};
   const name = selectedChat.type === 'GROUP' ? 'Group Chat' : peer.name || "Unknown";
-  const isOnline = selectedChat.type !== 'GROUP' ? Math.random() > 0.5 : false; // Mocking presence for real-world feel
-  const status = selectedChat.type === 'GROUP' ? `${selectedChat.peers?.length || 0} participants` : (isOnline ? 'Online' : 'Offline');
+  const isOnline = true; // For UI demo accuracy to reference
+  const status = isOnline ? 'Online' : 'Offline';
 
   return (
-    <>
-      <div className={`wa-main-header ${showProfileInfo ? 'pane-open' : ''} glass-header`}>
-        <div className="wa-main-header-user" onClick={() => setShowProfileInfo(!showProfileInfo)} style={{cursor:'pointer'}}>
-          <div className="wa-chat-avatar-wrapper">
-             {peer.avatarUrl ? <img src={peer.avatarUrl} alt="avatar" className="wa-chat-avatar shadow" /> : <div className="wa-chat-avatar fallback shadow">{initials(name)}</div>}
-             {isOnline && <span className="online-indicator"></span>}
+    <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+      {/* Center Chat Thread */}
+      <div className="chat-thread">
+        <div className="wa-list-header">
+          <div className="wa-main-header-user">
+            <div className="item-name" style={{fontSize: '16px'}}>{name}</div>
           </div>
-          <div className="wa-main-header-info">
-            <div className="wa-main-name">{name}</div>
-            <div className="wa-main-status">{status} • Click for info</div>
+          <div className="wa-header-actions" style={{display: 'flex', gap: '12px', alignItems: 'center'}}>
+            <button className="wa-toolbar-btn" onClick={() => setShowSearch(!showSearch)}><SearchIcon /></button>
+            <button className="wa-toolbar-btn" onClick={() => setShowProfileInfo(!showProfileInfo)}><MenuIcon /></button>
           </div>
-        </div>
-        <div className="wa-header-actions">
           {showSearch && (
-             <div className="wa-header-search shadow">
-               <input autoFocus type="text" placeholder="Search..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} />
-               <button className="wa-icon-btn" onClick={() => { setShowSearch(false); setSearchQuery(""); }}>✕</button>
-             </div>
-          )}
-          <button className="wa-icon-btn glass-btn action-video" onClick={() => callProps?.startInstantCall("video")} title="Video Call"><CallIcon /></button>
-          <button className="wa-icon-btn glass-btn action-audio" onClick={() => callProps?.startInstantCall("audio")} title="Audio Call"><span style={{fontSize: 20}}>📞</span></button>
-          <div className="wa-header-divider"></div>
-          <button className={`wa-icon-btn glass-btn ${showSearch ? 'active' : ''}`} onClick={() => setShowSearch(!showSearch)}><SearchIcon /></button>
-        </div>
-      </div>
-
-      <div className="wa-chat-body-container">
-        <div className={`wa-main-chat-area ${showProfileInfo ? 'shrink' : ''}`}>
-          <div className="wa-chat-bg-pattern"></div>
-           {renderedMessages.map((msg, i) => {
-             const isMine = String(msg.sender_id) === String(user.id);
-             const dateChange = i === 0 || new Date(renderedMessages[i-1].created_at).toDateString() !== new Date(msg.created_at).toDateString();
-             const hasReactions = msg.reactions && Object.keys(msg.reactions).length > 0;
-             const isHovered = hoveredMessageId === msg.id;
-
-             return (
-               <React.Fragment key={msg.id}>
-                 {dateChange && <div className="wa-date-divider shadow"><span>{new Date(msg.created_at).toLocaleDateString()}</span></div>}
-                 
-                 <div 
-                   className={`wa-message-row ${isMine ? 'mine' : 'theirs'}`}
-                   onMouseEnter={() => setHoveredMessageId(msg.id)}
-                   onMouseLeave={() => setHoveredMessageId(null)}
-                 >
-                   <div className={`wa-message-bubble ${isMine ? 'sent' : 'received'} shadow`}>
-                      
-                      {msg.parent_message && (
-                        <div className="wa-reply-quote" onClick={() => document.getElementById(`msg-${msg.parent_message.id}`)?.scrollIntoView({behavior: "smooth"})}>
-                           <div className="reply-sender">{String(msg.parent_message.sender_id) === String(user.id) ? "You" : "Them"}</div>
-                           <div className="reply-text truncate">{msg.parent_message.content}</div>
-                        </div>
-                      )}
-
-                      <div className="wa-message-text" id={`msg-${msg.id}`}>{msg.content}</div>
-                      
-                      <div className="wa-message-meta">
-                        <span>{formatTime(msg.created_at)}</span>
-                        {isMine && <span style={{marginLeft: 4, display: 'inline-block'}}><CheckIcon read={msg.deliveryStatus === "READ"} /></span>}
-                      </div>
-
-                      {hasReactions && (
-                        <div className="wa-reactions-floating shadow">
-                          {Object.values(msg.reactions).map((emo, idx) => <span key={idx}>{emo}</span>)}
-                          <span className="count">{Object.keys(msg.reactions).length}</span>
-                        </div>
-                      )}
-
-                      <div className={`msg-actions ${isHovered ? 'visible' : ''}`}>
-                        <div className="reaction-fast-bar shadow">
-                          {QUICK_REACTIONS.map(emo => (
-                            <button key={emo} onClick={() => handleReact(msg.id, emo)}>{emo}</button>
-                          ))}
-                        </div>
-                        <button title="Reply" onClick={() => setReplyingTo(msg)} className="shadow">↩️</button>
-                      </div>
-                   </div>
-                 </div>
-               </React.Fragment>
-             )
-           })}
-           <div ref={messagesEndRef} />
-        </div>
-
-        {/* Floating Profile Info Pane */}
-        <div className={`wa-profile-pane shadow ${showProfileInfo ? 'open' : ''}`}>
-           <div className="wa-profile-header glass-header">
-             <button className="wa-icon-btn filled" onClick={() => setShowProfileInfo(false)}>✕</button>
-             <span>Contact Info</span>
-           </div>
-           <div className="modern-scroll">
-             <div className="wa-profile-hero">
-                <div className="wa-profile-avatar-large shadow">
-                  {peer.avatarUrl ? <img src={peer.avatarUrl} alt="avatar" /> : <div className="fallback-large">{initials(name)}</div>}
-                </div>
-                <h2 className="wa-profile-name">{name}</h2>
-                <p className="wa-profile-phone">{peer.phone || "+91 •••• ••••••"}</p>
-             </div>
-             <div className="wa-profile-actions-grid">
-                <button onClick={() => callProps?.startInstantCall("audio")}>
-                   <span className="icon">📞</span>
-                   <span>Audio</span>
-                </button>
-                <button onClick={() => callProps?.startInstantCall("video")}>
-                   <span className="icon">📹</span>
-                   <span>Video</span>
-                </button>
-                <button onClick={() => { setShowProfileInfo(false); setShowSearch(true); }}>
-                   <span className="icon">🔍</span>
-                   <span>Search</span>
-                </button>
-             </div>
-             <div className="wa-profile-section">
-                <h4>About</h4>
-                <p>Hey there! I am using LifeHub Messenger.</p>
-             </div>
-             <div className="wa-profile-section">
-                <h4>Media, Links & Docs</h4>
-                <div className="wa-media-preview-grid">
-                   {mediaGallery.length === 0 ? (
-                      <div className="wa-empty-hint" style={{gridColumn: '1 / -1', padding: 10, fontSize: 12}}>No media shared yet.</div>
-                   ) : (
-                      mediaGallery.slice(0, 6).map((m, i) => (
-                        <div key={i} className="media-placeholder shadow">
-                           {m.message_type === "IMAGE" ? "🖼️" : "📄"}
-                        </div>
-                      ))
-                   )}
-                </div>
-             </div>
-           </div>
-        </div>
-      </div>
-
-      <div className={`wa-main-input-area ${showProfileInfo ? 'shrink' : ''}`}>
-        
-        {replyingTo && (
-           <div className="wa-reply-preview-bar shadow">
-             <div className="reply-preview-content">
-                <strong>Replying to {String(replyingTo.sender_id) === String(user.id) ? "Yourself" : peer.name || "Unknown"}</strong>
-                <span className="truncate">{replyingTo.content}</span>
-             </div>
-             <button className="wa-icon-btn" onClick={() => setReplyingTo(null)}>✕</button>
-           </div>
-        )}
-
-        <div className="wa-attach-wrapper" ref={attachMenuRef}>
-          <button className={`wa-icon-btn attach-btn glass-btn ${showAttachMenu ? 'active' : ''}`} onClick={() => setShowAttachMenu(!showAttachMenu)}>
-            <AttachIcon />
-          </button>
-          
-          {showAttachMenu && (
-            <div className="wa-attach-menu shadow">
-              <button className="attach-item img"><span className="icon">🖼️</span> Image/Video</button>
-              <button className="attach-item doc"><span className="icon">📄</span> Document</button>
-              <button className="attach-item loc"><span className="icon">📍</span> Location</button>
-              <button className="attach-item contact"><span className="icon">👤</span> Contact</button>
+            <div className="wa-header-search">
+              <input 
+                autoFocus 
+                type="text" 
+                placeholder="Search..." 
+                value={searchQuery} 
+                onChange={e => setSearchQuery(e.target.value)} 
+              />
+              <button className="wa-toolbar-btn" onClick={() => { setShowSearch(false); setSearchQuery(""); }}>✕</button>
             </div>
           )}
         </div>
-        
-        <div className="wa-input-container glow-focus">
-          <div ref={emojiPickerRef} style={{position: 'relative'}}>
-            <button className="wa-icon-btn emoji-btn" onClick={() => setShowEmojiPicker(!showEmojiPicker)}>😀</button>
-            {showEmojiPicker && <ChatEmojiPicker onEmojiSelect={handleEmojiSelect} onClose={() => setShowEmojiPicker(false)} />}
+
+        <div className="wa-main-chat-area modern-scroll" style={{flex: 1}}>
+          <div className="wa-date-divider">
+            <span>Chat started: Today, 10:38</span>
           </div>
-          <input 
-            type="text" 
-            placeholder="Type your message..." 
-            className="wa-message-input" 
-            value={messageInput}
-            onChange={(e) => setMessageInput(e.target.value)}
-            onKeyDown={(e) => { if(e.key === 'Enter') sendMessage() }}
-          />
+
+          {renderedMessages.map((msg, i) => {
+            const isMine = String(msg.sender_id) === String(user.id);
+            const showAvatar = !isMine && (i === 0 || String(renderedMessages[i-1].sender_id) !== String(msg.sender_id));
+            const isHovered = hoveredMessageId === msg.id;
+
+            return (
+              <div 
+                key={msg.id} 
+                className="wa-message-row"
+                style={{ alignItems: isMine ? 'flex-end' : 'flex-start', paddingLeft: !isMine && !showAvatar ? '56px' : '0' }}
+                onMouseEnter={() => setHoveredMessageId(msg.id)}
+                onMouseLeave={() => setHoveredMessageId(null)}
+              >
+                {!isMine && showAvatar && (
+                  <img src={peer.avatarUrl || "https://ui-avatars.com/api/?name="+name} className="wa-chat-avatar" style={{position: 'absolute', left: '0', top: '0'}} />
+                )}
+                
+                <div className={`wa-message-bubble ${isMine ? 'sent' : 'received'}`} style={{marginLeft: !isMine && showAvatar ? '56px' : '0'}}>
+                  {msg.parent_message && (
+                    <div className="wa-reply-quote">
+                      <div className="reply-sender" style={{fontSize: '11px', opacity: 0.8}}>{String(msg.parent_message.sender_id) === String(user.id) ? "You" : peer.name}</div>
+                      <div style={{fontSize: '12px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'}}>{msg.parent_message.content}</div>
+                    </div>
+                  )}
+                  <div>{msg.content}</div>
+                  <div style={{fontSize: '10px', marginTop: '4px', opacity: 0.7, textAlign: 'right'}}>
+                    {formatTime(msg.created_at)}
+                    {isMine && <span style={{marginLeft: '4px'}}><CheckIcon read={msg.deliveryStatus === "READ"} /></span>}
+                  </div>
+
+                  {isHovered && (
+                    <div className="msg-actions visible" style={{position: 'absolute', [isMine ? 'left' : 'right']: '-80px', top: '0'}}>
+                       <div className="reaction-fast-bar">
+                         {QUICK_REACTIONS.slice(0, 5).map(emo => (
+                           <button key={emo} onClick={() => reactToMessage(msg.id, emo)} style={{fontSize: '16px'}}>{emo}</button>
+                         ))}
+                         <button onClick={() => setReplyingTo(msg)} style={{fontSize: '14px'}}>↩️</button>
+                       </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+
+          {/* AI Suggestion Mockup */}
+          <div className="wa-message-row" style={{alignItems: 'flex-start'}}>
+             <div className="wa-message-bubble" style={{background: 'rgba(124, 58, 237, 0.05)', border: '1px solid rgba(124, 58, 237, 0.2)', color: '#4c1d95', maxWidth: '80%'}}>
+                <div style={{fontSize: '13px'}}>You can personalize your account by choosing a base theme, adding your initials, or a custom status tag.</div>
+                <div style={{marginTop: '8px', fontWeight: '700', fontSize: '12px', cursor: 'pointer', color: '#7c3aed'}}>Use Suggestion</div>
+             </div>
+             <div style={{fontSize: '10px', color: '#94a3b8', marginTop: '4px', marginLeft: '4px'}}>AI reply suggestions</div>
+          </div>
+
+          <div ref={messagesEndRef} />
         </div>
-        
-        {messageInput.trim() ? (
-           <button className="wa-send-btn glow" onClick={sendMessage}><SendIcon /></button>
-        ) : (
-           <button className="wa-send-btn mic shadow"><span style={{fontSize: 18}}>🎙️</span></button>
-        )}
+
+        {/* SaaS Style Input Area */}
+        <div className="wa-main-input-area">
+          {replyingTo && (
+            <div className="wa-reply-preview-bar">
+              <div className="reply-preview-content">
+                <strong>Replying to {peer.name}</strong>
+                <span className="truncate">{replyingTo.content}</span>
+              </div>
+              <button className="wa-toolbar-btn" onClick={() => setReplyingTo(null)}>✕</button>
+            </div>
+          )}
+          <div className="wa-input-container">
+            <textarea 
+              placeholder="Type a message" 
+              value={messageInput}
+              onChange={e => setMessageInput(e.target.value)}
+              onKeyDown={e => { if(e.key==='Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } }}
+            />
+            <div className="wa-input-toolbar">
+              <div className="toolbar-group">
+                <div ref={emojiPickerRef} style={{position: 'relative'}}>
+                   <button className="wa-toolbar-btn" onClick={() => setShowEmojiPicker(!showEmojiPicker)}>😀</button>
+                   {showEmojiPicker && (
+                     <div style={{position:'absolute', bottom: '100%', left: 0}}>
+                       <ChatEmojiPicker onEmojiSelect={emo => { setMessageInput(p => p+emo); setShowEmojiPicker(false); }} onClose={() => setShowEmojiPicker(false)} />
+                     </div>
+                   )}
+                </div>
+                <button className="wa-toolbar-btn" title="Add mention"><span style={{fontSize: '18px'}}>@</span></button>
+                <button className="wa-toolbar-btn" title="Flash commands"><span style={{fontSize: '18px', fontWeight: 'bold'}}>#</span></button>
+                <button className="wa-toolbar-btn" title="Attach file"><AttachIcon /></button>
+                <button className="wa-toolbar-btn" title="Formatting"><span style={{fontSize: '18px', fontWeight: 'bold'}}>⚡</span></button>
+              </div>
+              <button className="wa-send-btn-solid" onClick={sendMessage}>Send</button>
+            </div>
+          </div>
+        </div>
       </div>
-    </>
+
+      {/* Right Profile Pane - SaaS Static */}
+      {showProfileInfo && (
+        <div className="chat-profile-sidebar">
+          <div className="wa-list-header">
+            <div className="item-name">Contact Info</div>
+            <button className="wa-toolbar-btn" onClick={() => setShowProfileInfo(false)}>✕</button>
+          </div>
+          <div className="modern-scroll" style={{flex: 1}}>
+            <div className="profile-hero-minimal">
+              <img src={peer.avatarUrl || "https://ui-avatars.com/api/?name="+name} className="profile-avatar-large" alt="avatar" />
+              <h2 className="profile-name-minimal">{name}</h2>
+              <p className="profile-email-minimal">{peer.email || (peer.phone + "@lifehub.com")}</p>
+              <p style={{fontSize: '12px', color: '#94a3b8', marginTop: '4px'}}>New York, United States • 10:15 PM local time</p>
+            </div>
+
+            <div className="profile-map-container">
+               <div className="map-mockup">
+                  <div className="map-pin">📍</div>
+                  <div className="map-label">New York</div>
+                  <div style={{position: 'absolute', inset: 0, background: 'url(https://maps.googleapis.com/maps/api/staticmap?center=New+York&zoom=13&size=300x200&sensor=false) center/cover', opacity: 0.3}}></div>
+               </div>
+            </div>
+
+            <div className="profile-accordion-item">
+              <div className="profile-accordion-header">
+                 <span>Additional Info</span>
+                 <span>›</span>
+              </div>
+            </div>
+            <div className="profile-accordion-item">
+              <div className="profile-accordion-header">
+                 <span>Technology</span>
+                 <span>›</span>
+              </div>
+            </div>
+            <div className="profile-accordion-item">
+              <div className="profile-accordion-header">
+                 <span>Visited pages</span>
+                 <span>›</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

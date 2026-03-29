@@ -3,7 +3,7 @@ import { emitToUser } from "../../common/realtime/socketHub.js";
 import { eventBus } from "../../common/events/eventBus.js";
 import { normalizeBigInt } from "../../common/utils/bigint.js";
 import { replayOfflineEvents } from "../../common/realtime/offlineEvents.js";
-import { createNotification } from "../notifications/notification.service.js";
+import { createNotification, markChatNotificationsRead } from "../notifications/notification.service.js";
 import { getSharedRedisClient } from "../../config/redis.js";
 import { buildPhoneCandidates } from "../auth/otp.service.js";
 
@@ -931,6 +931,9 @@ export async function markConversationRead({ conversationId, userId, lastMessage
   for (const memberId of recipients) {
     emitToUser(memberId, "chat:read", payload);
   }
+
+  // Clear related notifications
+  await markChatNotificationsRead(userId, conversationId).catch(console.error);
 }
 
 export async function markDelivered({ conversationId, userId, lastMessageId }) {

@@ -307,6 +307,25 @@ export async function markNotificationsRead(userId, {
   };
 }
 
+export async function markChatNotificationsRead(userId, conversationId) {
+  await ensureNotificationReadColumn();
+  const cid = String(conversationId);
+  const result = await prisma.notifications.updateMany({
+    where: {
+      user_id: BigInt(userId),
+      event_type: "CHAT.MESSAGE_RECEIVED",
+      read_at: null,
+      content: {
+        contains: `"conversationId":"${cid}"`
+      }
+    },
+    data: {
+      read_at: new Date()
+    }
+  });
+  return { updated: result.count || 0 };
+}
+
 export async function getNotificationPreferences(userId) {
   return getUserNotificationPreferences(userId);
 }
